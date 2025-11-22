@@ -1,0 +1,3 @@
+spring:
+  application:
+    name: Email Client AI
