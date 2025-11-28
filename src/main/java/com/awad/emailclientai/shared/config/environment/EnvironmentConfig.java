@@ -1,6 +1,7 @@
-package com.awad.emailclientai.shared.config;
+package com.awad.emailclientai.shared.config.environment;
 
 import io.github.cdimascio.dotenv.Dotenv;
+import jakarta.annotation.Nonnull;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.env.ConfigurableEnvironment;
@@ -17,22 +18,30 @@ import java.util.Map;
 public class EnvironmentConfig implements ApplicationContextInitializer<ConfigurableApplicationContext> {
 
     @Override
-    public void initialize(ConfigurableApplicationContext applicationContext) {
+    public void initialize(@Nonnull ConfigurableApplicationContext applicationContext) {
         try {
             Dotenv dotenv = Dotenv.configure()
                     .ignoreIfMissing()
                     .load();
 
             Map<String, Object> envMap = new HashMap<>();
-            dotenv.entries().forEach(entry -> envMap.put(entry.getKey(), entry.getValue()));
+            dotenv.entries().forEach(
+                    entry -> envMap.put(
+                            entry.getKey(),
+                            entry.getValue()
+                    )
+            );
 
             ConfigurableEnvironment environment = applicationContext.getEnvironment();
             environment.getPropertySources()
-                    .addFirst(new MapPropertySource("dotenvProperties", envMap));
+                    .addFirst(new MapPropertySource(
+                            "dotenvProperties",
+                            envMap
+                    ));
 
             System.out.println("Environment variables loaded from .env successfully!");
         } catch (Exception e) {
-            System.err.println("Warning: Could not load .env file. Using defaults from application.yml");
+            System.err.println("Warning: Could not load .env file. Using defaults from application.yaml");
         }
     }
 }
