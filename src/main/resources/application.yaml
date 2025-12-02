@@ -50,21 +50,6 @@ jwt:
     header: Authorization
     prefix: "Bearer "
 
-refresh-token:
-  expiration-days: 30
-  expiration-ms: 2592000000  # 30 days
-  storage-type: DATABASE
-  cookie-name: refresh_token
-  cookie-http-only: true
-  cookie-secure: false  # Set true in production
-  cookie-same-site: Strict
-  cookie-max-age: 2592000
-  cookie-path: /api/v1/auth
-  rotation-enabled: true
-  max-tokens-per-user: 5
-  auto-cleanup-enabled: true
-  cleanup-schedule: "0 0 2 * * ?"
-
 google:
   oauth:
     enabled: true
