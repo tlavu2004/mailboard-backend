@@ -15,6 +15,7 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfigurationSource;
 
 /**
@@ -28,9 +29,8 @@ import org.springframework.web.cors.CorsConfigurationSource;
 public class SecurityConfig {
 
     // These will be created later in auth module
-    // private final JwtAuthenticationFilter jwtAuthFilter;
-    // private final JwtAuthenticationEntryPoint jwtAuthEntryPoint;
-    // private final UserDetailsService userDetailsService;
+    private final JwtAuthenticationFilter jwtAuthFilter;
+    private final JwtAuthenticationEntryPoint jwtAuthEntryPoint;
     private final PasswordEncoder passwordEncoder;
     private final CorsConfigurationSource corsConfigurationSource;
 
@@ -71,32 +71,16 @@ public class SecurityConfig {
 
                 // Exception handling for unauthorized requests
                 .exceptionHandling(ex ->
-                        ex.authenticationEntryPoint((request, response, authException) -> {
-                            response.setStatus(401);
-                            response.setContentType("application/json");
-                            response.getWriter().write(
-                                    "{\"error\":\"Unauthorized\",\"message\":\""
-                                            + authException.getMessage() + "\"}"
-                            );
-                        })
+                        ex.authenticationEntryPoint(jwtAuthEntryPoint)
+                )
+
+                // Add JWT filter before UsernamePasswordAuthenticationFilter
+                .addFilterBefore(
+                        jwtAuthFilter,
+                        UsernamePasswordAuthenticationFilter.class
                 );
 
         return http.build();
-    }
-
-    /**
-     * TEMPORARY: Mock UserDetailsService for development
-     * TODO: Remove this when User module with UserDetailsServiceImpl is ready
-     */
-    @Bean
-    public UserDetailsService userDetailsService() {
-        var user = User.builder()
-                .username("user@example.com")
-                .password(passwordEncoder.encode("password"))
-                .roles("USER")
-                .build();
-
-        return new InMemoryUserDetailsManager(user);
     }
 
     /**
