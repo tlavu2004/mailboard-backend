@@ -47,34 +47,4 @@ public class UserService {
         log.info("Profile updated for user: {}", email);
         return userMapper.toResponse(updatedUser);
     }
-
-    @Transactional(readOnly = true)
-    public User findByEmail(String email) {
-        return userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found with email: " + email));
-    }
-
-    @Transactional(readOnly = true)
-    public User findByGoogleId(String googleId) {
-        return userRepository.findByGoogleId(googleId)
-                .orElseThrow(() -> new RuntimeException("User not found with Google ID: " + googleId));
-    }
-
-    @Transactional(readOnly = true)
-    public boolean existsByEmail(String email) {
-        return userRepository.existsByEmail(email);
-    }
-
-    @Transactional
-    public User createUser(User user) {
-        log.debug("Creating new user with email: {}", user.getEmail());
-
-        if (existsByEmail(user.getEmail())) {
-            throw new RuntimeException("User already exists with email: " + user.getEmail());
-        }
-
-        User savedUser = userRepository.save(user);
-        log.info("User created successfully: {}", savedUser.getEmail());
-        return savedUser;
-    }
 }
