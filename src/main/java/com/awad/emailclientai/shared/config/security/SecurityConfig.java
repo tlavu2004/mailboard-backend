@@ -10,18 +10,10 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfigurationSource;
 
-/**
- * Main Security Configuration
- * Configures JWT authentication, CORS, and endpoint security
- */
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
@@ -31,7 +23,6 @@ public class SecurityConfig {
     // These will be created later in auth module
     private final JwtAuthenticationFilter jwtAuthFilter;
     private final JwtAuthenticationEntryPoint jwtAuthEntryPoint;
-    private final PasswordEncoder passwordEncoder;
     private final CorsConfigurationSource corsConfigurationSource;
 
     /**
@@ -54,8 +45,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Public endpoints (authentication)
                         .requestMatchers(
-                                "/api/auth/**",
-                                "/api/public/**",
+                                "/api/v1/auth/**",
+                                "/api/v1/public/**",
                                 "/error",
                                 "/health"
                         ).permitAll()

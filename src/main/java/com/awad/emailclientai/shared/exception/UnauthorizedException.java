@@ -54,7 +54,7 @@ import lombok.Getter;
  *
  * // Example 5: Insufficient permissions (403)
  * if (!user.hasRole("ADMIN")) {
- *     throw new UnauthorizedException(ErrorCode.FORBIDDEN);
+ *     throw new UnauthorizedException(ErrorCode.ACCESS_DENIED);
  * }
  * </pre>
  *

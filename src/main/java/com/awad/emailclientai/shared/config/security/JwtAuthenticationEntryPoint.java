@@ -1,5 +1,7 @@
 package com.awad.emailclientai.shared.config.security;
 
+import com.awad.emailclientai.shared.dto.response.ApiResponse;
+import com.awad.emailclientai.shared.exception.ErrorCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -11,9 +13,6 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * JWT Authentication Entry Point
@@ -70,25 +69,14 @@ public class JwtAuthenticationEntryPoint implements AuthenticationEntryPoint {
         response.setContentType("application/json");
         response.setCharacterEncoding("UTF-8");
 
-        // TODO: Replace with ApiResponse<Void> when available
-        // ApiResponse<Void> errorResponse = ApiResponse.<Void>builder()
-        //     .success(false)
-        //     .message("Authentication required")
-        //     .errorCode(ErrorCode.UNAUTHORIZED.getCode())
-        //     .timestamp(LocalDateTime.now())
-        //     .build();
-
-        // Temporary error response format
-        Map<String, Object> errorResponse = new HashMap<>();
-        errorResponse.put("success", false);
-        errorResponse.put("timestamp", LocalDateTime.now().toString());
-        errorResponse.put("status", 401);
-        errorResponse.put("error", "Unauthorized");
-        errorResponse.put("message", getAuthenticationErrorMessage(authException));
-        errorResponse.put("path", request.getRequestURI());
+        // Create standard API response
+        ApiResponse<Void> apiResponse = ApiResponse.error(
+                ErrorCode.AUTHENTICATION_REQUIRED,
+                getAuthenticationErrorMessage(authException)
+        );
 
         // Write JSON response
-        response.getWriter().write(objectMapper.writeValueAsString(errorResponse));
+        response.getWriter().write(objectMapper.writeValueAsString(apiResponse));
     }
 
     /**

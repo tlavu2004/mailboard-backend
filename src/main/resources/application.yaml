@@ -82,7 +82,7 @@ logging:
     org.springframework.web: INFO
     org.hibernate.SQL: DEBUG
     org.hibernate.type.descriptor.sql.BasicBinder: TRACE
-    com.zaxxer.hikari: DEBUG                          # Thêm dòng này
+    com.zaxxer.hikari: DEBUG
     com.zaxxer.hikari.HikariConfig: DEBUG
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"

@@ -20,7 +20,10 @@ public class EnvironmentConfig implements ApplicationContextInitializer<Configur
     @Override
     public void initialize(@Nonnull ConfigurableApplicationContext applicationContext) {
         try {
+            System.out.println("Current Working Directory: " + System.getProperty("user.dir"));
+
             Dotenv dotenv = Dotenv.configure()
+                    .directory("./")
                     .ignoreIfMissing()
                     .load();
 
@@ -32,6 +35,14 @@ public class EnvironmentConfig implements ApplicationContextInitializer<Configur
                     )
             );
 
+            System.out.println("Loaded " + envMap.size() + " environment variables from .env");
+            // Debug specific key
+            if (envMap.containsKey("DB_URL")) {
+                System.out.println("Forwarding DB_URL to Spring Environment");
+            } else {
+                System.err.println("CRITICAL: DB_URL not found in loaded .env variables!");
+            }
+
             ConfigurableEnvironment environment = applicationContext.getEnvironment();
             environment.getPropertySources()
                     .addFirst(new MapPropertySource(
@@ -41,7 +52,8 @@ public class EnvironmentConfig implements ApplicationContextInitializer<Configur
 
             System.out.println("Environment variables loaded from .env successfully!");
         } catch (Exception e) {
-            System.err.println("Warning: Could not load .env file. Using defaults from application.yaml");
+            System.err.println("Warning: Could not load .env file. Error: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 }

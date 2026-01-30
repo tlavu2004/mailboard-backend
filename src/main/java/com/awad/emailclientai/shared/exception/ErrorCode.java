@@ -68,7 +68,7 @@ public enum ErrorCode {
      * AUTH_007: Insufficient permissions
      * Triggered when: User doesn't have required role/permission
      */
-    FORBIDDEN("AUTH_007", "You don't have permission to access this resource", HttpStatus.FORBIDDEN),
+    ACCESS_DENIED("AUTH_007", "You don't have permission to access this resource", HttpStatus.FORBIDDEN),
 
     /**
      * AUTH_008: Account is disabled
@@ -160,7 +160,7 @@ public enum ErrorCode {
      * SYSTEM_001: Internal server error
      * Triggered when: Unexpected exception occurs
      */
-    INTERNAL_SERVER_ERROR("SYSTEM_001", "An unexpected error occurred. Please try again later", HttpStatus.INTERNAL_SERVER_ERROR),
+    INTERNAL_ERROR("SYSTEM_001", "An unexpected error occurred. Please try again later", HttpStatus.INTERNAL_SERVER_ERROR),
 
     /**
      * SYSTEM_002: Database error
