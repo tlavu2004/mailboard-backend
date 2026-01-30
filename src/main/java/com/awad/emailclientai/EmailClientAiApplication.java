@@ -1,5 +1,6 @@
 package com.awad.emailclientai;
 
+import com.awad.emailclientai.shared.config.environment.EnvironmentConfig;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
@@ -7,7 +8,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class EmailClientAiApplication {
 
 	public static void main(String[] args) {
-		SpringApplication.run(EmailClientAiApplication.class, args);
+        SpringApplication app = new SpringApplication(EmailClientAiApplication.class);
+        app.addInitializers(new EnvironmentConfig());
+        app.run(args);
 	}
 
 }
