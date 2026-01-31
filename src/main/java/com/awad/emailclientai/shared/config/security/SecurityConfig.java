@@ -48,7 +48,10 @@ public class SecurityConfig {
                                 "/api/v1/auth/**",
                                 "/api/v1/public/**",
                                 "/error",
-                                "/health"
+                                "/health",
+                                "/v3/api-docs/**",
+                                "/swagger-ui/**",
+                                "/swagger-ui.html"
                         ).permitAll()
 
                         // All other endpoints require authentication
