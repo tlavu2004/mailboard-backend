@@ -1,324 +1,128 @@
-# GA04 - Postman Testing Guide
+# Hướng dẫn Test API Email Accounts với Postman (GA04)
 
-Hướng dẫn test các API endpoints cho Email Accounts (IMAP/SMTP integration).
+Dưới đây là các bước để bạn kiểm tra chức năng quản lý Email Accounts (IMAP/SMTP) trong MailBoard.
 
-## Thiết lập môi trường
+## 1. Cấu hình Variables (Collection Level)
 
-### 1. Tạo Environment trong Postman
+Tương tự như phần Auth, hãy đảm bảo các biến sau được set trong **Collection Variables**:
 
-Tạo environment mới với các variables:
+| Variable | Initial Value | Current Value | Mô tả |
+| :--- | :--- | :--- | :--- |
+| `base_url` | `http://localhost:8080/api/v1` | `http://localhost:8080/api/v1` | URL gốc của API |
+| `access_token` | *(Để trống)* | *(Tự động điền sau login)* | Token xác thực JWT |
+| `account_id` | *(Để trống)* | *(Tự động điền sau khi connect)* | ID của tài khoản email liên kết |
 
-| Variable | Initial Value | Description |
-|----------|---------------|-------------|
-| `base_url` | `http://localhost:8080` | Backend URL |
-| `access_token` | (empty) | JWT token sau khi login |
-| `account_id` | (empty) | Email account ID sau khi connect |
-
-### 2. Chuẩn bị Gmail App Password
-
-> **Quan trọng:** Gmail yêu cầu App Password nếu bật 2FA
-
-1. Truy cập https://myaccount.google.com/apppasswords
-2. Chọn **Mail** → **Windows Computer** (hoặc Other)
-3. Click **Generate** → Copy 16-ký tự password
-4. Lưu password này để dùng trong bước connect
+> **Lưu ý:** Trước khi test các API này, bạn **PHẢI** chạy API Login để lấy `access_token`.
 
 ---
 
-## API Endpoints
+## 2. Quản lý Tài khoản (Email Accounts)
 
-### Authentication (Lấy Token)
-
-#### Login
-```http
-POST {{base_url}}/api/v1/auth/login
-Content-Type: application/json
-
-{
-    "email": "your-app-email@example.com",
-    "password": "your-app-password"
-}
-```
-
-**Response:**
-```json
-{
-    "success": true,
-    "data": {
-        "accessToken": "eyJhbGciOiJIUzI1NiIs...",
-        "refreshToken": "...",
-        "expiresIn": 3600
-    }
-}
-```
-
-> **Auto-save token:** Thêm script vào Tests tab:
-> ```javascript
-> var jsonData = pm.response.json();
-> pm.environment.set("access_token", jsonData.data.accessToken);
-> ```
-
----
-
-### Email Account Management
-
-#### 1. Connect Email Account
-```http
-POST {{base_url}}/api/v1/email-accounts/connect
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
-{
-    "emailAddress": "your-gmail@gmail.com",
-    "password": "xxxx xxxx xxxx xxxx",  // Gmail App Password
+### A. Kết nối Tài khoản (Connect)
+- **Method**: `POST`
+- **URL**: `{{base_url}}/email-accounts/connect`
+- **Auth**: Inherit auth from parent
+- **Body** (JSON):
+  ```json
+  {
+    "emailAddress": "your-email@gmail.com",
+    "password": "xxxx xxxx xxxx xxxx", 
+    "displayName": "My Work Email",
     "provider": "GMAIL",
-    "authType": "BASIC",
-    "displayName": "My Gmail Account"
-}
-```
+    "authType": "BASIC"
+  }
+  ```
+  > **Quan trọng:** Với Gmail, `password` phải là **App Password** (16 ký tự), không phải password đăng nhập Google.
 
-**Response (200 OK):**
-```json
-{
-    "success": true,
-    "message": "Email account connected successfully",
-    "data": {
-        "id": 1,
-        "emailAddress": "your-gmail@gmail.com",
-        "displayName": "My Gmail Account",
-        "provider": "GMAIL",
-        "authType": "BASIC",
-        "imapHost": "imap.gmail.com",
-        "imapPort": 993,
-        "smtpHost": "smtp.gmail.com",
-        "smtpPort": 587,
-        "active": true,
-        "lastSyncAt": "2026-01-31T12:00:00"
-    }
-}
-```
+- **Kỳ vọng**: Status 200 OK.
+- **Mẹo (Tự động lưu Account ID)**:
+  - Vào tab **Scripts** -> **Post-response** của request này.
+  - Paste đoạn code sau:
+  ```javascript
+  var jsonData = pm.response.json();
+  if (jsonData.success && jsonData.data) {
+      pm.collectionVariables.set("account_id", jsonData.data.id);
+      console.log("Account ID saved:", jsonData.data.id);
+  }
+  ```
 
-> **Auto-save account_id:**
-> ```javascript
-> var jsonData = pm.response.json();
-> pm.environment.set("account_id", jsonData.data.id);
-> ```
+### B. Xem danh sách Tài khoản
+- **Method**: `GET`
+- **URL**: `{{base_url}}/email-accounts`
+- **Auth**: Inherit auth from parent
+- **Kỳ vọng**: Status 200 OK. Danh sách các account đã liên kết.
 
-#### 2. List Connected Accounts
-```http
-GET {{base_url}}/api/v1/email-accounts
-Authorization: Bearer {{access_token}}
-```
-
-#### 3. Get Account Details
-```http
-GET {{base_url}}/api/v1/email-accounts/{{account_id}}
-Authorization: Bearer {{access_token}}
-```
-
-#### 4. Disconnect Account
-```http
-DELETE {{base_url}}/api/v1/email-accounts/{{account_id}}
-Authorization: Bearer {{access_token}}
-```
+### C. Ngắt kết nối (Disconnect)
+- **Method**: `DELETE`
+- **URL**: `{{base_url}}/email-accounts/{{account_id}}`
+- **Auth**: Inherit auth from parent
+- **Kỳ vọng**: Status 200 OK.
 
 ---
 
-### Folder Operations
+## 3. Thao tác với Folders & Messages
 
-#### List Folders
-```http
-GET {{base_url}}/api/v1/email-accounts/{{account_id}}/folders
-Authorization: Bearer {{access_token}}
-```
+### A. Lấy danh sách Folders
+- **Method**: `GET`
+- **URL**: `{{base_url}}/email-accounts/{{account_id}}/folders`
+- **Auth**: Inherit auth from parent
+- **Kỳ vọng**: Status 200 OK. Danh sách folders (INBOX, SENT, ...).
 
-**Response:**
-```json
-{
-    "success": true,
-    "data": [
-        {
-            "name": "INBOX",
-            "displayName": "Inbox",
-            "messageCount": 150,
-            "unreadCount": 5,
-            "type": "INBOX"
-        },
-        {
-            "name": "[Gmail]/Sent Mail",
-            "displayName": "Sent Mail",
-            "messageCount": 45,
-            "unreadCount": 0,
-            "type": "SENT"
-        }
-    ]
-}
-```
+### B. Lấy danh sách Email trong Folder
+- **Method**: `GET`
+- **URL**: `{{base_url}}/email-accounts/{{account_id}}/folders/INBOX/messages?page=0&size=10`
+- **Auth**: Inherit auth from parent
+- **Kỳ vọng**: Status 200 OK. List headers của email (không có body).
+- **Mẹo**: Nhớ lấy `uid` của một email để test chi tiết.
+
+### C. Xem chi tiết Email (Kèm Body)
+- **Method**: `GET`
+- **URL**: `{{base_url}}/email-accounts/{{account_id}}/folders/INBOX/messages/{{email_uid}}`
+- **Auth**: Inherit auth from parent
+- **Params**: Thay `{{email_uid}}` bằng UID thực tế.
+- **Kỳ vọng**: Status 200 OK. Trả về `bodyText`, `bodyHtml`, `attachments`.
 
 ---
 
-### Message Operations
+## 4. Gửi Email (SMTP)
 
-#### 1. List Messages (Paginated)
-```http
-GET {{base_url}}/api/v1/email-accounts/{{account_id}}/folders/INBOX/messages?page=0&size=20
-Authorization: Bearer {{access_token}}
-```
-
-**Response:**
-```json
-{
-    "success": true,
-    "data": [
-        {
-            "uid": 12345,
-            "messageId": "<abc123@mail.gmail.com>",
-            "from": "sender@example.com",
-            "fromName": "John Doe",
-            "to": ["you@gmail.com"],
-            "subject": "Hello World",
-            "sentAt": "2026-01-31T10:30:00",
-            "read": false,
-            "starred": false,
-            "hasAttachments": true
-        }
-    ]
-}
-```
-
-#### 2. Get Message Details
-```http
-GET {{base_url}}/api/v1/email-accounts/{{account_id}}/folders/INBOX/messages/12345
-Authorization: Bearer {{access_token}}
-```
-
-**Response:**
-```json
-{
-    "success": true,
-    "data": {
-        "uid": 12345,
-        "subject": "Hello World",
-        "from": "sender@example.com",
-        "bodyText": "Plain text content...",
-        "bodyHtml": "<html>...</html>",
-        "attachments": [
-            {
-                "id": "0",
-                "filename": "document.pdf",
-                "contentType": "application/pdf",
-                "size": 102400
-            }
-        ]
-    }
-}
-```
-
-#### 3. Mark as Read/Unread
-```http
-PATCH {{base_url}}/api/v1/email-accounts/{{account_id}}/folders/INBOX/messages/12345/read?read=true
-Authorization: Bearer {{access_token}}
-```
-
-#### 4. Star/Unstar Message
-```http
-PATCH {{base_url}}/api/v1/email-accounts/{{account_id}}/folders/INBOX/messages/12345/star?starred=true
-Authorization: Bearer {{access_token}}
-```
-
-#### 5. Delete Message
-```http
-DELETE {{base_url}}/api/v1/email-accounts/{{account_id}}/folders/INBOX/messages/12345
-Authorization: Bearer {{access_token}}
-```
-
----
-
-### Send Email
-
-```http
-POST {{base_url}}/api/v1/email-accounts/{{account_id}}/send
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
-{
+### A. Soạn & Gửi Email
+- **Method**: `POST`
+- **URL**: `{{base_url}}/email-accounts/{{account_id}}/send`
+- **Auth**: Inherit auth from parent
+- **Body** (JSON):
+  ```json
+  {
     "to": ["recipient@example.com"],
-    "cc": [],
-    "bcc": [],
-    "subject": "Test Email from MailBoard",
-    "bodyText": "This is a plain text email.",
-    "bodyHtml": "<h1>Hello!</h1><p>This is an HTML email.</p>",
+    "subject": "Test from MailBoard",
+    "bodyHtml": "<h1>Hello!</h1><p>This is a test email sent via SMTP.</p>",
     "isHtml": true
-}
-```
-
-**Response:**
-```json
-{
-    "success": true,
-    "message": "Email sent successfully",
-    "data": "<message-id@mail.gmail.com>"
-}
-```
+  }
+  ```
+- **Kỳ vọng**: Status 200 OK. Email được gửi đi thành công.
 
 ---
 
-### 📎 Download Attachment
+## 5. Thao tác khác
 
-```http
-GET {{base_url}}/api/v1/email-accounts/{{account_id}}/folders/INBOX/messages/12345/attachments/0
-Authorization: Bearer {{access_token}}
-```
+### A. Đánh dấu Đã đọc/Chưa đọc
+- **Method**: `PATCH`
+- **URL**: `{{base_url}}/email-accounts/{{account_id}}/folders/INBOX/messages/{{email_uid}}/read?read=true`
+- **Auth**: Inherit auth from parent
 
-> Response là binary file. Trong Postman, chọn **Send and Download** để save file.
-
----
-
-## Test Scenarios
-
-### Happy Path
-
-| # | Test | Expected |
-|---|------|----------|
-| 1 | Login | 200 OK, access_token returned |
-| 2 | Connect Gmail | 200 OK, account created |
-| 3 | List Folders | 200 OK, INBOX visible |
-| 4 | List Messages | 200 OK, emails returned |
-| 5 | Get Message Detail | 200 OK, body content returned |
-| 6 | Send Email | 200 OK, email sent |
-| 7 | Disconnect | 200 OK, account removed |
-
-### Error Cases
-
-| # | Test | Expected |
-|---|------|----------|
-| 1 | Connect với wrong password | 400 Bad Request, `EMAIL_003` |
-| 2 | Access account không thuộc user | 404 Not Found, `EMAIL_002` |
-| 3 | Request không có token | 401 Unauthorized |
+### B. Tải file đính kèm
+- **Method**: `GET`
+- **URL**: `{{base_url}}/email-accounts/{{account_id}}/folders/INBOX/messages/{{email_uid}}/attachments/{{attachment_id}}`
+- **Auth**: Inherit auth from parent
+- **Lưu ý**: Trong Postman, bấm mũi tên bên cạnh nút "Send" -> chọn "Send and Download" để tải file về.
 
 ---
 
-## Troubleshooting
+## Lưu ý Debug
 
-### "Failed to connect to email server"
-- Kiểm tra App Password (không phải password thường)
-- Gmail: Bật "Less secure apps" hoặc dùng App Password
-- Kiểm tra IMAP đã bật trong Gmail Settings
+1. **Lỗi "Failed to connect to email server"**:
+   - Kiểm tra lại **App Password** (Xem hướng dẫn bật 2FA & App Password của Google).
+   - Kiểm tra firewall xem có chặn port 993/587 không.
 
-### "Authentication failed"
-- Kiểm tra username là full email address
-- Gmail: Phải dùng App Password nếu có 2FA
-
-### "Connection timeout"
-- Kiểm tra firewall không block port 993/587
-- Kiểm tra network connectivity
-
----
-
-## Provider Settings Reference
-
-| Provider | IMAP Host | Port | SMTP Host | Port |
-|----------|-----------|------|-----------|------|
-| Gmail | imap.gmail.com | 993 | smtp.gmail.com | 587 |
-| Outlook | outlook.office365.com | 993 | smtp.office365.com | 587 |
-| Yahoo | imap.mail.yahoo.com | 993 | smtp.mail.yahoo.com | 587 |
+2. **Lỗi 401 Unauthorized**:
+   - Token hết hạn? Chạy lại Login hoặc Refresh Token request.
