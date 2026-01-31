@@ -2,6 +2,9 @@
 
 Dưới đây là các bước để bạn kiểm tra chức năng quản lý Email Accounts (IMAP/SMTP) trong MailBoard.
 
+> [!IMPORTANT]
+> **Restricted Social Mode:** Chức năng Link Account chỉ hoạt động với user đăng nhập bằng **Email/Password (Local)**. Nếu bạn đăng nhập bằng Google, endpoint `/connect` sẽ trả về **403 Forbidden**.
+
 ## 1. Cấu hình Variables (Collection Level)
 
 Tương tự như phần Auth, hãy đảm bảo các biến sau được set trong **Collection Variables**:
@@ -12,7 +15,7 @@ Tương tự như phần Auth, hãy đảm bảo các biến sau được set tr
 | `access_token` | *(Để trống)* | *(Tự động điền sau login)* | Token xác thực JWT |
 | `account_id` | *(Để trống)* | *(Tự động điền sau khi connect)* | ID của tài khoản email liên kết |
 
-> **Lưu ý:** Trước khi test các API này, bạn **PHẢI** chạy API Login để lấy `access_token`.
+> **Lưu ý:** Trước khi test các API này, bạn **PHẢI** chạy API **Local Login** (Email/Password) để lấy `access_token`. Google Login không được phép link account.
 
 ---
 
@@ -22,6 +25,7 @@ Tương tự như phần Auth, hãy đảm bảo các biến sau được set tr
 - **Method**: `POST`
 - **URL**: `{{base_url}}/email-accounts/connect`
 - **Auth**: Inherit auth from parent
+- **Yêu cầu:** User phải đăng nhập bằng **Local Login** (Email/Password). Google Login sẽ bị từ chối.
 - **Body** (JSON):
   ```json
   {
@@ -126,3 +130,8 @@ Tương tự như phần Auth, hãy đảm bảo các biến sau được set tr
 
 2. **Lỗi 401 Unauthorized**:
    - Token hết hạn? Chạy lại Login hoặc Refresh Token request.
+
+3. **Lỗi 403 Forbidden (EMAIL_009)**:
+   - Bạn đang đăng nhập bằng **Google Login**. Chức năng link account chỉ dành cho Local Login.
+   - **Giải pháp:** Đăng ký/đăng nhập bằng Email/Password thay vì Google.
+
