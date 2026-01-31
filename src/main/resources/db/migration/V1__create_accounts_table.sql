@@ -7,9 +7,12 @@ CREATE TABLE IF NOT EXISTS users (
     password VARCHAR(255),
     google_id VARCHAR(255) UNIQUE,
     name VARCHAR(255) NOT NULL,
+    auth_provider VARCHAR(20) NOT NULL DEFAULT 'LOCAL',
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now()
 );
+
+COMMENT ON COLUMN users.auth_provider IS 'Authentication provider: LOCAL, GOOGLE, MICROSOFT';
 
 -- Auto-update updated_at column on record update
 CREATE OR REPLACE FUNCTION update_updated_at_column()
