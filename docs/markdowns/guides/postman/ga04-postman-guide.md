@@ -27,7 +27,7 @@ Tạo environment mới với các variables:
 
 ## API Endpoints
 
-### 🔐 Authentication (Lấy Token)
+### Authentication (Lấy Token)
 
 #### Login
 ```http
@@ -52,7 +52,7 @@ Content-Type: application/json
 }
 ```
 
-> 💡 **Auto-save token:** Thêm script vào Tests tab:
+> **Auto-save token:** Thêm script vào Tests tab:
 > ```javascript
 > var jsonData = pm.response.json();
 > pm.environment.set("access_token", jsonData.data.accessToken);
@@ -60,7 +60,7 @@ Content-Type: application/json
 
 ---
 
-### 📧 Email Account Management
+### Email Account Management
 
 #### 1. Connect Email Account
 ```http
@@ -98,7 +98,7 @@ Content-Type: application/json
 }
 ```
 
-> 💡 **Auto-save account_id:**
+> **Auto-save account_id:**
 > ```javascript
 > var jsonData = pm.response.json();
 > pm.environment.set("account_id", jsonData.data.id);
@@ -124,7 +124,7 @@ Authorization: Bearer {{access_token}}
 
 ---
 
-### 📁 Folder Operations
+### Folder Operations
 
 #### List Folders
 ```http
@@ -157,7 +157,7 @@ Authorization: Bearer {{access_token}}
 
 ---
 
-### 📨 Message Operations
+### Message Operations
 
 #### 1. List Messages (Paginated)
 ```http
@@ -234,7 +234,7 @@ Authorization: Bearer {{access_token}}
 
 ---
 
-### ✉️ Send Email
+### Send Email
 
 ```http
 POST {{base_url}}/api/v1/email-accounts/{{account_id}}/send
@@ -276,7 +276,7 @@ Authorization: Bearer {{access_token}}
 
 ## Test Scenarios
 
-### ✅ Happy Path
+### Happy Path
 
 | # | Test | Expected |
 |---|------|----------|
@@ -288,7 +288,7 @@ Authorization: Bearer {{access_token}}
 | 6 | Send Email | 200 OK, email sent |
 | 7 | Disconnect | 200 OK, account removed |
 
-### ❌ Error Cases
+### Error Cases
 
 | # | Test | Expected |
 |---|------|----------|
@@ -301,17 +301,17 @@ Authorization: Bearer {{access_token}}
 ## Troubleshooting
 
 ### "Failed to connect to email server"
-- ✅ Kiểm tra App Password (không phải password thường)
-- ✅ Gmail: Bật "Less secure apps" hoặc dùng App Password
-- ✅ Kiểm tra IMAP đã bật trong Gmail Settings
+- Kiểm tra App Password (không phải password thường)
+- Gmail: Bật "Less secure apps" hoặc dùng App Password
+- Kiểm tra IMAP đã bật trong Gmail Settings
 
 ### "Authentication failed"
-- ✅ Kiểm tra username là full email address
-- ✅ Gmail: Phải dùng App Password nếu có 2FA
+- Kiểm tra username là full email address
+- Gmail: Phải dùng App Password nếu có 2FA
 
 ### "Connection timeout"
-- ✅ Kiểm tra firewall không block port 993/587
-- ✅ Kiểm tra network connectivity
+- Kiểm tra firewall không block port 993/587
+- Kiểm tra network connectivity
 
 ---
 

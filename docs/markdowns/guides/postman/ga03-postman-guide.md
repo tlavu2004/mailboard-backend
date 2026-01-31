@@ -16,7 +16,7 @@ Hướng dẫn test các API endpoints cho Authentication (Email/Password + Goog
 
 ## API Endpoints
 
-### 🔐 Authentication
+### Authentication
 
 ---
 
@@ -77,7 +77,7 @@ Content-Type: application/json
 }
 ```
 
-> 💡 **Auto-save tokens:** Thêm script vào Tests tab:
+> **Auto-save tokens:** Thêm script vào Tests tab:
 > ```javascript
 > var jsonData = pm.response.json();
 > if (jsonData.success) {
@@ -184,7 +184,7 @@ Content-Type: application/json
 
 ---
 
-### 📧 Mock Email API (Protected)
+### Mock Email API (Protected)
 
 > **Yêu cầu:** Phải đính kèm `Authorization: Bearer {{access_token}}`
 
@@ -285,7 +285,7 @@ Authorization: Bearer {{access_token}}
 
 ## Test Scenarios
 
-### ✅ Happy Path
+### Happy Path
 
 | # | Test | Expected |
 |---|------|----------|
@@ -295,7 +295,7 @@ Authorization: Bearer {{access_token}}
 | 4 | Refresh token | 200 OK, new tokens |
 | 5 | Logout | 200 OK, session cleared |
 
-### ❌ Error Cases
+### Error Cases
 
 | # | Test | Expected |
 |---|------|----------|
@@ -310,15 +310,15 @@ Authorization: Bearer {{access_token}}
 ## Troubleshooting
 
 ### "401 Unauthorized" on protected endpoints
-- ✅ Kiểm tra đã login và có access_token
-- ✅ Kiểm tra header: `Authorization: Bearer <token>`
-- ✅ Token có thể đã expired → dùng refresh token
+- Kiểm tra đã login và có access_token
+- Kiểm tra header: `Authorization: Bearer <token>`
+- Token có thể đã expired → dùng refresh token
 
 ### Google login fails
-- ✅ Kiểm tra Google Client ID trong `application.yaml`
-- ✅ ID Token phải fresh (expires sau vài phút)
-- ✅ Token phải từ đúng Google project
+- Kiểm tra Google Client ID trong `application.yaml`
+- ID Token phải fresh (expires sau vài phút)
+- Token phải từ đúng Google project
 
 ### Refresh token fails
-- ✅ Refresh token chỉ dùng 1 lần (rotated after use)
-- ✅ Kiểm tra refresh token chưa expired (7 days by default)
+- Refresh token chỉ dùng 1 lần (rotated after use)
+- Kiểm tra refresh token chưa expired (7 days by default)
