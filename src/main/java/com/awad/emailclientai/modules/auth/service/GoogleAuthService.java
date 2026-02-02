@@ -45,6 +45,7 @@ public class GoogleAuthService {
                             User newUser = User.builder()
                                     .email(email)
                                     .googleId(googleId)
+                                    .authProvider(com.awad.emailclientai.modules.user.entity.AuthProvider.GOOGLE)
                                     .name(name)
                                     .password(null)
                                     .build();
