@@ -57,6 +57,10 @@ google:
     client-secret: ${GOOGLE_CLIENT_SECRET}
     redirect-uri: ${GOOGLE_REDIRECT_URI}
 
+# Encryption Configuration (for secure credential storage - GA04)
+encryption:
+  aes-secret-key: ${ENCRYPTION_AES_KEY:DefaultSecretKeyForDev1234567890!}
+
 # CORS Configuration
 cors:
   allowed-origins:
