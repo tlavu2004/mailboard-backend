@@ -19,6 +19,33 @@ Tương tự như phần Auth, hãy đảm bảo các biến sau được set tr
 
 ---
 
+## 1.5. Hướng dẫn lấy App Password (Quan trọng)
+
+Để kết nối được Gmail/Outlook qua giao thức SMTP/IMAP Basic Auth, bạn **KHÔNG THỂ** dùng mật khẩu đăng nhập bình thường. Bạn bắt buộc phải tạo **App Password**.
+
+### Đối với Gmail:
+1.  Truy cập [Google My Account](https://myaccount.google.com/).
+2.  Vào mục **Security** -> Bật **2-Step Verification** (nếu chưa bật).
+3.  Tìm kiếm "App passwords" trên thanh tìm kiếm của trang (hoặc vào Security -> 2-Step Verification -> Cuối trang chọn App passwords).
+4.  Điền App name: `MailBoard`.
+5.  Bấm **Create**.
+6.  Copy chuỗi ký tự 16 chữ số (ví dụ: `xxxx xxxx xxxx xxxx`) -> Đây chính là `password` để dùng trong API Connect.
+
+### Đối với Outlook:
+1.  Truy cập [Microsoft Account Security](https://account.live.com/proofs/manage/additional).
+2.  Bật **Two-step verification** (nếu chưa bật).
+3.  Kéo xuống mục **App passwords** -> Chọn **Create a new app password**.
+4.  Copy password được tạo -> Dùng làm `password` kết nối.
+
+> [!WARNING]
+> **Lỗi "Không tìm thấy tài khoản Microsoft"?**
+> Nếu bạn dùng email sinh viên/công ty (`@...edu.vn`, `@...company.com`), đây là **Work/School Account**, không phải Personal Account.
+> *   Những tài khoản này quản lý tại `myaccount.microsoft.com` và thường **bị Admin chặn SMTP/IMAP**.
+> *   **Giải pháp:** Hãy dùng tài khoản cá nhân (`@outlook.com`, `@hotmail.com`, `@live.com`) để test tính năng này.
+
+---
+
+
 ## 2. Quản lý Tài khoản (Email Accounts)
 
 ### A. Kết nối Tài khoản (Connect)
@@ -99,8 +126,7 @@ Tương tự như phần Auth, hãy đảm bảo các biến sau được set tr
   {
     "to": ["recipient@example.com"],
     "subject": "Test from MailBoard",
-    "bodyHtml": "<h1>Hello!</h1><p>This is a test email sent via SMTP.</p>",
-    "isHtml": true
+    "bodyHtml": "<h1>Hello!</h1><p>This is a test email sent via SMTP.</p>"
   }
   ```
 - **Kỳ vọng**: Status 200 OK. Email được gửi đi thành công.
@@ -111,8 +137,14 @@ Tương tự như phần Auth, hãy đảm bảo các biến sau được set tr
 
 ### A. Đánh dấu Đã đọc/Chưa đọc
 - **Method**: `PATCH`
-- **URL**: `{{base_url}}/email-accounts/{{account_id}}/folders/INBOX/messages/{{email_uid}}/read?read=true`
+- **URL**: `{{base_url}}/email-accounts/{{account_id}}/folders/{{folder_name}}/messages/{{email_uid}}/read`
 - **Auth**: Inherit auth from parent
+- **Body** (JSON):
+  ```json
+  {
+    "read": true
+  }
+  ```
 
 ### B. Tải file đính kèm
 - **Method**: `GET`
