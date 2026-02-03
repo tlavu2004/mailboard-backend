@@ -36,6 +36,11 @@ spring:
     deserialization:
       fail-on-unknown-properties: false
 
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 50MB
+
 server:
   port: ${SERVER_PORT:8080}
   error:

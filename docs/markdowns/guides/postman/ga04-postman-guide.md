@@ -117,7 +117,7 @@ Tương tự như phần Auth, hãy đảm bảo các biến sau được set tr
 
 ## 4. Gửi Email (SMTP)
 
-### Gửi Email (Có hoặc không có file đính kèm)
+### A. Gửi Email mới (Có hoặc không có file đính kèm)
 - **Method**: `POST`
 - **URL**: `{{base_url}}/email-accounts/{{account_id}}/send`
 - **Auth**: Inherit auth from parent
@@ -132,8 +132,11 @@ Tương tự như phần Auth, hãy đảm bảo các biến sau được set tr
   ```json
   {
     "to": ["recipient@example.com"],
+    "cc": ["cc-person@example.com"],
+    "bcc": ["secret@example.com"],
     "subject": "Test from MailBoard",
-    "bodyHtml": "<h1>Hello!</h1><p>This is a test email.</p>"
+    "bodyHtml": "<h1>Hello!</h1><p>This is a test email.</p>",
+    "bodyText": "Hello! This is a test email."
   }
   ```
   
@@ -141,9 +144,93 @@ Tương tự như phần Auth, hãy đảm bảo các biến sau được set tr
   > 1. Chọn tab **Body** → chọn **form-data**
   > 2. Key `email`: chọn Type = **Text**, paste JSON vào ô Value
   > 3. Key `attachments` *(optional)*: chọn Type = **File**, chọn file đính kèm
-  > 4. Nếu không muốn đính kèm file, bỏ qua key `attachments`
 
 - **Kỳ vọng**: Status 200 OK. Email được gửi đi thành công.
+
+---
+
+### B. Reply (Trả lời Email)
+
+Để reply một email, bạn cần lấy `messageId` của email gốc từ API **Xem chi tiết Email**.
+
+- **Method**: `POST`
+- **URL**: `{{base_url}}/email-accounts/{{account_id}}/send`
+- **Body**: `form-data`
+
+**Bước 1**: Lấy `messageId` từ email gốc
+```
+GET /email-accounts/{{account_id}}/folders/INBOX/messages/{{uid}}
+```
+Response sẽ chứa field `messageId`, ví dụ: `<CAF7gSkT...@mail.gmail.com>`
+
+**Bước 2**: Gửi reply với JSON sau:
+```json
+{
+  "to": ["original-sender@example.com"],
+  "subject": "Re: Original Subject Here",
+  "bodyHtml": "<p>Cảm ơn bạn đã liên hệ!</p><br><br><blockquote>On [date], [sender] wrote:<br>[original message]</blockquote>",
+  "bodyText": "Cảm ơn bạn đã liên hệ!",
+  "inReplyTo": "<CAF7gSkT...@mail.gmail.com>",
+  "references": ["<CAF7gSkT...@mail.gmail.com>"]
+}
+```
+
+| Field | Mô tả |
+| :--- | :--- |
+| `inReplyTo` | Message-ID của email đang reply. Giúp email client nhóm vào thread. |
+| `references` | Danh sách Message-ID của chuỗi email (thread). Nếu reply lần đầu, chứa 1 phần tử là `messageId` của email gốc. |
+| `subject` | Thường bắt đầu bằng `Re: ` + subject gốc. |
+
+#### Reply với File đính kèm
+
+Khi cần reply kèm file, bạn thêm key `attachments` trong form-data:
+
+| Key | Type | Value |
+| :--- | :--- | :--- |
+| `email` | Text | JSON reply (như trên) |
+| `attachments` | File | Chọn file từ máy |
+
+**Ví dụ JSON cho Reply với attachment:**
+```json
+{
+  "to": ["original-sender@example.com"],
+  "subject": "Re: Về việc báo cáo Q4",
+  "bodyHtml": "<p>Em gửi lại file đính kèm theo yêu cầu.</p><br><br><blockquote>On 02/03/2026, manager@company.com wrote:<br>Gửi lại file báo cáo cho anh.</blockquote>",
+  "bodyText": "Em gửi lại file đính kèm theo yêu cầu.",
+  "inReplyTo": "<CAF7gSkT123@mail.gmail.com>",
+  "references": ["<CAF7gSkT123@mail.gmail.com>"]
+}
+```
+
+> **Setup trong Postman:**
+> 1. Key `email` = Text + paste JSON trên
+> 2. Key `attachments` = File + chọn file cần gửi kèm
+> 3. Có thể thêm nhiều file bằng cách thêm nhiều row `attachments`
+
+---
+
+### C. Forward (Chuyển tiếp Email)
+
+Forward đơn giản hơn Reply - chỉ cần gửi email mới với nội dung copy từ email gốc.
+
+- **Method**: `POST`
+- **URL**: `{{base_url}}/email-accounts/{{account_id}}/send`
+- **Body**: `form-data`
+
+**JSON mẫu cho Forward:**
+```json
+{
+  "to": ["forward-recipient@example.com"],
+  "subject": "Fwd: Original Subject Here",
+  "bodyHtml": "<p>FYI - Chuyển tiếp email này cho bạn.</p><br><br>---------- Forwarded message ----------<br><b>From:</b> original-sender@example.com<br><b>Date:</b> Feb 3, 2026<br><b>Subject:</b> Original Subject<br><br><p>Nội dung email gốc ở đây...</p>",
+  "bodyText": "FYI - Chuyển tiếp email này cho bạn.\n\n---------- Forwarded message ----------\nFrom: original-sender@example.com\nDate: Feb 3, 2026\nSubject: Original Subject\n\nNội dung email gốc..."
+}
+```
+
+> **Lưu ý:**
+> - Forward **không cần** `inReplyTo` và `references`
+> - Subject thường bắt đầu bằng `Fwd: `
+> - Có thể đính kèm file của email gốc bằng cách thêm key `attachments`
 
 ---
 
