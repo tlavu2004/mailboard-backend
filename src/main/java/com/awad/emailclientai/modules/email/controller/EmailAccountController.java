@@ -199,9 +199,15 @@ public class EmailAccountController {
         AttachmentResourceDto attachment = emailAccountService.downloadAttachment(
                 principal.getId(), accountId, folder, uid, attachmentId);
         
+        String filename = attachment.getFilename();
+        if (filename == null || filename.isBlank()) {
+            filename = "attachment";
+        }
+
+        // 1. Try to parse Content-Type from DTO
         MediaType mediaType = MediaType.APPLICATION_OCTET_STREAM;
         String contentType = attachment.getContentType();
-        if (contentType != null) {
+        if (contentType != null && !contentType.isBlank()) {
             if (contentType.contains(";")) {
                 contentType = contentType.split(";")[0].trim();
             }
@@ -211,16 +217,28 @@ public class EmailAccountController {
                 // ignore
             }
         }
-        
-        // Force TEXT_PLAIN if filename ends with .txt
-        if (attachment.getFilename() != null && attachment.getFilename().toLowerCase().endsWith(".txt")) {
+
+        // 2. Robust Override: Force correct MediaType based on file extension
+        // This fixes issues where email servers send generic "application/octet-stream"
+        // or where Windows/Postman fails to infer the type for "Save as" dialog.
+        String lowerFn = filename.toLowerCase();
+        if (lowerFn.endsWith(".txt")) {
             mediaType = MediaType.TEXT_PLAIN;
+        } else if (lowerFn.endsWith(".pdf")) {
+            mediaType = MediaType.APPLICATION_PDF;
+        } else if (lowerFn.endsWith(".jpg") || lowerFn.endsWith(".jpeg")) {
+            mediaType = MediaType.IMAGE_JPEG;
+        } else if (lowerFn.endsWith(".png")) {
+            mediaType = MediaType.IMAGE_PNG;
+        } else if (lowerFn.endsWith(".html") || lowerFn.endsWith(".htm")) {
+            mediaType = MediaType.TEXT_HTML;
         }
 
+        // Use simple string format for maximum Windows/Postman compatibility
         return ResponseEntity.ok()
                 .contentType(mediaType)
                 .contentLength(attachment.getSize())
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + attachment.getFilename() + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
                 .body(new InputStreamResource(attachment.getInputStream()));
     }
 }
