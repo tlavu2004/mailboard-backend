@@ -29,6 +29,11 @@ public class User {
     @Column(name = "google_id", unique = true)
     private String googleId;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "auth_provider", nullable = false)
+    @Builder.Default
+    private AuthProvider authProvider = AuthProvider.LOCAL;
+
     @Column(nullable = false)
     private String name;
 

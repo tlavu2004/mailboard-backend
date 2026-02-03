@@ -9,7 +9,7 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
+import java.util.Collections;
 
 @Service
 @RequiredArgsConstructor
@@ -25,14 +25,14 @@ public class CustomUserDetailsService implements UserDetailsService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + email));
 
-        return org.springframework.security.core.userdetails.User.builder()
-                .username(user.getEmail())
+        return UserPrincipal.builder()
+                .id(user.getId())
+                .email(user.getEmail())
                 .password(user.getPassword() != null ? user.getPassword() : "")
-                .authorities(new ArrayList<>())
-                .accountExpired(false)
-                .accountLocked(false)
-                .credentialsExpired(false)
-                .disabled(false)
+                .name(user.getName())
+                .authProvider(user.getAuthProvider())
+                .enabled(true)
+                .authorities(Collections.emptyList())
                 .build();
     }
 }

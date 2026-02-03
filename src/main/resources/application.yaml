@@ -36,6 +36,11 @@ spring:
     deserialization:
       fail-on-unknown-properties: false
 
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 50MB
+
 server:
   port: ${SERVER_PORT:8080}
   error:
@@ -56,6 +61,10 @@ google:
     client-id: ${GOOGLE_CLIENT_ID}
     client-secret: ${GOOGLE_CLIENT_SECRET}
     redirect-uri: ${GOOGLE_REDIRECT_URI}
+
+# Encryption Configuration (for secure credential storage - GA04)
+encryption:
+  aes-secret-key: ${ENCRYPTION_AES_KEY:DefaultSecretKeyForDev1234567890!}
 
 # CORS Configuration
 cors:

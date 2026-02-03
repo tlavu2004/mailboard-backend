@@ -178,7 +178,63 @@ public enum ErrorCode {
      * SYSTEM_004: File operation error
      * Triggered when: File upload/download fails
      */
-    FILE_OPERATION_ERROR("SYSTEM_004", "File operation failed", HttpStatus.INTERNAL_SERVER_ERROR);
+    FILE_OPERATION_ERROR("SYSTEM_004", "File operation failed", HttpStatus.INTERNAL_SERVER_ERROR),
+
+    // ============= EMAIL ACCOUNT ERRORS (EMAIL_XXX) =============
+
+    /**
+     * EMAIL_001: Email account already linked
+     * Triggered when: User tries to link an already connected email
+     */
+    EMAIL_ACCOUNT_ALREADY_EXISTS("EMAIL_001", "This email account is already linked", HttpStatus.CONFLICT),
+
+    /**
+     * EMAIL_002: Email account not found
+     * Triggered when: Accessing non-existent email account
+     */
+    EMAIL_ACCOUNT_NOT_FOUND("EMAIL_002", "Email account not found", HttpStatus.NOT_FOUND),
+
+    /**
+     * EMAIL_003: IMAP connection failed
+     * Triggered when: Cannot connect to IMAP server
+     */
+    IMAP_CONNECTION_FAILED("EMAIL_003", "Failed to connect to email server. Please check your credentials", HttpStatus.BAD_REQUEST),
+
+    /**
+     * EMAIL_004: SMTP connection failed
+     * Triggered when: Cannot connect to SMTP server
+     */
+    SMTP_CONNECTION_FAILED("EMAIL_004", "Failed to connect to mail sending server", HttpStatus.BAD_REQUEST),
+
+    /**
+     * EMAIL_005: Email folder not found
+     * Triggered when: Accessing non-existent email folder
+     */
+    EMAIL_FOLDER_NOT_FOUND("EMAIL_005", "Email folder not found", HttpStatus.NOT_FOUND),
+
+    /**
+     * EMAIL_006: Email message not found
+     * Triggered when: Accessing non-existent email message
+     */
+    EMAIL_MESSAGE_NOT_FOUND("EMAIL_006", "Email message not found", HttpStatus.NOT_FOUND),
+
+    /**
+     * EMAIL_007: Email send failed
+     * Triggered when: Failed to send email via SMTP
+     */
+    EMAIL_SEND_FAILED("EMAIL_007", "Failed to send email", HttpStatus.INTERNAL_SERVER_ERROR),
+
+    /**
+     * EMAIL_008: Attachment not found
+     * Triggered when: Accessing non-existent attachment
+     */
+    EMAIL_ATTACHMENT_NOT_FOUND("EMAIL_008", "Attachment not found", HttpStatus.NOT_FOUND),
+
+    /**
+     * EMAIL_009: Social login users cannot link additional accounts
+     * Triggered when: Google/Microsoft user tries to connect another email
+     */
+    EMAIL_LINKING_DISABLED_FOR_SOCIAL("EMAIL_009", "Account linking is not available for social login users. Please use local registration for multi-account support.", HttpStatus.FORBIDDEN);
 
     // ============= ENUM FIELDS =============
 
