@@ -117,18 +117,32 @@ Tương tự như phần Auth, hãy đảm bảo các biến sau được set tr
 
 ## 4. Gửi Email (SMTP)
 
-### A. Soạn & Gửi Email
+### Gửi Email (Có hoặc không có file đính kèm)
 - **Method**: `POST`
 - **URL**: `{{base_url}}/email-accounts/{{account_id}}/send`
 - **Auth**: Inherit auth from parent
-- **Body** (JSON):
+- **Body**: `form-data`
+  
+  | Key | Type | Value/Description |
+  | :--- | :--- | :--- |
+  | `email` | Text | JSON string chứa nội dung email (xem bên dưới) |
+  | `attachments` | File | *(Optional)* Chọn file từ máy (có thể chọn nhiều file) |
+  
+  **Giá trị của key `email`** (dán vào ô Value, chọn Type là Text):
   ```json
   {
     "to": ["recipient@example.com"],
     "subject": "Test from MailBoard",
-    "bodyHtml": "<h1>Hello!</h1><p>This is a test email sent via SMTP.</p>"
+    "bodyHtml": "<h1>Hello!</h1><p>This is a test email.</p>"
   }
   ```
+  
+  > **Lưu ý trong Postman:**
+  > 1. Chọn tab **Body** → chọn **form-data**
+  > 2. Key `email`: chọn Type = **Text**, paste JSON vào ô Value
+  > 3. Key `attachments` *(optional)*: chọn Type = **File**, chọn file đính kèm
+  > 4. Nếu không muốn đính kèm file, bỏ qua key `attachments`
+
 - **Kỳ vọng**: Status 200 OK. Email được gửi đi thành công.
 
 ---

@@ -13,6 +13,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
 import java.util.Date;
 import java.util.Properties;
 
@@ -54,6 +57,40 @@ public class SmtpService {
         Transport.send(message);
         
         log.info("Email sent successfully from {} to {}", 
+                account.getEmailAddress(), request.getTo());
+        
+        return message.getMessageID();
+    }
+
+    /**
+     * Sends an email with file attachments using the given account's SMTP settings.
+     *
+     * @param account     The email account to send from
+     * @param request     The email composition details
+     * @param attachments Array of files to attach
+     * @return Message-ID of the sent email
+     */
+    public String sendEmailWithAttachments(EmailAccount account, SendEmailRequestDto request, 
+                                           MultipartFile[] attachments) throws MessagingException, IOException {
+        Properties props = createSmtpProperties(account);
+        
+        String password = encryptionService.decrypt(account.getEncryptedPassword());
+        
+        Session session = Session.getInstance(props, new Authenticator() {
+            @Override
+            protected PasswordAuthentication getPasswordAuthentication() {
+                return new PasswordAuthentication(account.getUsername(), password);
+            }
+        });
+        
+        session.setDebug(log.isDebugEnabled());
+        
+        MimeMessage message = createMimeMessageWithAttachments(session, account, request, attachments);
+        
+        Transport.send(message);
+        
+        log.info("Email with {} attachments sent from {} to {}", 
+                attachments != null ? attachments.length : 0,
                 account.getEmailAddress(), request.getTo());
         
         return message.getMessageID();
@@ -181,6 +218,94 @@ public class SmtpService {
         } else {
             message.setText("", "UTF-8");
         }
+        
+        return message;
+    }
+
+    private MimeMessage createMimeMessageWithAttachments(Session session, EmailAccount account,
+                                                         SendEmailRequestDto request, 
+                                                         MultipartFile[] attachments) throws MessagingException, IOException {
+        MimeMessage message = new MimeMessage(session);
+        
+        // From
+        message.setFrom(new InternetAddress(account.getEmailAddress()));
+        
+        // To
+        if (request.getTo() != null && !request.getTo().isEmpty()) {
+            for (String to : request.getTo()) {
+                message.addRecipient(Message.RecipientType.TO, new InternetAddress(to));
+            }
+        }
+        
+        // CC
+        if (request.getCc() != null && !request.getCc().isEmpty()) {
+            for (String cc : request.getCc()) {
+                message.addRecipient(Message.RecipientType.CC, new InternetAddress(cc));
+            }
+        }
+        
+        // BCC
+        if (request.getBcc() != null && !request.getBcc().isEmpty()) {
+            for (String bcc : request.getBcc()) {
+                message.addRecipient(Message.RecipientType.BCC, new InternetAddress(bcc));
+            }
+        }
+        
+        // Subject
+        message.setSubject(request.getSubject(), "UTF-8");
+        
+        // Date
+        message.setSentDate(new Date());
+        
+        // Reply headers (for threading)
+        if (request.getInReplyTo() != null && !request.getInReplyTo().isEmpty()) {
+            message.setHeader("In-Reply-To", request.getInReplyTo());
+        }
+        if (request.getReferences() != null && !request.getReferences().isEmpty()) {
+            message.setHeader("References", String.join(" ", request.getReferences()));
+        }
+        
+        // Use "mixed" multipart for body + attachments
+        MimeMultipart mixedMultipart = new MimeMultipart("mixed");
+        
+        // Body part (can be alternative text/html or plain text)
+        MimeBodyPart bodyPart = new MimeBodyPart();
+        if (request.getBodyHtml() != null && !request.getBodyHtml().isEmpty()) {
+            // Multipart alternative for text + HTML
+            MimeMultipart alternativeMultipart = new MimeMultipart("alternative");
+            
+            if (request.getBodyText() != null && !request.getBodyText().isEmpty()) {
+                MimeBodyPart textPart = new MimeBodyPart();
+                textPart.setText(request.getBodyText(), "UTF-8");
+                alternativeMultipart.addBodyPart(textPart);
+            }
+            
+            MimeBodyPart htmlPart = new MimeBodyPart();
+            htmlPart.setContent(request.getBodyHtml(), "text/html; charset=UTF-8");
+            alternativeMultipart.addBodyPart(htmlPart);
+            
+            bodyPart.setContent(alternativeMultipart);
+        } else if (request.getBodyText() != null) {
+            bodyPart.setText(request.getBodyText(), "UTF-8");
+        } else {
+            bodyPart.setText("", "UTF-8");
+        }
+        mixedMultipart.addBodyPart(bodyPart);
+        
+        // Attachment parts
+        if (attachments != null) {
+            for (MultipartFile file : attachments) {
+                if (file != null && !file.isEmpty()) {
+                    MimeBodyPart attachmentPart = new MimeBodyPart();
+                    attachmentPart.setFileName(file.getOriginalFilename());
+                    attachmentPart.setContent(file.getBytes(), file.getContentType());
+                    attachmentPart.setHeader("Content-Transfer-Encoding", "base64");
+                    mixedMultipart.addBodyPart(attachmentPart);
+                }
+            }
+        }
+        
+        message.setContent(mixedMultipart);
         
         return message;
     }

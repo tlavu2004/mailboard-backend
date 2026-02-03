@@ -15,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -159,6 +160,16 @@ public class EmailAccountService {
                              SendEmailRequestDto request) throws MessagingException {
         EmailAccount account = getAccountForUser(userId, accountId);
         return smtpService.sendEmail(account, request);
+    }
+
+    /**
+     * Sends an email with file attachments.
+     */
+    public String sendEmailWithAttachments(Long userId, Long accountId, 
+                                           SendEmailRequestDto request,
+                                           MultipartFile[] attachments) throws MessagingException, IOException {
+        EmailAccount account = getAccountForUser(userId, accountId);
+        return smtpService.sendEmailWithAttachments(account, request, attachments);
     }
 
     /**

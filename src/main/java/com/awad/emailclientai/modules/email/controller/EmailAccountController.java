@@ -17,6 +17,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.util.List;
@@ -174,14 +176,27 @@ public class EmailAccountController {
 
     // ==================== Send Email ====================
 
-    @PostMapping("/{accountId}/send")
-    @Operation(summary = "Send an email using the linked account")
+    @PostMapping(value = "/{accountId}/send", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(summary = "Send an email using the linked account",
+               description = "Send an email with optional file attachments using multipart form-data")
     public ResponseEntity<ApiResponse<String>> sendEmail(
             @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable Long accountId,
-            @Valid @RequestBody SendEmailRequestDto request) throws MessagingException {
+            @RequestParam("email") String emailJson,
+            @RequestPart(value = "attachments", required = false) MultipartFile[] attachments) 
+            throws MessagingException, IOException {
         
-        String messageId = emailAccountService.sendEmail(principal.getId(), accountId, request);
+        // Parse JSON string to DTO
+        ObjectMapper objectMapper = new ObjectMapper();
+        SendEmailRequestDto request = objectMapper.readValue(emailJson, SendEmailRequestDto.class);
+        
+        String messageId;
+        if (attachments != null && attachments.length > 0) {
+            messageId = emailAccountService.sendEmailWithAttachments(
+                    principal.getId(), accountId, request, attachments);
+        } else {
+            messageId = emailAccountService.sendEmail(principal.getId(), accountId, request);
+        }
         return ResponseEntity.ok(ApiResponse.success("Email sent successfully", messageId));
     }
 
