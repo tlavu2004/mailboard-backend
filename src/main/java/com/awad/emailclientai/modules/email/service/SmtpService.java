@@ -35,9 +35,9 @@ public class SmtpService {
      *
      * @param account The email account to send from
      * @param request The email composition details
-     * @return Message-ID of the sent email
+     * @return The sent MimeMessage (for IMAP APPEND to Sent folder)
      */
-    public String sendEmail(EmailAccount account, SendEmailRequestDto request) throws MessagingException {
+    public MimeMessage sendEmail(EmailAccount account, SendEmailRequestDto request) throws MessagingException {
         Properties props = createSmtpProperties(account);
         
         String password = encryptionService.decrypt(account.getEncryptedPassword());
@@ -59,7 +59,7 @@ public class SmtpService {
         log.info("Email sent successfully from {} to {}", 
                 account.getEmailAddress(), request.getTo());
         
-        return message.getMessageID();
+        return message;
     }
 
     /**
@@ -68,9 +68,9 @@ public class SmtpService {
      * @param account     The email account to send from
      * @param request     The email composition details
      * @param attachments Array of files to attach
-     * @return Message-ID of the sent email
+     * @return The sent MimeMessage (for IMAP APPEND to Sent folder)
      */
-    public String sendEmailWithAttachments(EmailAccount account, SendEmailRequestDto request, 
+    public MimeMessage sendEmailWithAttachments(EmailAccount account, SendEmailRequestDto request, 
                                            MultipartFile[] attachments) throws MessagingException, IOException {
         Properties props = createSmtpProperties(account);
         
@@ -93,7 +93,7 @@ public class SmtpService {
                 attachments != null ? attachments.length : 0,
                 account.getEmailAddress(), request.getTo());
         
-        return message.getMessageID();
+        return message;
     }
 
     /**

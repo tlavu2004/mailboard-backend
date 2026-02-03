@@ -147,6 +147,11 @@ Tương tự như phần Auth, hãy đảm bảo các biến sau được set tr
 
 - **Kỳ vọng**: Status 200 OK. Email được gửi đi thành công.
 
+> **✨ Tính năng mới: Auto-Save to Sent**
+> - Sau khi gửi email, hệ thống sẽ **tự động lưu** bản copy vào folder "Sent" (Đã gửi)
+> - Hoạt động với Gmail (`[Gmail]/Sent Mail`), Outlook (`Sent`), và các provider khác
+> - Email sẽ xuất hiện trong folder "Đã gửi" ngay sau khi gửi thành công
+
 ---
 
 ### B. Reply (Trả lời Email)

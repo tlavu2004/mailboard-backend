@@ -6,6 +6,7 @@ import com.awad.emailclientai.modules.email.dto.response.MailMessageDetailDto;
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDto;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
 import com.awad.emailclientai.modules.email.entity.EmailAuthType;
+import com.awad.emailclientai.modules.email.entity.EmailProvider;
 import com.awad.emailclientai.shared.service.EncryptionService;
 import jakarta.mail.*;
 import jakarta.mail.internet.InternetAddress;
@@ -281,6 +282,75 @@ public class ImapService {
             folder.close(false);
             throw new MessagingException("Attachment not found");
         }
+    }
+
+    /**
+     * Appends a sent message to the Sent folder using IMAP APPEND.
+     * This is called after sending via SMTP to save a copy in the Sent folder.
+     *
+     * @param account The email account
+     * @param message The MimeMessage that was sent
+     */
+    public void appendToSentFolder(EmailAccount account, jakarta.mail.internet.MimeMessage message) 
+            throws MessagingException {
+        try (Store store = connectToStore(account)) {
+            String sentFolderName = getSentFolderName(account.getProvider());
+            Folder sentFolder = store.getFolder(sentFolderName);
+            
+            // If primary sent folder doesn't exist, try alternatives
+            if (!sentFolder.exists()) {
+                log.warn("Sent folder '{}' not found, trying alternatives", sentFolderName);
+                sentFolder = findSentFolder(store);
+            }
+            
+            if (sentFolder != null && sentFolder.exists()) {
+                sentFolder.open(Folder.READ_WRITE);
+                // Mark as read (SEEN) since we sent it
+                message.setFlag(Flags.Flag.SEEN, true);
+                sentFolder.appendMessages(new Message[]{message});
+                sentFolder.close(false);
+                log.info("Message appended to Sent folder: {}", sentFolder.getFullName());
+            } else {
+                log.warn("Could not find Sent folder for account: {}", account.getEmailAddress());
+            }
+        }
+    }
+
+    /**
+     * Returns the Sent folder name based on the email provider.
+     */
+    private String getSentFolderName(EmailProvider provider) {
+        if (provider == null) {
+            return "Sent";
+        }
+        return switch (provider) {
+            case GMAIL -> "[Gmail]/Sent Mail";
+            case OUTLOOK -> "Sent";
+            case YAHOO -> "Sent";
+            default -> "Sent";
+        };
+    }
+
+    /**
+     * Attempts to find the Sent folder by common names.
+     */
+    private Folder findSentFolder(Store store) throws MessagingException {
+        String[] possibleNames = {
+            "Sent", "Sent Items", "Sent Mail", 
+            "[Gmail]/Sent Mail", "INBOX.Sent", "INBOX.Sent Items"
+        };
+        
+        for (String name : possibleNames) {
+            try {
+                Folder folder = store.getFolder(name);
+                if (folder.exists()) {
+                    return folder;
+                }
+            } catch (MessagingException e) {
+                // Ignore and try next
+            }
+        }
+        return null;
     }
 
     // ================== Private Helper Methods ==================

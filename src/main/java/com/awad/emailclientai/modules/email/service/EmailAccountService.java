@@ -154,22 +154,42 @@ public class EmailAccountService {
     }
 
     /**
-     * Sends an email.
+     * Sends an email and saves a copy to the Sent folder.
      */
     public String sendEmail(Long userId, Long accountId, 
                              SendEmailRequestDto request) throws MessagingException {
         EmailAccount account = getAccountForUser(userId, accountId);
-        return smtpService.sendEmail(account, request);
+        jakarta.mail.internet.MimeMessage message = smtpService.sendEmail(account, request);
+        
+        // Save to Sent folder using IMAP APPEND
+        try {
+            imapService.appendToSentFolder(account, message);
+        } catch (Exception e) {
+            log.warn("Failed to save email to Sent folder: {}", e.getMessage());
+            // Don't throw - email was sent successfully, just couldn't save to Sent
+        }
+        
+        return message.getMessageID();
     }
 
     /**
-     * Sends an email with file attachments.
+     * Sends an email with file attachments and saves a copy to the Sent folder.
      */
     public String sendEmailWithAttachments(Long userId, Long accountId, 
                                            SendEmailRequestDto request,
                                            MultipartFile[] attachments) throws MessagingException, IOException {
         EmailAccount account = getAccountForUser(userId, accountId);
-        return smtpService.sendEmailWithAttachments(account, request, attachments);
+        jakarta.mail.internet.MimeMessage message = smtpService.sendEmailWithAttachments(account, request, attachments);
+        
+        // Save to Sent folder using IMAP APPEND
+        try {
+            imapService.appendToSentFolder(account, message);
+        } catch (Exception e) {
+            log.warn("Failed to save email to Sent folder: {}", e.getMessage());
+            // Don't throw - email was sent successfully, just couldn't save to Sent
+        }
+        
+        return message.getMessageID();
     }
 
     /**
