@@ -73,30 +73,12 @@ Email bị Snooze sẽ chuyển sang trạng thái `SNOOZED` và bị ẩn khỏ
 
 ---
 
-## 4. AI Summarization (Tóm tắt nội dung)
-
-Hệ thống hỗ trợ 3 mức độ ưu tiên:
-1. **Cloud API** (OpenAI/Gemini): Cần API Key. Chất lượng tốt nhất.
-2. **Local AI** (Ollama): Cần chạy Ollama. Riêng tư, không tốn phí.
-3. **Extractive (Fallback)**: Thuật toán tách câu quan trọng (Java port từ Go). Luôn hoạt động.
-
-- **Method**: `POST`
-- **URL**: `{{base_url}}/emails/{{email_id}}/summarize`
-- **Auth**: Inherit
-- **Kỳ vọng**: 
-  - Status `200 OK`.
-  - Trả về `summary`: "Tóm tắt ngắn gọn của email...".
-  - Field `summary` được lưu vào DB.
-
----
-
-## 5. Test Kịch bản (Scenario)
+## 4. Test Kịch bản (Scenario)
 
 1. **Sync**: Gọi API Sync (2.A) để lấy dữ liệu.
 2. **View**: Gọi API Get (2.B) để thấy email ở trạng thái `INBOX`.
 3. **Move**: Gọi API Status (2.C) chuyển 1 email sang `TODO`. Kiểm tra lại bằng API Get.
-4. **AI**: Gọi API Summarize (4) cho email đó. Kiểm tra field `summary` được trả về.
-5. **Snooze**: Gọi API Snooze (3) với thời gian tương lai gần (VD: 1 phút nữa).
+4. **Snooze**: Gọi API Snooze (3) với thời gian tương lai gần (VD: 1 phút nữa).
    - Kiểm tra status là `SNOOZED`.
    - Chờ 1 phút -> Gọi API Get -> Kiểm tra status quay về `INBOX`.
 
@@ -106,6 +88,3 @@ Hệ thống hỗ trợ 3 mức độ ưu tiên:
 
 - **Lỗi 500 khi Sync?**
   - Kiểm tra kết nối IMAP (App Password, Account ID đúng chưa).
-- **Lỗi AI không chạy?**
-  - Kiểm tra `OPENAI_API_KEY` trong `.env`.
-  - Nếu muốn test Fallback, hãy xóa/đổi tên key này và gọi lại API.
