@@ -23,12 +23,14 @@ Tiếp tục sử dụng các variable từ phần GA04. Đảm bảo bạn đã
 Để đưa email từ IMAP (Gmail/Outlook) vào database cục bộ của MailBoard cho Kanban, bạn cần gọi API Sync.
 
 - **Method**: `POST`
-- **URL**: `{{base_url}}/emails/sync?accountId={{account_id}}`
+- **URL**: `{{base_url}}/emails/sync?accountId={{account_id}}&limit=50`
 - **Auth**: Inherit (Bearer Token)
+- **Params (Optional)**:
+  - `limit`: Số lượng email muốn sync (Mặc định: 50).
 - **Kỳ vọng**: 
   - Status `200 OK`.
   - Body: `{"success": true, "message": "Sync completed"}`.
-- **Tác dụng**: Hệ thống sẽ tải 50 email mới nhất từ INBOX về và lưu vào bảng `emails` với status mặc định `INBOX`.
+  - **Tác dụng**: Hệ thống sẽ tải số lượng email mới nhất (theo limit) từ INBOX về và lưu vào bảng `emails` với status mặc định `INBOX`.
 
 ### B. Lấy danh sách Email (Kanban Board)
 API này trả về danh sách email đã lưu trong DB, dùng để render lên các cột Kanban.
