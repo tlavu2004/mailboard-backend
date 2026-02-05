@@ -33,6 +33,9 @@ Tiếp tục sử dụng các variable từ phần GA04. Đảm bảo bạn đã
   - Body: `{"success": true, "message": "Sync completed"}`.
   - **Tác dụng**: Hệ thống sẽ tải số lượng email mới nhất (theo limit) từ thư mục chỉ định về và lưu vào bảng `emails` với status mặc định `INBOX` (để hiện lên bảng Kanban).
 
+> [!NOTE]
+> **Lưu ý về `folderName`**: Hiện tại logic sync chưa map status tự động theo tên folder. Email từ bất kỳ folder nào (`Spam`, `Sent`, `Important`) đều sẽ được gán status là `INBOX` khi sync vào hệ thống.
+
 ### B. Lấy danh sách Email (Kanban Board)
 API này trả về danh sách email đã lưu trong DB, dùng để render lên các cột Kanban.
 
@@ -91,3 +94,31 @@ Email bị Snooze sẽ chuyển sang trạng thái `SNOOZED` và bị ẩn khỏ
 
 - **Lỗi 500 khi Sync?**
   - Kiểm tra kết nối IMAP (App Password, Account ID đúng chưa).
+
+---
+
+## 5. Test với UI (Kanban Board HTML)
+
+Ngoài Postman, bạn có thể test trực quan bằng file HTML có sẵn (không cần Frontend phức tạp).
+
+1.  **Truy cập**: [http://localhost:8080/kanban.html](http://localhost:8080/kanban.html)
+2.  **Nhập Account ID**: Mặc định là `1`.
+3.  **Nút "Sync Emails"**: Gọi API Sync (có thể mất vài giây). Sau khi xong sẽ báo alert.
+4.  **Kéo thả**:
+    - Kéo email từ **Inbox** sang **To Do** -> Status cập nhật ngay lập tức.
+    - Kéo về lại **Inbox** hoặc **Done**.
+5.  **Test Snooze**:
+    - Bấm nút `💤 Snooze 1m` trên thẻ Email.
+    - Email sẽ bay sang cột **Snoozed**.
+    - Đợi 1 phút (hoặc F5), email sẽ tự động quay về Inbox (hoặc biến mất khỏi cột Snoozed tùy logic reload).
+
+### Lưu ý về Authentication (ModHeader)
+Do API yêu cầu đăng nhập, nếu bạn mở trực tiếp file HTML trên trình duyệt sẽ bị lỗi `401 Unauthorized` (trừ khi đã có Cookie phiên làm việc).
+
+**Giải pháp**: Dùng Extension **ModHeader** để gắn Token vào request.
+1. Cài Extension **ModHeader** trên Chrome/Edge.
+2. Lấy `access_token` từ Postman (API Login).
+3. Mở ModHeader, thêm Request Header:
+   - **Name**: `Authorization`
+   - **Value**: `Bearer <YOUR_ACCESS_TOKEN>` (Thay `<YOUR_ACCESS_TOKEN>` bằng chuỗi token thực tế).
+4. Reload lại trang `kanban.html` và test.
