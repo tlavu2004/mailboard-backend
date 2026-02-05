@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Kanban Board</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f5f7; margin: 0; padding: 20px; }
+        h1 { text-align: center; color: #333; }
+        .controls { text-align: center; margin-bottom: 20px; }
+        .board { display: flex; gap: 20px; overflow-x: auto; height: 80vh; padding-bottom: 20px; }
+        .column { flex: 1; min-width: 300px; background-color: #ebecf0; border-radius: 8px; padding: 10px; display: flex; flex-direction: column; }
+        .column-header { font-weight: bold; margin-bottom: 15px; padding: 5px; text-transform: uppercase; color: #5e6c84; display: flex; justify-content: space-between; }
+        .card-list { flex: 1; min-height: 100px; }
+        .card { background-color: white; border-radius: 4px; padding: 10px; margin-bottom: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); cursor: grab; transition: transform 0.2s; position: relative; }
+        .card:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        .card.dragging { opacity: 0.5; }
+        .card-title { font-weight: bold; margin-bottom: 5px; color: #172b4d; }
+        .card-sender { font-size: 0.85em; color: #5e6c84; margin-bottom: 5px; }
+        .card-snippet { font-size: 0.85em; color: #172b4d; margin-bottom: 10px; line-height: 1.4; }
+        .card-summary { background-color: #e3fcef; padding: 8px; border-radius: 4px; font-size: 0.85em; margin-top: 8px; border-left: 3px solid #006644; display: none; }
+        .actions { display: flex; justify-content: flex-end; gap: 5px; margin-top: 10px; }
+        .btn { border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 0.8em; transition: background 0.2s; }
+        .btn-ai { background-color: #deebff; color: #0747a6; }
+        .btn-ai:hover { background-color: #b3d4ff; }
+        .btn-snooze { background-color: #fff0b3; color: #172b4d; }
+        .btn-snooze:hover { background-color: #ffc400; }
+        
+        .counter { background-color: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 10px; font-size: 0.8em; }
+    </style>
+</head>
+<body>
+
+    <h1>Email Kanban Workflow (GA05)</h1>
+
+    <div class="controls">
+        <label for="accountId">Account ID:</label>
+        <input type="number" id="accountId" value="1" style="padding: 5px; width: 60px;">
+        <button onclick="syncEmails()" class="btn" style="background-color: #0052cc; color: white; padding: 6px 15px;">Sync Emails</button>
+        <button onclick="loadBoard()" class="btn" style="background-color: #00875a; color: white; padding: 6px 15px;">Refresh Board</button>
+    </div>
+
+    <div class="board">
+        <div class="column" data-status="INBOX">
+            <div class="column-header">Inbox <span class="counter" id="count-INBOX">0</span></div>
+            <div class="card-list" id="col-INBOX" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+        </div>
+        <div class="column" data-status="TODO">
+            <div class="column-header">To Do <span class="counter" id="count-TODO">0</span></div>
+            <div class="card-list" id="col-TODO" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+        </div>
+        <div class="column" data-status="IN_PROGRESS">
+            <div class="column-header">In Progress <span class="counter" id="count-IN_PROGRESS">0</span></div>
+            <div class="card-list" id="col-IN_PROGRESS" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+        </div>
+        <div class="column" data-status="DONE">
+            <div class="column-header">Done <span class="counter" id="count-DONE">0</span></div>
+            <div class="card-list" id="col-DONE" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+        </div>
+        <div class="column" data-status="SNOOZED">
+            <div class="column-header">Snoozed <span class="counter" id="count-SNOOZED">0</span></div>
+            <div class="card-list" id="col-SNOOZED" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/v1/emails';
+
+        async function syncEmails() {
+            const accountId = document.getElementById('accountId').value;
+            try {
+                const res = await fetch(`${API_BASE}/sync?accountId=${accountId}`, { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    alert('Sync started/completed!');
+                    loadBoard();
+                } else {
+                    alert('Sync failed: ' + data.message);
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Error syncing emails');
+            }
+        }
+
+        async function loadBoard() {
+            const accountId = document.getElementById('accountId').value;
+            // Clear columns
+            document.querySelectorAll('.card-list').forEach(el => el.innerHTML = '');
+            
+            try {
+                const res = await fetch(`${API_BASE}?accountId=${accountId}`);
+                const data = await res.json();
+                
+                if (data.success && data.data) {
+                    distributeCards(data.data);
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Failed to load emails. Ensure you are logged in (session/cookie).');
+            }
+        }
+
+        function distributeCards(emails) {
+            const counts = { INBOX: 0, TODO: 0, IN_PROGRESS: 0, DONE: 0, SNOOZED: 0 };
+            
+            // Sort emails by date (Newest first)
+            emails.sort((a, b) => new Date(b.receivedDate) - new Date(a.receivedDate));
+
+            emails.forEach(email => {
+                const status = email.status || 'INBOX';
+                if (counts[status] !== undefined) counts[status]++;
+                
+                const col = document.getElementById(`col-${status}`);
+                if (col) {
+                    col.appendChild(createCard(email));
+                }
+            });
+
+            // Update counters
+            Object.keys(counts).forEach(key => {
+                document.getElementById(`count-${key}`).innerText = counts[key];
+            });
+        }
+
+        function createCard(email) {
+            const div = document.createElement('div');
+            div.className = 'card';
+            div.draggable = true;
+            div.id = `card-${email.id}`;
+            div.dataset.id = email.id;
+            div.dataset.date = email.receivedDate; // Store date for sorting
+            div.addEventListener('dragstart', drag);
+            
+            // ... (rest of createCard)
+            let snoozeInfo = '';
+            if (email.status === 'SNOOZED' && email.snoozedUntil) {
+                snoozeInfo = `<small style="color:orange">Until: ${new Date(email.snoozedUntil).toLocaleString()}</small><br>`;
+            }
+
+            div.innerHTML = `
+                <div class="card-title">${email.subject || '(No Subject)'}</div>
+                <div class="card-sender">${email.sender || 'Unknown'}</div>
+                ${snoozeInfo}
+                <div class="card-snippet">${(email.snippet || '').substring(0, 100)}...</div>
+                <div class="actions">
+                    <button class="btn btn-snooze" onclick="snoozeEmail(${email.id})">💤 Snooze 1m</button>
+                </div>
+            `;
+            return div;
+        }
+
+        function drag(ev) {
+            ev.dataTransfer.setData("text", ev.target.id);
+            ev.target.classList.add('dragging');
+        }
+
+        function allowDrop(ev) {
+            ev.preventDefault();
+        }
+
+        async function drop(ev) {
+            ev.preventDefault();
+            const data = ev.dataTransfer.getData("text");
+            const card = document.getElementById(data);
+            if (!card) return;
+            
+            card.classList.remove('dragging');
+            
+            // Find drop target (column)
+            let target = ev.target;
+            while (!target.classList.contains('column') && !target.classList.contains('card-list')) {
+                if (target === document.body) return; // safety
+                target = target.parentElement;
+            }
+            
+            // If dropped on column, specifically find card-list
+            if (target.classList.contains('column')) {
+                target = target.querySelector('.card-list');
+            }
+
+            if (target && target.classList.contains('card-list')) {
+                // Insert maintaining sort order (Newest first)
+                const cardDate = new Date(card.dataset.date);
+                let inserted = false;
+                for (let child of target.children) {
+                    const childDate = new Date(child.dataset.date);
+                    if (cardDate > childDate) { // Newest is "bigger" -> insert before older
+                        target.insertBefore(card, child);
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    target.appendChild(card);
+                }
+                
+                // Get new status
+                const newStatus = target.parentElement.dataset.status;
+                const emailId = card.dataset.id;
+                
+                // Update counter logic (Optimistic update)
+                // Note: Real counter update happens on loadBoard
+                
+                console.log(`Moving email ${emailId} to ${newStatus}`);
+                await updateStatus(emailId, newStatus);
+            }
+        }
+
+        async function updateStatus(id, status) {
+            try {
+                const res = await fetch(`${API_BASE}/${id}/status?status=${status}`, { method: 'PUT' });
+                const data = await res.json();
+                if (!data.success) {
+                    alert('Failed to update status');
+                    // Revert (reload board)
+                    loadBoard();
+                } else {
+                    // Update counters? For now reload or simple decrement/increment
+                    // loadBoard(); // overkill, visualized by drop
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Error updating status');
+            }
+        }
+
+        async function snoozeEmail(id) {
+            // Snooze for 1 minute for testing
+            const until = new Date(Date.now() + 60000).toISOString();
+            
+            try {
+                const res = await fetch(`${API_BASE}/${id}/snooze?until=${until}`, { method: 'PUT' });
+                const data = await res.json();
+                if (data.success) {
+                    loadBoard();
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        // Initial load
+        // loadBoard();
+    </script>
+</body>
+</html>
