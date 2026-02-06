@@ -68,4 +68,22 @@ public class EmailSyncService {
             log.error("Failed to fetch messages for account: " + account.getEmailAddress(), e);
         }
     }
+
+    /**
+     * Background task to wake up snoozed emails.
+     * Runs every minute.
+     */
+    @Scheduled(fixedRate = 10000)
+    @Transactional
+    public void checkSnoozedEmails() {
+        LocalDateTime now = LocalDateTime.now();
+        List<EmailEntity> snoozedEmails = emailRepository.findBySnoozedUntilBeforeAndStatus(now, EmailStatus.SNOOZED);
+
+        for (EmailEntity email : snoozedEmails) {
+            log.info("Waking up email ID: {}", email.getId());
+            email.setStatus(EmailStatus.INBOX);
+            email.setSnoozedUntil(null);
+            emailRepository.save(email);
+        }
+    }
 }

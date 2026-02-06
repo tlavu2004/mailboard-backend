@@ -17,4 +17,5 @@ public class EmailEntityDto {
     private String snippet;
     private EmailStatus status;
     private LocalDateTime receivedDate;
+    private LocalDateTime snoozedUntil;
 }

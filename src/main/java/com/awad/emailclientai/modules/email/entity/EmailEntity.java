@@ -36,6 +36,8 @@ public class EmailEntity {
 
     private LocalDateTime receivedDate;
 
+    private LocalDateTime snoozedUntil;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "account_id")
     private EmailAccount account;

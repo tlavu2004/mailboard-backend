@@ -73,6 +73,25 @@ public class EmailController {
         email.setStatus(status);
         
         // If moving out of snoozed, clear the date
+        if (status != EmailStatus.SNOOZED) {
+            email.setSnoozedUntil(null);
+        }
+        
+        EmailEntity saved = emailRepository.save(email);
+        return ResponseEntity.ok(ApiResponse.success(mapToDto(saved)));
+    }
+
+    @PutMapping("/{id}/snooze")
+    @Operation(summary = "Snooze email", description = "Move to SNOOZED status until a specific time.")
+    public ResponseEntity<ApiResponse<EmailEntityDto>> snoozeEmail(
+            @PathVariable Long id,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime until) {
+        
+        EmailEntity email = emailRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Email not found"));
+        
+        email.setStatus(EmailStatus.SNOOZED);
+        email.setSnoozedUntil(until);
         
         EmailEntity saved = emailRepository.save(email);
         return ResponseEntity.ok(ApiResponse.success(mapToDto(saved)));
@@ -88,6 +107,7 @@ public class EmailController {
                 .snippet(entity.getSnippet())
                 .status(entity.getStatus())
                 .receivedDate(entity.getReceivedDate())
+                .snoozedUntil(entity.getSnoozedUntil())
                 .build();
     }
 }
