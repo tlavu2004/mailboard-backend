@@ -89,7 +89,8 @@
             document.querySelectorAll('.card-list').forEach(el => el.innerHTML = '');
             
             try {
-                const res = await fetch(`${API_BASE}?accountId=${accountId}`);
+                // Add timestamp to prevent browser caching
+                const res = await fetch(`${API_BASE}?accountId=${accountId}&_=${new Date().getTime()}`);
                 const data = await res.json();
                 
                 if (data.success && data.data) {
@@ -227,10 +228,16 @@
 
         async function snoozeEmail(id) {
             // Snooze for 1 minute for testing
-            const until = new Date(Date.now() + 60000).toISOString();
+            // Fix Timezone: Send Local ISO String instead of UTC
+            const now = new Date();
+            now.setMinutes(now.getMinutes() + 1);
+            
+            // Format to local ISO: YYYY-MM-DDTHH:mm:ss
+            const offset = now.getTimezoneOffset() * 60000;
+            const localISOTime = (new Date(now - offset)).toISOString().slice(0, -1);
             
             try {
-                const res = await fetch(`${API_BASE}/${id}/snooze?until=${until}`, { method: 'PUT' });
+                const res = await fetch(`${API_BASE}/${id}/snooze?until=${localISOTime}`, { method: 'PUT' });
                 const data = await res.json();
                 if (data.success) {
                     loadBoard();
