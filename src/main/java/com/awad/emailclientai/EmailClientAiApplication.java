@@ -9,6 +9,7 @@ import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.context.annotation.Bean;
 
 @SpringBootApplication
+@org.springframework.scheduling.annotation.EnableScheduling
 public class EmailClientAiApplication {
 
 	public static void main(String[] args) {
