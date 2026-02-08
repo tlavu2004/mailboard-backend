@@ -43,8 +43,9 @@ public class EmailController {
     public ResponseEntity<ApiResponse<String>> syncEmails(
             @RequestParam Long accountId,
             @RequestParam(defaultValue = "INBOX") String folderName,
-            @RequestParam(defaultValue = "50") int limit) {
-        emailSyncService.syncEmailsForAccount(accountId, folderName, limit);
+            @RequestParam(defaultValue = "50") int limit,
+            @RequestParam(defaultValue = "0") int page) {
+        emailSyncService.syncEmailsForAccount(accountId, folderName, limit, page);
         return ResponseEntity.ok(ApiResponse.success("Sync completed"));
     }
 

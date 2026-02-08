@@ -29,7 +29,7 @@ public class EmailSyncService {
      * For MVP, we might just call this manually or periodically.
      */
     @Transactional
-    public void syncEmailsForAccount(Long accountId, String folderName, int limit) {
+    public void syncEmailsForAccount(Long accountId, String folderName, int limit, int page) {
         EmailAccount account = emailAccountRepository.findById(accountId)
                 .orElseThrow(() -> new RuntimeException("Account not found"));
 
@@ -41,7 +41,7 @@ public class EmailSyncService {
         // Fetch recent emails from specified folder (or INBOX)
         // In a real app, we would track the last synced UID per folder.
         try {
-            List<MailMessageDto> messages = imapService.getMessages(account, folderName, 0, limit);
+            List<MailMessageDto> messages = imapService.getMessages(account, folderName, page, limit);
 
             for (MailMessageDto msg : messages) {
                 java.util.Optional<EmailEntity> existingOpt = emailRepository.findByMessageId(msg.getMessageId());
