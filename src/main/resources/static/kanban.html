@@ -36,7 +36,8 @@
     <div class="controls">
         <label for="accountId">Account ID:</label>
         <input type="number" id="accountId" value="1" style="padding: 5px; width: 60px;">
-        <button onclick="syncEmails()" class="btn" style="background-color: #0052cc; color: white; padding: 6px 15px;">Sync Emails</button>
+        <button onclick="syncEmails()" class="btn" style="background-color: #0052cc; color: white; padding: 6px 15px;">Sync Latest</button>
+        <button onclick="loadMore()" class="btn" style="background-color: #6554C0; color: white; padding: 6px 15px;">Load More</button>
         <button onclick="loadBoard()" class="btn" style="background-color: #00875a; color: white; padding: 6px 15px;">Refresh Board</button>
     </div>
 
@@ -66,13 +67,22 @@
     <script>
         const API_BASE = '/api/v1/emails';
 
-        async function syncEmails() {
+        let currentPage = 0;
+
+        async function syncEmails(page = 0) {
             const accountId = document.getElementById('accountId').value;
+            // If calling manually (Sync Latest), reset page to 0
+            if (page === 0) currentPage = 0;
+            
+            const btn = event ? event.target : null;
+            if (btn) btn.disabled = true;
+
             try {
-                const res = await fetch(`${API_BASE}/sync?accountId=${accountId}`, { method: 'POST' });
+                const res = await fetch(`${API_BASE}/sync?accountId=${accountId}&page=${page}`, { method: 'POST' });
                 const data = await res.json();
                 if (data.success) {
-                    alert('Sync started/completed!');
+                    // alert('Sync started/completed!'); // Too noisy for Load More
+                    console.log(`Sync page ${page} completed`);
                     loadBoard();
                 } else {
                     alert('Sync failed: ' + data.message);
@@ -80,7 +90,14 @@
             } catch (e) {
                 console.error(e);
                 alert('Error syncing emails');
+            } finally {
+                if (btn) btn.disabled = false;
             }
+        }
+
+        async function loadMore() {
+            currentPage++;
+            await syncEmails(currentPage);
         }
 
         async function loadBoard() {
