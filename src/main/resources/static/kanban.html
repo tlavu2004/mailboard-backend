@@ -144,7 +144,11 @@
                 <div class="card-sender">${email.sender || 'Unknown'}</div>
                 ${snoozeInfo}
                 <div class="card-snippet">${(email.snippet || '').substring(0, 100)}...</div>
+                <div class="card-summary" id="summary-${email.id}" style="${email.summary ? 'display:block' : 'display:none'}">
+                    ${email.summary || ''}
+                </div>
                 <div class="actions">
+                    <button class="btn btn-ai" onclick="summarizeEmail(${email.id}, this)">✨ AI Summary</button>
                     <button class="btn btn-snooze" onclick="snoozeEmail(${email.id})">💤 Snooze 1m</button>
                 </div>
             `;
@@ -223,6 +227,31 @@
             } catch (e) {
                 console.error(e);
                 alert('Error updating status');
+            }
+        }
+
+        async function summarizeEmail(id, btn) {
+            const originalText = btn.innerText;
+            btn.innerText = 'Thinking...';
+            btn.disabled = true;
+            
+            try {
+                const res = await fetch(`${API_BASE}/${id}/summarize`, { method: 'POST' });
+                const data = await res.json();
+                
+                if (data.success) {
+                    const summaryDiv = document.getElementById(`summary-${id}`);
+                    summaryDiv.innerText = data.data;
+                    summaryDiv.style.display = 'block';
+                } else {
+                    alert('Summary failed: ' + data.message);
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Error generating summary');
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
             }
         }
 
