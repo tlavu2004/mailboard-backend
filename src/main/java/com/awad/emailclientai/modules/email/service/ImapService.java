@@ -424,7 +424,8 @@ public class ImapService {
                 .to(to)
                 .cc(cc)
                 .subject(message.getSubject())
-                .preview("") // Would need to fetch body for preview
+                .preview("") // Preview often unreliable from envelope alone
+                .body(fetchBodyContent(message)) // Fetch limited body
                 .sentAt(sentAt)
                 .receivedAt(receivedAt)
                 .read(read)
@@ -432,6 +433,39 @@ public class ImapService {
                 .hasAttachments(hasAttachments)
                 .size(message.getSize())
                 .build();
+    }
+
+    private String fetchBodyContent(Message message) {
+         try {
+             Object content = message.getContent();
+             log.debug("Fetching body content, content type: {}", content != null ? content.getClass().getName() : "null");
+             if (content instanceof String) {
+                 return (String) content;
+             } else if (content instanceof Multipart) {
+                 return getTextFromMultipart((Multipart) content);
+             }
+         } catch (Exception e) {
+             log.warn("Failed to fetch body content for message: {}", e.getMessage());
+             return "";
+         }
+         return "";
+    }
+
+    private String getTextFromMultipart(Multipart multipart) throws Exception {
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < multipart.getCount(); i++) {
+            BodyPart bodyPart = multipart.getBodyPart(i);
+            if (bodyPart.isMimeType("text/plain")) {
+                return (String) bodyPart.getContent();
+            } else if (bodyPart.isMimeType("text/html")) {
+                String html = (String) bodyPart.getContent();
+                // Basic HTML cleanup without Jsoup to avoid dependency issues if not present
+                return html.replaceAll("<[^>]*>", "").replaceAll("&nbsp;", " ").trim(); 
+            } else if (bodyPart.getContent() instanceof Multipart) {
+                result.append(getTextFromMultipart((Multipart) bodyPart.getContent()));
+            }
+        }
+        return result.toString();
     }
 
     private MailMessageDetailDto convertToDetailDto(Message message, long uid) 

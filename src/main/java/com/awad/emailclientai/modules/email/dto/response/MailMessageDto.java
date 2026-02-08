@@ -56,6 +56,11 @@ public class MailMessageDto {
      * Preview text (first ~100 chars of body).
      */
     private String preview;
+
+    /**
+     * Body content (truncated for list view).
+     */
+    private String body;
     
     /**
      * Date the message was sent.

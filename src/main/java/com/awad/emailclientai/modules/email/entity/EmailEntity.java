@@ -30,6 +30,9 @@ public class EmailEntity {
     @Column(length = 500)
     private String snippet; // Short preview
 
+    @Column(columnDefinition = "TEXT")
+    private String body;
+
     @Enumerated(EnumType.STRING)
     @Builder.Default
     private EmailStatus status = EmailStatus.INBOX;
@@ -37,6 +40,9 @@ public class EmailEntity {
     private LocalDateTime receivedDate;
 
     private LocalDateTime snoozedUntil;
+
+    @Column(columnDefinition = "TEXT")
+    private String summary;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "account_id")

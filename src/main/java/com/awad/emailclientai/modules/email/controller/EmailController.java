@@ -27,6 +27,16 @@ public class EmailController {
 
     private final EmailRepository emailRepository;
     private final EmailSyncService emailSyncService;
+    private final com.awad.emailclientai.modules.email.service.AiService aiService;
+
+    @PostMapping("/{id}/summarize")
+    @Operation(summary = "Summarize email content", description = "Generates a summary using AI or local fallback.")
+    public ResponseEntity<ApiResponse<String>> summarizeEmail(@PathVariable Long id) {
+        String summary = aiService.summarizeEmail(id);
+        // "Summary generated" is the message, summary is the data.
+        // This avoids collision with ApiResponse.success(String message)
+        return ResponseEntity.ok(ApiResponse.success("Summary generated", summary));
+    }
 
     @PostMapping("/sync")
     @Operation(summary = "Sync emails using IMAP", description = "Fetches recent emails from IMAP and saves them to the DB.")
@@ -105,9 +115,11 @@ public class EmailController {
                 .subject(entity.getSubject())
                 .sender(entity.getSender())
                 .snippet(entity.getSnippet())
+                .body(entity.getBody())
                 .status(entity.getStatus())
                 .receivedDate(entity.getReceivedDate())
                 .snoozedUntil(entity.getSnoozedUntil())
+                .summary(entity.getSummary())
                 .build();
     }
 }

@@ -44,8 +44,20 @@ public class EmailSyncService {
             List<MailMessageDto> messages = imapService.getMessages(account, folderName, 0, limit);
 
             for (MailMessageDto msg : messages) {
-                if (emailRepository.findByMessageId(msg.getMessageId()).isPresent()) {
-                    continue; // Skip if already exists
+                java.util.Optional<EmailEntity> existingOpt = emailRepository.findByMessageId(msg.getMessageId());
+                log.debug("Processing email: {} | Body length: {}", msg.getSubject(), 
+                    msg.getBody() != null ? msg.getBody().length() : 0);
+                if (existingOpt.isPresent()) {
+                    EmailEntity existing = existingOpt.get();
+                    // If body is missing, update it
+                    if (existing.getBody() == null || existing.getBody().isEmpty()) {
+                        if (msg.getBody() != null && !msg.getBody().isEmpty()) {
+                            existing.setBody(msg.getBody());
+                            emailRepository.save(existing);
+                            log.info("Updated body for email ID: {}", existing.getId());
+                        }
+                    }
+                    continue; 
                 }
 
                 EmailEntity entity = EmailEntity.builder()
@@ -54,6 +66,7 @@ public class EmailSyncService {
                         .subject(msg.getSubject())
                         .sender(msg.getFrom())
                         .snippet(msg.getPreview())
+                        .body(msg.getBody()) // Now actually saving the body
                         .receivedDate(msg.getReceivedAt())
                         // Note: We might want to track folder name in entity later, 
                         // but for now we just treat everything as INBOX scope or generic email.
