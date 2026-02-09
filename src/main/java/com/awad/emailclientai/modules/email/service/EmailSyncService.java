@@ -53,9 +53,21 @@ public class EmailSyncService {
                     if (existing.getBody() == null || existing.getBody().isEmpty()) {
                         if (msg.getBody() != null && !msg.getBody().isEmpty()) {
                             existing.setBody(msg.getBody());
-                            emailRepository.save(existing);
+                            emailRepository.save(existing); // Save body update
                             log.info("Updated body for email ID: {}", existing.getId());
                         }
+                    }
+
+                    // Update read status if changed
+                    if (existing.isRead() != msg.isRead()) {
+                        existing.setRead(msg.isRead());
+                        emailRepository.save(existing);
+                    }
+
+                    // Update attachment status if changed (fix for false positives)
+                    if (existing.isHasAttachments() != msg.isHasAttachments()) {
+                        existing.setHasAttachments(msg.isHasAttachments());
+                        emailRepository.save(existing);
                     }
                     continue; 
                 }
@@ -68,6 +80,8 @@ public class EmailSyncService {
                         .snippet(msg.getPreview())
                         .body(msg.getBody()) // Now actually saving the body
                         .receivedDate(msg.getReceivedAt())
+                        .isRead(msg.isRead())
+                        .hasAttachments(msg.isHasAttachments())
                         // Note: We might want to track folder name in entity later, 
                         // but for now we just treat everything as INBOX scope or generic email.
                         // Setting status as INBOX for now for all synced emails so they appear on board.

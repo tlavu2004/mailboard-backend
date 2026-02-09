@@ -403,10 +403,12 @@ public class ImapService {
         boolean starred = flags.contains(Flags.Flag.FLAGGED);
 
         // Check for attachments (simplified check)
+        // Check for attachments (precise check)
         boolean hasAttachments = false;
-        String contentType = message.getContentType();
-        if (contentType != null && contentType.toLowerCase().contains("multipart")) {
-            hasAttachments = true; // Could be more precise
+        try {
+            hasAttachments = hasActualAttachments(message);
+        } catch (IOException e) {
+            log.warn("Failed to check attachments for message {}: {}", uid, e.getMessage());
         }
 
         LocalDateTime sentAt = message.getSentDate() != null 
@@ -640,5 +642,33 @@ public class ImapService {
             case "ARCHIVE": return 5;
             default: return 10;
         }
+    }
+
+    private boolean hasActualAttachments(Message message) throws MessagingException, IOException {
+        Object content = message.getContent();
+        if (content instanceof Multipart) {
+            return checkMultipartAttachments((Multipart) content);
+        }
+        return false;
+    }
+
+    private boolean checkMultipartAttachments(Multipart multipart) throws MessagingException, IOException {
+        for (int i = 0; i < multipart.getCount(); i++) {
+            BodyPart bodyPart = multipart.getBodyPart(i);
+            String disposition = bodyPart.getDisposition();
+            
+            if (Part.ATTACHMENT.equalsIgnoreCase(disposition) || 
+               (Part.INLINE.equalsIgnoreCase(disposition) && bodyPart.getFileName() != null)) {
+                return true;
+            }
+            
+            // Recursive check for nested multiparts
+            if (bodyPart.getContent() instanceof Multipart) {
+                if (checkMultipartAttachments((Multipart) bodyPart.getContent())) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }

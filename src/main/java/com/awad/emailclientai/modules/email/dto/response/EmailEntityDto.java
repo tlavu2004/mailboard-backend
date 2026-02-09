@@ -20,4 +20,6 @@ public class EmailEntityDto {
     private LocalDateTime receivedDate;
     private LocalDateTime snoozedUntil;
     private String summary;
+    private boolean isRead;
+    private boolean hasAttachments;
 }
