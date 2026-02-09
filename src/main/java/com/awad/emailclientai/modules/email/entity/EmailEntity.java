@@ -44,6 +44,12 @@ public class EmailEntity {
     @Column(columnDefinition = "TEXT")
     private String summary;
 
+    @Builder.Default
+    private boolean isRead = false;
+
+    @Builder.Default
+    private boolean hasAttachments = false;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "account_id")
     private EmailAccount account;
