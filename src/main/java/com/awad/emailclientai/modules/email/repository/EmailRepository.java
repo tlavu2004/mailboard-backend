@@ -3,6 +3,7 @@ package com.awad.emailclientai.modules.email.repository;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.entity.EmailStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -12,7 +13,7 @@ import java.util.List;
 import java.util.Optional;
 
 @Repository
-public interface EmailRepository extends JpaRepository<EmailEntity, Long> {
+public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSpecificationExecutor<EmailEntity> {
     Optional<EmailEntity> findByMessageId(String messageId);
     
     List<EmailEntity> findByStatus(EmailStatus status);

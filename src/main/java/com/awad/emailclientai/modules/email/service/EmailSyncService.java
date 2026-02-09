@@ -60,8 +60,13 @@ public class EmailSyncService {
 
                     // Update read status if changed
                     if (existing.isRead() != msg.isRead()) {
-                        existing.setRead(msg.isRead()); // Update read status
-                         // Use setRead method (Lombok setter)
+                        existing.setRead(msg.isRead());
+                        emailRepository.save(existing);
+                    }
+
+                    // Update attachment status if changed (fix for false positives)
+                    if (existing.isHasAttachments() != msg.isHasAttachments()) {
+                        existing.setHasAttachments(msg.isHasAttachments());
                         emailRepository.save(existing);
                     }
                     continue; 
