@@ -402,7 +402,6 @@ public class ImapService {
         boolean read = flags.contains(Flags.Flag.SEEN);
         boolean starred = flags.contains(Flags.Flag.FLAGGED);
 
-        // Check for attachments (simplified check)
         // Check for attachments (precise check)
         boolean hasAttachments = false;
         try {
