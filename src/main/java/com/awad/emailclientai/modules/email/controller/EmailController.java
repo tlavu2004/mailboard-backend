@@ -49,6 +49,20 @@ public class EmailController {
         return ResponseEntity.ok(ApiResponse.success("Sync completed"));
     }
 
+    @GetMapping("/search")
+    @Operation(summary = "Search emails", description = "Fuzzy search by subject or sender.")
+    public ResponseEntity<ApiResponse<List<EmailEntityDto>>> searchEmails(
+            @RequestParam Long accountId,
+            @RequestParam String q) {
+        
+        List<EmailEntity> entities = emailRepository.searchEmails(accountId, q);
+        List<EmailEntityDto> dtos = entities.stream()
+                .map(this::mapToDto)
+                .collect(Collectors.toList());
+        
+        return ResponseEntity.ok(ApiResponse.success(dtos));
+    }
+
     @GetMapping
     @Operation(summary = "Get emails by status", description = "Retrieve emails for Kanban columns.")
     public ResponseEntity<ApiResponse<List<EmailEntityDto>>> getEmails(
