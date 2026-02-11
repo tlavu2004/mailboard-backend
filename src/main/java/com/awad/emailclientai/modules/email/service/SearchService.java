@@ -34,12 +34,7 @@ public class SearchService {
             List<Float> queryEmbedding = embeddingService.generateEmbedding(query);
             
             log.debug("Searching DB with vector...");
-            // Use local variable for limit (e.g. 10 results)
-            // Note: The limit is hardcoded in the native query in Repository for now, 
-            // but we passed it as param? 
-            // Wait, my Repository method signature was: findSimilarEmails(@Param("embedding") List<Float> embedding);
-            // I removed limit param in valid replacement or did I?
-            // Let's verify repository method signature call.
+            
             return emailRepository.findSimilarEmails(queryEmbedding);
         } catch (Exception e) {
             log.error("Semantic search failed", e);
@@ -47,4 +42,14 @@ public class SearchService {
         }
     }
 
+    /**
+     * Gets auto-suggestions for search bar.
+     */
+    @Transactional(readOnly = true)
+    public List<String> getSuggestions(String prefix) {
+        if (prefix == null || prefix.trim().length() < 2) {
+            return Collections.emptyList();
+        }
+        return emailRepository.findSuggestions(prefix);
+    }
 }

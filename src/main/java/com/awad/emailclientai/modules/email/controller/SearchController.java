@@ -21,6 +21,11 @@ public class SearchController {
         return ResponseEntity.ok(searchService.semanticSearch(request.getQuery()));
     }
 
+    @GetMapping("/suggestions")
+    public ResponseEntity<List<String>> getSuggestions(@RequestParam("q") String query) {
+        return ResponseEntity.ok(searchService.getSuggestions(query));
+    }
+
 
     @Data
     public static class SearchRequest {
