@@ -3,9 +3,9 @@ spring:
     name: Email Client AI
 
   datasource:
-    url: ${DB_URL}
-    username: ${DB_USERNAME}
-    password: ${DB_PASSWORD}
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/mailboard}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 5
@@ -48,7 +48,7 @@ server:
     include-binding-errors: always
 
 jwt:
-    secret: ${JWT_SECRET}
+    secret: ${JWT_SECRET:defaultSecretKeyForTestingOnly1234567890!}
     access-token-expiration: ${JWT_ACCESS_EXPIRATION:900000}
     refresh-token-expiration: ${JWT_REFRESH_EXPIRATION:604800000}
     issuer: email-client-ai
@@ -58,9 +58,9 @@ jwt:
 google:
   oauth:
     enabled: true
-    client-id: ${GOOGLE_CLIENT_ID}
-    client-secret: ${GOOGLE_CLIENT_SECRET}
-    redirect-uri: ${GOOGLE_REDIRECT_URI}
+    client-id: ${GOOGLE_CLIENT_ID:dummy-client-id}
+    client-secret: ${GOOGLE_CLIENT_SECRET:dummy-client-secret}
+    redirect-uri: ${GOOGLE_REDIRECT_URI:http://localhost:8080/login/oauth2/code/google}
 
 # Encryption Configuration (for secure credential storage - GA04)
 encryption:
@@ -97,5 +97,5 @@ logging:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
 
 gemini:
-  api-key: ${GEMINI_API_KEY}
+  api-key: ${GEMINI_API_KEY:dummy-api-key}
   model: ${GEMINI_MODEL:text-embedding-004}
