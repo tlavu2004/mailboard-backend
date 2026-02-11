@@ -32,7 +32,7 @@ public class AiService {
     @Value("${GEMINI_API_KEY:}")
     private String geminiApiKey;
 
-    @Value("${GEMINI_MODEL:gemini-pro}")
+    @Value("${gemini.chat-model:gemini-2.5-flash}")
     private String geminiModel;
 
     private static final String GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/";

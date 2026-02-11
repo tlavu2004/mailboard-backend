@@ -50,15 +50,27 @@ public class EmailSyncService {
                     msg.getBody() != null ? msg.getBody().length() : 0);
                 if (existingOpt.isPresent()) {
                     EmailEntity existing = existingOpt.get();
+                    boolean changed = false;
+
                     // If body is missing, update it
                     if (existing.getBody() == null || existing.getBody().isEmpty()) {
                         if (msg.getBody() != null && !msg.getBody().isEmpty()) {
                             existing.setBody(msg.getBody());
-                            // Generate embedding for updated body
-                            generateAndSetEmbedding(existing, msg.getSubject(), msg.getBody());
-                            emailRepository.save(existing); // Save body update
-                            log.info("Updated body and embedding for email ID: {}", existing.getId());
+                            changed = true;
                         }
+                    }
+
+                    // If embedding is missing (and we have a body), generate it
+                    if (existing.getEmbedding() == null && existing.getBody() != null && !existing.getBody().isEmpty()) {
+                        generateAndSetEmbedding(existing, existing.getSubject(), existing.getBody());
+                        if (existing.getEmbedding() != null) {
+                            changed = true;
+                        }
+                    }
+
+                    if (changed) {
+                        emailRepository.save(existing);
+                        log.info("Updated email ID: {} (Body/Embedding)", existing.getId());
                     }
 
                     // Update read status if changed
