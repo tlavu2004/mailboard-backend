@@ -37,3 +37,6 @@ build/
 
 # AI Models (Local)
 *.onnx
+
+# Logs
+**/logs/
