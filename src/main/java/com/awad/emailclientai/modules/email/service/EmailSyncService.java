@@ -23,6 +23,7 @@ public class EmailSyncService {
     private final ImapService imapService;
     private final EmailRepository emailRepository;
     private final EmailAccountRepository emailAccountRepository;
+    private final EmbeddingService embeddingService;
 
     /**
      * Syncs emails for all accounts or a specific account.
@@ -53,8 +54,10 @@ public class EmailSyncService {
                     if (existing.getBody() == null || existing.getBody().isEmpty()) {
                         if (msg.getBody() != null && !msg.getBody().isEmpty()) {
                             existing.setBody(msg.getBody());
+                            // Generate embedding for updated body
+                            generateAndSetEmbedding(existing, msg.getSubject(), msg.getBody());
                             emailRepository.save(existing); // Save body update
-                            log.info("Updated body for email ID: {}", existing.getId());
+                            log.info("Updated body and embedding for email ID: {}", existing.getId());
                         }
                     }
 
@@ -89,6 +92,9 @@ public class EmailSyncService {
                         .account(account)
                         .build();
 
+                // Generate embedding for new email
+                generateAndSetEmbedding(entity, msg.getSubject(), msg.getBody());
+
                 emailRepository.save(entity);
             }
         } catch (jakarta.mail.MessagingException e) {
@@ -111,6 +117,23 @@ public class EmailSyncService {
             email.setStatus(EmailStatus.INBOX);
             email.setSnoozedUntil(null);
             emailRepository.save(email);
+        }
+    }
+
+    private void generateAndSetEmbedding(EmailEntity entity, String subject, String body) {
+        try {
+            String textToEmbed = (subject != null ? subject : "") + " " + (body != null ? body : "");
+            // Truncate to avoid token limits if necessary (basic check)
+            if (textToEmbed.length() > 8000) {
+                textToEmbed = textToEmbed.substring(0, 8000);
+            }
+            if (!textToEmbed.trim().isEmpty()) {
+                List<Float> embedding = embeddingService.generateEmbedding(textToEmbed);
+                entity.setEmbedding(embedding);
+            }
+        } catch (Exception e) {
+            log.error("Failed to generate embedding for email: {}", entity.getMessageId(), e);
+            // We continue without embedding, can retry later
         }
     }
 }
