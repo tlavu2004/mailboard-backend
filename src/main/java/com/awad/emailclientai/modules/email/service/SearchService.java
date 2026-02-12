@@ -33,9 +33,14 @@ public class SearchService {
             log.debug("Generating embedding for query: {}", query);
             List<Float> queryEmbedding = embeddingService.generateEmbedding(query);
             
+            // Convert List<Float> to pgvector string format: [0.1,0.2,...]
+            String vectorString = "[" + queryEmbedding.stream()
+                .map(String::valueOf)
+                .collect(java.util.stream.Collectors.joining(",")) + "]";
+            
             log.debug("Searching DB with vector...");
             
-            return emailRepository.findSimilarEmails(queryEmbedding);
+            return emailRepository.findSimilarEmails(vectorString);
         } catch (Exception e) {
             log.error("Semantic search failed", e);
             return Collections.emptyList();

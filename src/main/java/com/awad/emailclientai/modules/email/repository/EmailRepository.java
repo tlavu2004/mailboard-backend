@@ -27,8 +27,8 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
            "LOWER(e.sender) LIKE LOWER(CONCAT('%', :query, '%')))")
     List<EmailEntity> searchEmails(@Param("accountId") Long accountId, @Param("query") String query);
 
-    @Query(value = "SELECT * FROM emails e WHERE e.embedding IS NOT NULL ORDER BY e.embedding <=> cast(:embedding as vector) LIMIT 10", nativeQuery = true)
-    List<EmailEntity> findSimilarEmails(@Param("embedding") List<Float> embedding);
+    @Query(value = "SELECT e.id, e.message_id, e.uid, e.subject, e.sender, e.snippet, e.body, e.status, e.received_date, e.snoozed_until, e.summary, e.is_read, e.has_attachments, e.account_id, NULL as embedding FROM emails e WHERE e.embedding IS NOT NULL ORDER BY e.embedding <=> cast(:embedding as vector) LIMIT 10", nativeQuery = true)
+    List<EmailEntity> findSimilarEmails(@Param("embedding") String embedding);
 
     @Query(value = "SELECT DISTINCT subject FROM emails WHERE LOWER(subject) LIKE LOWER(CONCAT(:prefix, '%')) " +
             "UNION SELECT DISTINCT sender FROM emails WHERE LOWER(sender) LIKE LOWER(CONCAT(:prefix, '%')) " +

@@ -1,6 +1,7 @@
 package com.awad.emailclientai.modules.email.entity;
 
 import com.awad.emailclientai.modules.user.entity.User;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -96,6 +97,7 @@ public class EmailAccount {
      * This is AES-256 encrypted before storage.
      */
     @Column(name = "encrypted_password", columnDefinition = "TEXT")
+    @JsonIgnore
     private String encryptedPassword;
 
     /**
@@ -103,6 +105,7 @@ public class EmailAccount {
      * Used to get new access tokens when they expire.
      */
     @Column(name = "encrypted_refresh_token", columnDefinition = "TEXT")
+    @JsonIgnore
     private String encryptedRefreshToken;
 
     // ========== Status & Metadata ==========
