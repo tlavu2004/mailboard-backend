@@ -234,7 +234,27 @@ public enum ErrorCode {
      * EMAIL_009: Social login users cannot link additional accounts
      * Triggered when: Google/Microsoft user tries to connect another email
      */
-    EMAIL_LINKING_DISABLED_FOR_SOCIAL("EMAIL_009", "Account linking is not available for social login users. Please use local registration for multi-account support.", HttpStatus.FORBIDDEN);
+    EMAIL_LINKING_DISABLED_FOR_SOCIAL("EMAIL_009", "Account linking is not available for social login users. Please use local registration for multi-account support.", HttpStatus.FORBIDDEN),
+
+    // ============= KANBAN ERRORS (KANBAN_XXX) =============
+
+    /**
+     * KANBAN_001: Kanban column not found
+     * Triggered when: Accessing non-existent kanban column
+     */
+    KANBAN_COLUMN_NOT_FOUND("KANBAN_001", "Kanban column not found", HttpStatus.NOT_FOUND),
+
+    /**
+     * KANBAN_002: Cannot modify default column
+     * Triggered when: User tries to rename a default column
+     */
+    KANBAN_CANNOT_MODIFY_DEFAULT("KANBAN_002", "Cannot rename a default column", HttpStatus.FORBIDDEN),
+
+    /**
+     * KANBAN_003: Cannot delete default column
+     * Triggered when: User tries to delete a default column
+     */
+    KANBAN_CANNOT_DELETE_DEFAULT("KANBAN_003", "Cannot delete a default column", HttpStatus.FORBIDDEN);
 
     // ============= ENUM FIELDS =============
 
