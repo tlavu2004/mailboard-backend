@@ -5,7 +5,6 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 @Entity
 @Table(name = "emails")
@@ -57,6 +56,6 @@ public class EmailEntity {
     @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private EmailAccount account;
 
-    @Column(columnDefinition = "vector")
-    private List<Float> embedding;
+    @Column(columnDefinition = "vector", insertable = false, updatable = false)
+    private String embedding;
 }

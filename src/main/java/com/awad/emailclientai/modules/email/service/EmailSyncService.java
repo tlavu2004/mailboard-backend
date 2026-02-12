@@ -140,8 +140,16 @@ public class EmailSyncService {
                 textToEmbed = textToEmbed.substring(0, 8000);
             }
             if (!textToEmbed.trim().isEmpty()) {
-                List<Float> embedding = embeddingService.generateEmbedding(textToEmbed);
-                entity.setEmbedding(embedding);
+                List<Float> embeddingList = embeddingService.generateEmbedding(textToEmbed);
+                String embeddingString = "[" + embeddingList.stream()
+                        .map(String::valueOf)
+                        .collect(java.util.stream.Collectors.joining(",")) + "]";
+                
+                // If the entity is new, we must save it first to get an ID
+                if (entity.getId() == null) {
+                    emailRepository.save(entity);
+                }
+                emailRepository.updateEmbedding(entity.getId(), embeddingString);
             }
         } catch (Exception e) {
             log.error("Failed to generate embedding for email: {}", entity.getMessageId(), e);
