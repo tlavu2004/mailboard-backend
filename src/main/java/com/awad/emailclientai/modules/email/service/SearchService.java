@@ -40,7 +40,9 @@ public class SearchService {
             
             log.debug("Searching DB with vector...");
             
-            return emailRepository.findSimilarEmails(vectorString);
+            // Threshold 0.5 distance (approx > 1 - 0.5 = 0.5 similarity) to filter out noise
+            // Lower distance = higher similarity
+            return emailRepository.findSimilarEmails(vectorString, 0.5);
         } catch (Exception e) {
             log.error("Semantic search failed", e);
             return Collections.emptyList();
