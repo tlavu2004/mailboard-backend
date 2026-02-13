@@ -31,6 +31,17 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
            "LIMIT 20", nativeQuery = true)
     List<EmailEntity> searchEmails(@Param("accountId") Long accountId, @Param("query") String query);
 
+    @Query(value = "SELECT e.id, e.message_id, e.uid, e.subject, e.sender, e.snippet, e.body, " +
+           "e.status, e.received_date, e.snoozed_until, e.summary, e.is_read, e.has_attachments, e.account_id, " +
+           "GREATEST(similarity(e.subject, :query), similarity(e.sender, :query)) AS relevance_score " +
+           "FROM emails e WHERE e.account_id = :accountId AND " +
+           "(similarity(e.subject, :query) > 0.1 OR similarity(e.sender, :query) > 0.1 OR " +
+           "LOWER(e.subject) LIKE LOWER(CONCAT('%', :query, '%')) OR " +
+           "LOWER(e.sender) LIKE LOWER(CONCAT('%', :query, '%'))) " +
+           "ORDER BY relevance_score DESC " +
+           "LIMIT 20", nativeQuery = true)
+    List<Object[]> searchEmailsWithScore(@Param("accountId") Long accountId, @Param("query") String query);
+
     @Modifying
     @Query(value = "UPDATE emails SET embedding_768 = cast(:embedding as vector) WHERE id = :id", nativeQuery = true)
     void updateEmbedding768(@Param("id") Long id, @Param("embedding") String embedding);

@@ -1,6 +1,7 @@
 package com.awad.emailclientai.modules.email.controller;
 
 import com.awad.emailclientai.modules.email.dto.response.EmailEntityDto;
+import com.awad.emailclientai.modules.email.dto.response.SearchResultDto;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.entity.EmailStatus;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
@@ -50,17 +51,38 @@ public class EmailController {
     }
 
     @GetMapping("/search")
-    @Operation(summary = "Search emails", description = "Fuzzy search by subject or sender.")
-    public ResponseEntity<ApiResponse<List<EmailEntityDto>>> searchEmails(
+    @Operation(summary = "Search emails", description = "Fuzzy search by subject or sender with relevance ranking.")
+    public ResponseEntity<ApiResponse<List<SearchResultDto>>> searchEmails(
             @RequestParam Long accountId,
             @RequestParam String q) {
         
-        List<EmailEntity> entities = emailRepository.searchEmails(accountId, q);
-        List<EmailEntityDto> dtos = entities.stream()
-                .map(this::mapToDto)
+        List<Object[]> rows = emailRepository.searchEmailsWithScore(accountId, q);
+        List<SearchResultDto> results = rows.stream()
+                .map(row -> {
+                    EmailEntityDto emailDto = EmailEntityDto.builder()
+                            .id(((Number) row[0]).longValue())
+                            .messageId((String) row[1])
+                            .uid(row[2] != null ? ((Number) row[2]).longValue() : null)
+                            .subject((String) row[3])
+                            .sender((String) row[4])
+                            .snippet((String) row[5])
+                            .body((String) row[6])
+                            .status(row[7] != null ? EmailStatus.valueOf((String) row[7]) : null)
+                            .receivedDate(row[8] != null ? ((java.sql.Timestamp) row[8]).toLocalDateTime() : null)
+                            .snoozedUntil(row[9] != null ? ((java.sql.Timestamp) row[9]).toLocalDateTime() : null)
+                            .summary((String) row[10])
+                            .isRead(row[11] != null && (Boolean) row[11])
+                            .hasAttachments(row[12] != null && (Boolean) row[12])
+                            .build();
+                    double score = row[14] != null ? ((Number) row[14]).doubleValue() : 0.0;
+                    return SearchResultDto.builder()
+                            .email(emailDto)
+                            .relevanceScore(Math.round(score * 100.0) / 100.0)
+                            .build();
+                })
                 .collect(Collectors.toList());
         
-        return ResponseEntity.ok(ApiResponse.success(dtos));
+        return ResponseEntity.ok(ApiResponse.success(results));
     }
 
     @GetMapping
