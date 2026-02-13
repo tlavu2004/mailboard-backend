@@ -18,13 +18,13 @@ public class SearchController {
     private final SearchService searchService;
 
     @PostMapping("/semantic")
-    @Operation(summary = "Semantic Search (AI-driven)", description = "Search emails using AI embeddings for conceptual matching.")
+    @Operation(summary = "AI Semantic Email Search", description = "Search emails using AI embeddings for conceptual matching.")
     public ResponseEntity<List<EmailEntity>> semanticSearch(@RequestBody SearchRequest request) {
         return ResponseEntity.ok(searchService.semanticSearch(request.getQuery()));
     }
 
     @GetMapping("/suggestions")
-    @Operation(summary = "Get Search Suggestions", description = "Provides real-time subject and sender suggestions as the user types.")
+    @Operation(summary = "Search Suggestions Provider", description = "Provides real-time subject and sender suggestions as the user types.")
     public ResponseEntity<List<String>> getSuggestions(@RequestParam("q") String query) {
         return ResponseEntity.ok(searchService.getSuggestions(query));
     }

@@ -31,7 +31,7 @@ public class EmailController {
     private final com.awad.emailclientai.modules.email.service.AiService aiService;
 
     @PostMapping("/{id}/summarize")
-    @Operation(summary = "Summarize email content", description = "Generates a summary using AI or local fallback.")
+    @Operation(summary = "Generate AI Email Summary", description = "Generates a summary using AI or local fallback.")
     public ResponseEntity<ApiResponse<String>> summarizeEmail(@PathVariable Long id) {
         String summary = aiService.summarizeEmail(id);
         // "Summary generated" is the message, summary is the data.
@@ -40,7 +40,7 @@ public class EmailController {
     }
 
     @PostMapping("/sync")
-    @Operation(summary = "Sync emails using IMAP", description = "Fetches recent emails from IMAP and saves them to the DB.")
+    @Operation(summary = "Sync Emails from Gmail", description = "Fetches recent emails from IMAP and saves them to the DB.")
     public ResponseEntity<ApiResponse<String>> syncEmails(
             @RequestParam Long accountId,
             @RequestParam(defaultValue = "INBOX") String folderName,
@@ -118,7 +118,7 @@ public class EmailController {
     }
 
     @PutMapping("/{id}/status")
-    @Operation(summary = "Update email status", description = "Move card between columns (e.g., INBOX -> DONE).")
+    @Operation(summary = "Update Email Task Status", description = "Move card between columns (e.g., INBOX -> DONE).")
     public ResponseEntity<ApiResponse<EmailEntityDto>> updateStatus(
             @PathVariable Long id,
             @RequestParam EmailStatus status) {
@@ -138,7 +138,7 @@ public class EmailController {
     }
 
     @PutMapping("/{id}/snooze")
-    @Operation(summary = "Snooze email", description = "Move to SNOOZED status until a specific time.")
+    @Operation(summary = "Snooze Email to Future", description = "Move to SNOOZED status until a specific time.")
     public ResponseEntity<ApiResponse<EmailEntityDto>> snoozeEmail(
             @PathVariable Long id,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime until) {
