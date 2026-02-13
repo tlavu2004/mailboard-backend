@@ -7,7 +7,6 @@ import com.awad.emailclientai.modules.email.entity.EmailStatus;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import com.awad.emailclientai.modules.email.service.EmailSyncService;
 import com.awad.emailclientai.modules.email.service.ImapService;
-import com.awad.emailclientai.modules.kanban.entity.KanbanColumn;
 import com.awad.emailclientai.modules.kanban.repository.KanbanColumnRepository;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
