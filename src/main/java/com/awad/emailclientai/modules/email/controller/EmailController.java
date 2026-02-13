@@ -51,7 +51,7 @@ public class EmailController {
     }
 
     @GetMapping("/search")
-    @Operation(summary = "Search emails", description = "Fuzzy search by subject or sender with relevance ranking.")
+    @Operation(summary = "Fuzzy Search Emails with Relevance Ranking", description = "Fuzzy search by subject or sender with relevance ranking.")
     public ResponseEntity<ApiResponse<List<SearchResultDto>>> searchEmails(
             @RequestParam Long accountId,
             @RequestParam String q) {
@@ -88,7 +88,7 @@ public class EmailController {
     }
 
     @GetMapping
-    @Operation(summary = "Get emails by status", description = "Retrieve emails for Kanban columns with filtering and sorting.")
+    @Operation(summary = "List and Filter Emails", description = "Retrieve emails for Kanban columns with filtering and sorting.")
     public ResponseEntity<ApiResponse<List<EmailEntityDto>>> getEmails(
             @RequestParam Long accountId,
             @RequestParam(required = false) EmailStatus status,
