@@ -191,6 +191,40 @@ public class ImapService {
     }
 
     /**
+     * Synchronizes a label to a message.
+     * In Gmail IMAP, copying a message to a folder is equivalent to adding a label.
+     */
+    public void syncLabel(EmailAccount account, String folderName, long uid, String labelName) throws MessagingException {
+        if (labelName == null || labelName.isBlank()) return;
+        
+        try (Store store = connectToStore(account)) {
+            Folder sourceFolder = store.getFolder(folderName);
+            if (!sourceFolder.exists()) {
+                log.error("Source folder {} does not exist", folderName);
+                return;
+            }
+            
+            sourceFolder.open(Folder.READ_WRITE);
+            UIDFolder uidFolder = (UIDFolder) sourceFolder;
+            Message message = uidFolder.getMessageByUID(uid);
+            
+            if (message != null) {
+                Folder targetFolder = store.getFolder(labelName);
+                if (!targetFolder.exists()) {
+                    log.info("Creating folder/label: {}", labelName);
+                    targetFolder.create(Folder.HOLDS_MESSAGES);
+                }
+                sourceFolder.copyMessages(new Message[]{message}, targetFolder);
+                log.info("Synced label '{}' for email UID {}", labelName, uid);
+            } else {
+                log.warn("Message with UID {} not found in folder {}", uid, folderName);
+            }
+            
+            sourceFolder.close(false);
+        }
+    }
+
+    /**
      * Marks a message as starred/flagged.
      */
     public void setMessageStarred(EmailAccount account, String folderName, 

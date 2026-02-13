@@ -6,6 +6,9 @@ import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.entity.EmailStatus;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import com.awad.emailclientai.modules.email.service.EmailSyncService;
+import com.awad.emailclientai.modules.email.service.ImapService;
+import com.awad.emailclientai.modules.kanban.entity.KanbanColumn;
+import com.awad.emailclientai.modules.kanban.repository.KanbanColumnRepository;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -27,6 +30,8 @@ import java.util.stream.Collectors;
 public class EmailController {
 
     private final EmailRepository emailRepository;
+    private final ImapService imapService;
+    private final KanbanColumnRepository kanbanColumnRepository;
     private final EmailSyncService emailSyncService;
     private final com.awad.emailclientai.modules.email.service.AiService aiService;
 
@@ -118,7 +123,7 @@ public class EmailController {
     }
 
     @PutMapping("/{id}/status")
-    @Operation(summary = "Update Email Task Status", description = "Move card between columns (e.g., INBOX -> DONE).")
+    @Operation(summary = "Update Email Task Status", description = "Move card between columns (e.g., INBOX -> DONE). Also syncs Gmail labels if mapped.")
     public ResponseEntity<ApiResponse<EmailEntityDto>> updateStatus(
             @PathVariable Long id,
             @RequestParam EmailStatus status) {
@@ -134,6 +139,24 @@ public class EmailController {
         }
         
         EmailEntity saved = emailRepository.save(email);
+
+        // Feature 3.3: Sync Gmail labels if the column has a mapping
+        try {
+            kanbanColumnRepository.findByAccountIdAndLinkedStatus(email.getAccount().getId(), status.name())
+                .ifPresent(column -> {
+                    if (column.getGmailLabelId() != null && !column.getGmailLabelId().isBlank()) {
+                        try {
+                            // Default to INBOX as source folder for MVP
+                            imapService.syncLabel(email.getAccount(), "INBOX", email.getUid(), column.getGmailLabelId());
+                        } catch (Exception e) {
+                            log.error("Failed to sync Gmail label: {}", e.getMessage());
+                        }
+                    }
+                });
+        } catch (Exception e) {
+            log.warn("Failed to find kanban column mapping: {}", e.getMessage());
+        }
+
         return ResponseEntity.ok(ApiResponse.success(mapToDto(saved)));
     }
 

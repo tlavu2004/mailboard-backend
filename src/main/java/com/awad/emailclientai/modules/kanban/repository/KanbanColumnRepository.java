@@ -13,4 +13,9 @@ public interface KanbanColumnRepository extends JpaRepository<KanbanColumn, Long
      * Find all columns for an account, ordered by position.
      */
     List<KanbanColumn> findAllByAccountIdOrderByPositionAsc(Long accountId);
+
+    /**
+     * Find a column by account and its linked status.
+     */
+    java.util.Optional<KanbanColumn> findByAccountIdAndLinkedStatus(Long accountId, String linkedStatus);
 }

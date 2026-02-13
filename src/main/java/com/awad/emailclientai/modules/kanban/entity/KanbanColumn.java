@@ -30,6 +30,9 @@ public class KanbanColumn {
     @Column(name = "linked_status")
     private String linkedStatus;
 
+    @Column(name = "gmail_label_id")
+    private String gmailLabelId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "account_id", nullable = false)
     @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})

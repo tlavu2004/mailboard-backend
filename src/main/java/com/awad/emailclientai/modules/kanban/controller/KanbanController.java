@@ -23,12 +23,12 @@ public class KanbanController {
 
     @PostMapping
     public ResponseEntity<KanbanColumn> createColumn(@RequestBody CreateColumnRequest request) {
-        return ResponseEntity.ok(kanbanService.createColumn(request.getAccountId(), request.getName()));
+        return ResponseEntity.ok(kanbanService.createColumn(request.getAccountId(), request.getName(), request.getGmailLabelId()));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<KanbanColumn> updateColumn(@PathVariable Long id, @RequestBody UpdateColumnRequest request) {
-        return ResponseEntity.ok(kanbanService.updateColumn(id, request.getName(), request.getPosition()));
+        return ResponseEntity.ok(kanbanService.updateColumn(id, request.getName(), request.getPosition(), request.getGmailLabelId()));
     }
 
     @DeleteMapping("/{id}")
@@ -46,12 +46,14 @@ public class KanbanController {
     public static class CreateColumnRequest {
         private Long accountId;
         private String name;
+        private String gmailLabelId;
     }
 
     @Data
     public static class UpdateColumnRequest {
         private String name;
         private Integer position;
+        private String gmailLabelId;
     }
     
     @Data
