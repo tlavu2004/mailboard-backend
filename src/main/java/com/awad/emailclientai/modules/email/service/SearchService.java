@@ -1,5 +1,6 @@
 package com.awad.emailclientai.modules.email.service;
 
+import com.awad.emailclientai.modules.email.dto.response.SuggestionDto;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import lombok.RequiredArgsConstructor;
@@ -9,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -60,10 +62,16 @@ public class SearchService {
      * Gets auto-suggestions for search bar.
      */
     @Transactional(readOnly = true)
-    public List<String> getSuggestions(String prefix) {
+    public List<SuggestionDto> getSuggestions(String prefix) {
         if (prefix == null || prefix.trim().length() < 2) {
             return Collections.emptyList();
         }
-        return emailRepository.findSuggestions(prefix);
+        List<Object[]> rows = emailRepository.findSuggestions(prefix);
+        return rows.stream()
+                .map(row -> SuggestionDto.builder()
+                        .text((String) row[0])
+                        .relevanceScore(Math.round(((Number) row[1]).doubleValue() * 100.0) / 100.0)
+                        .build())
+                .collect(Collectors.toList());
     }
 }

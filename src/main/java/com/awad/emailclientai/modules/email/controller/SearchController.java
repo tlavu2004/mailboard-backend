@@ -1,7 +1,9 @@
 package com.awad.emailclientai.modules.email.controller;
 
+import com.awad.emailclientai.modules.email.dto.response.SuggestionDto;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.service.SearchService;
+import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,8 +27,8 @@ public class SearchController {
 
     @GetMapping("/suggestions")
     @Operation(summary = "Search Suggestions Provider", description = "Provides real-time subject and sender suggestions as the user types.")
-    public ResponseEntity<List<String>> getSuggestions(@RequestParam("q") String query) {
-        return ResponseEntity.ok(searchService.getSuggestions(query));
+    public ResponseEntity<ApiResponse<List<SuggestionDto>>> getSuggestions(@RequestParam("q") String query) {
+        return ResponseEntity.ok(ApiResponse.success(searchService.getSuggestions(query)));
     }
 
 

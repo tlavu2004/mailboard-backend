@@ -56,12 +56,12 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     @Query(value = "SELECT e.id, e.message_id, e.uid, e.subject, e.sender, e.snippet, e.body, e.status, e.received_date, e.snoozed_until, e.summary, e.is_read, e.has_attachments, e.account_id, NULL as embedding_768, NULL as embedding_384 FROM emails e WHERE e.embedding_384 IS NOT NULL AND (e.embedding_384 <=> cast(:embedding as vector)) < :threshold ORDER BY e.embedding_384 <=> cast(:embedding as vector) LIMIT 10", nativeQuery = true)
     List<EmailEntity> findSimilarEmails384(@Param("embedding") String embedding, @Param("threshold") double threshold);
 
-    @Query(value = "SELECT val FROM (" +
+    @Query(value = "SELECT val, MAX(score) as max_score FROM (" +
             "SELECT subject AS val, similarity(subject, :prefix) AS score FROM emails " +
             "WHERE subject % :prefix OR LOWER(subject) LIKE LOWER(CONCAT('%', :prefix, '%')) " +
             "UNION ALL " +
             "SELECT sender AS val, similarity(sender, :prefix) AS score FROM emails " +
             "WHERE sender % :prefix OR LOWER(sender) LIKE LOWER(CONCAT('%', :prefix, '%'))" +
-            ") sub GROUP BY val ORDER BY MAX(score) DESC LIMIT 10", nativeQuery = true)
-    List<String> findSuggestions(@Param("prefix") String prefix);
+            ") sub GROUP BY val ORDER BY max_score DESC LIMIT 10", nativeQuery = true)
+    List<Object[]> findSuggestions(@Param("prefix") String prefix);
 }
