@@ -22,4 +22,5 @@ public class EmailEntityDto {
     private String summary;
     private boolean isRead;
     private boolean hasAttachments;
+    private String gmailLink;
 }

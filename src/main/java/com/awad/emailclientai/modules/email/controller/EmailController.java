@@ -73,6 +73,8 @@ public class EmailController {
                             .summary((String) row[10])
                             .isRead(row[11] != null && (Boolean) row[11])
                             .hasAttachments(row[12] != null && (Boolean) row[12])
+                            .gmailLink(String.format("https://mail.google.com/mail/u/0/#search/rfc822msgid:%s", 
+                                    java.net.URLEncoder.encode((String) row[1], java.nio.charset.StandardCharsets.UTF_8)))
                             .build();
                     double score = row[14] != null ? ((Number) row[14]).doubleValue() : 0.0;
                     return SearchResultDto.builder()
@@ -166,6 +168,8 @@ public class EmailController {
                 .summary(entity.getSummary())
                 .isRead(entity.isRead())
                 .hasAttachments(entity.isHasAttachments())
+                .gmailLink(String.format("https://mail.google.com/mail/u/0/#search/rfc822msgid:%s", 
+                        java.net.URLEncoder.encode(entity.getMessageId(), java.nio.charset.StandardCharsets.UTF_8)))
                 .build();
     }
 }
