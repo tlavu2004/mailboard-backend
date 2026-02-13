@@ -1,6 +1,6 @@
 package com.awad.emailclientai.modules.email.dto.response;
 
-import com.awad.emailclientai.modules.email.entity.EmailStatus;
+
 import lombok.Builder;
 import lombok.Data;
 
@@ -16,7 +16,7 @@ public class EmailEntityDto {
     private String sender;
     private String snippet;
     private String body;
-    private EmailStatus status;
+    private String status;
     private LocalDateTime receivedDate;
     private LocalDateTime snoozedUntil;
     private String summary;

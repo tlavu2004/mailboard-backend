@@ -34,9 +34,8 @@ public class EmailEntity {
     @Column(columnDefinition = "TEXT")
     private String body;
 
-    @Enumerated(EnumType.STRING)
     @Builder.Default
-    private EmailStatus status = EmailStatus.INBOX;
+    private String status = EmailStatus.INBOX;
 
     private LocalDateTime receivedDate;
 

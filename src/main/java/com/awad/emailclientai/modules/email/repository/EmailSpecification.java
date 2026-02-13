@@ -1,7 +1,7 @@
 package com.awad.emailclientai.modules.email.repository;
 
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
-import com.awad.emailclientai.modules.email.entity.EmailStatus;
+
 import org.springframework.data.jpa.domain.Specification;
 
 import jakarta.persistence.criteria.Predicate;
@@ -10,7 +10,7 @@ import java.util.List;
 
 public class EmailSpecification {
 
-    public static Specification<EmailEntity> filterEmails(Long accountId, EmailStatus status, Boolean unread, Boolean hasAttachments) {
+    public static Specification<EmailEntity> filterEmails(Long accountId, String status, Boolean unread, Boolean hasAttachments) {
         return (root, query, criteriaBuilder) -> {
             List<Predicate> predicates = new ArrayList<>();
 

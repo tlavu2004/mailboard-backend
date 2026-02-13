@@ -1,7 +1,7 @@
 package com.awad.emailclientai.modules.email.repository;
 
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
-import com.awad.emailclientai.modules.email.entity.EmailStatus;
+
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
@@ -17,9 +17,9 @@ import java.util.Optional;
 public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSpecificationExecutor<EmailEntity> {
     Optional<EmailEntity> findByMessageId(String messageId);
     
-    List<EmailEntity> findByStatus(EmailStatus status);
+    List<EmailEntity> findByStatus(String status);
 
-    List<EmailEntity> findBySnoozedUntilBeforeAndStatus(LocalDateTime now, EmailStatus status);
+    List<EmailEntity> findBySnoozedUntilBeforeAndStatus(LocalDateTime now, String status);
     
     List<EmailEntity> findByAccountId(Long accountId);
 

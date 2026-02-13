@@ -1,9 +1,11 @@
 package com.awad.emailclientai.modules.email.entity;
 
-public enum EmailStatus {
-    INBOX,
-    TODO,
-    IN_PROGRESS,
-    DONE,
-    SNOOZED
+public class EmailStatus {
+    public static final String INBOX = "INBOX";
+    public static final String TODO = "TODO";
+    public static final String IN_PROGRESS = "IN_PROGRESS";
+    public static final String DONE = "DONE";
+    public static final String SNOOZED = "SNOOZED";
+
+    private EmailStatus() {} // Prevent instantiation
 }

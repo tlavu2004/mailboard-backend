@@ -71,7 +71,7 @@ public class EmailController {
                             .sender((String) row[4])
                             .snippet((String) row[5])
                             .body((String) row[6])
-                            .status(row[7] != null ? EmailStatus.valueOf((String) row[7]) : null)
+                            .status((String) row[7])
                             .receivedDate(row[8] != null ? ((java.sql.Timestamp) row[8]).toLocalDateTime() : null)
                             .snoozedUntil(row[9] != null ? ((java.sql.Timestamp) row[9]).toLocalDateTime() : null)
                             .summary((String) row[10])
@@ -95,7 +95,7 @@ public class EmailController {
     @Operation(summary = "List and Filter Emails", description = "Retrieve emails for Kanban columns with filtering and sorting.")
     public ResponseEntity<ApiResponse<List<EmailEntityDto>>> getEmails(
             @RequestParam Long accountId,
-            @RequestParam(required = false) EmailStatus status,
+            @RequestParam(required = false) String status,
             @RequestParam(required = false) Boolean unread,
             @RequestParam(required = false) Boolean hasAttachments,
             @RequestParam(defaultValue = "receivedDate,desc") String sort) {
@@ -125,7 +125,7 @@ public class EmailController {
     @Operation(summary = "Update Email Task Status", description = "Move card between columns (e.g., INBOX -> DONE). Also syncs Gmail labels if mapped.")
     public ResponseEntity<ApiResponse<EmailEntityDto>> updateStatus(
             @PathVariable Long id,
-            @RequestParam EmailStatus status) {
+            @RequestParam String status) {
         
         EmailEntity email = emailRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Email not found"));
@@ -133,15 +133,14 @@ public class EmailController {
         email.setStatus(status);
         
         // If moving out of snoozed, clear the date
-        if (status != EmailStatus.SNOOZED) {
+        if (!EmailStatus.SNOOZED.equals(status)) {
             email.setSnoozedUntil(null);
         }
         
         EmailEntity saved = emailRepository.save(email);
 
-        // Feature 3.3: Sync Gmail labels if the column has a mapping
         try {
-            kanbanColumnRepository.findByAccountIdAndLinkedStatus(email.getAccount().getId(), status.name())
+            kanbanColumnRepository.findByAccountIdAndLinkedStatus(email.getAccount().getId(), status)
                 .ifPresent(column -> {
                     if (column.getGmailLabelId() != null && !column.getGmailLabelId().isBlank()) {
                         try {
