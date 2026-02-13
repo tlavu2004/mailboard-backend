@@ -23,9 +23,12 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     
     List<EmailEntity> findByAccountId(Long accountId);
 
-    @Query("SELECT e FROM EmailEntity e WHERE e.account.id = :accountId AND " +
-           "(LOWER(e.subject) LIKE LOWER(CONCAT('%', :query, '%')) OR " +
-           "LOWER(e.sender) LIKE LOWER(CONCAT('%', :query, '%')))")
+    @Query(value = "SELECT e.* FROM emails e WHERE e.account_id = :accountId AND " +
+           "(similarity(e.subject, :query) > 0.1 OR similarity(e.sender, :query) > 0.1 OR " +
+           "LOWER(e.subject) LIKE LOWER(CONCAT('%', :query, '%')) OR " +
+           "LOWER(e.sender) LIKE LOWER(CONCAT('%', :query, '%'))) " +
+           "ORDER BY GREATEST(similarity(e.subject, :query), similarity(e.sender, :query)) DESC " +
+           "LIMIT 20", nativeQuery = true)
     List<EmailEntity> searchEmails(@Param("accountId") Long accountId, @Param("query") String query);
 
     @Modifying
