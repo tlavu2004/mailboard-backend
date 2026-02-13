@@ -38,11 +38,18 @@ public class SearchService {
                 .map(String::valueOf)
                 .collect(java.util.stream.Collectors.joining(",")) + "]";
             
-            log.debug("Searching DB with vector...");
+            log.debug("Searching DB with vector (dim={})...", queryEmbedding.size());
             
-            // Threshold 0.5 distance (approx > 1 - 0.5 = 0.5 similarity) to filter out noise
-            // Lower distance = higher similarity
-            return emailRepository.findSimilarEmails(vectorString, 0.5);
+            // Search the column matching the query embedding dimension
+            int dimension = queryEmbedding.size();
+            if (dimension == 768) {
+                return emailRepository.findSimilarEmails768(vectorString, 0.5);
+            } else if (dimension == 384) {
+                return emailRepository.findSimilarEmails384(vectorString, 0.5);
+            } else {
+                log.warn("Unexpected query embedding dimension: {}", dimension);
+                return Collections.emptyList();
+            }
         } catch (Exception e) {
             log.error("Semantic search failed", e);
             return Collections.emptyList();

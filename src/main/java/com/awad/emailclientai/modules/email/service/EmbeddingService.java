@@ -9,4 +9,9 @@ public interface EmbeddingService {
      * @return A list of floats representing the vector.
      */
     List<Float> generateEmbedding(String text);
+
+    /**
+     * @return The dimension of the vector produced by this service.
+     */
+    int getPreferredDimension();
 }

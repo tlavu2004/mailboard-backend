@@ -56,6 +56,9 @@ public class EmailEntity {
     @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private EmailAccount account;
 
-    @Column(columnDefinition = "vector", insertable = false, updatable = false)
-    private String embedding;
+    @Column(name = "embedding_768", columnDefinition = "vector", insertable = false, updatable = false)
+    private String embedding768;
+
+    @Column(name = "embedding_384", columnDefinition = "vector", insertable = false, updatable = false)
+    private String embedding384;
 }

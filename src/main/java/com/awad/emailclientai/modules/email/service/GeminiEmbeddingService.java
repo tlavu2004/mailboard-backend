@@ -84,4 +84,12 @@ public class GeminiEmbeddingService implements EmbeddingService {
             throw new RuntimeException("Gemini API Error: " + e.getMessage());
         }
     }
+
+    @Override
+    public int getPreferredDimension() {
+        if (apiKey == null || apiKey.isEmpty() || apiKey.equals("dummy-api-key")) {
+            throw new RuntimeException("Gemini API key is not configured");
+        }
+        return 768;
+    }
 }

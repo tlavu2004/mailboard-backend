@@ -40,4 +40,14 @@ public class CompositeEmbeddingService implements EmbeddingService {
             }
         }
     }
+    @Override
+    public int getPreferredDimension() {
+        try {
+            // Check if Gemini is working
+            return geminiService.getPreferredDimension();
+        } catch (Exception e) {
+            // Fallback to ONNX dimension
+            return onnxService.getPreferredDimension();
+        }
+    }
 }

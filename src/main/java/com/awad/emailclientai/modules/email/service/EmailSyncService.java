@@ -60,10 +60,15 @@ public class EmailSyncService {
                         }
                     }
 
-                    // If embedding is missing (and we have a body), generate it
-                    if (existing.getEmbedding() == null && existing.getBody() != null && !existing.getBody().isEmpty()) {
+                    // If embedding of the currently preferred dimension is missing, generate it
+                    int preferredDim = embeddingService.getPreferredDimension();
+                    boolean hasPreferred = (preferredDim == 768 && existing.getEmbedding768() != null) ||
+                                         (preferredDim == 384 && existing.getEmbedding384() != null);
+
+                    if (!hasPreferred && existing.getBody() != null && !existing.getBody().isEmpty()) {
                         generateAndSetEmbedding(existing, existing.getSubject(), existing.getBody());
-                        if (existing.getEmbedding() != null) {
+                        // Re-check after generation
+                        if (existing.getEmbedding768() != null || existing.getEmbedding384() != null) {
                             changed = true;
                         }
                     }
@@ -149,7 +154,16 @@ public class EmailSyncService {
                 if (entity.getId() == null) {
                     emailRepository.save(entity);
                 }
-                emailRepository.updateEmbedding(entity.getId(), embeddingString);
+
+                // Route to correct column based on embedding dimension
+                int dimension = embeddingList.size();
+                if (dimension == 768) {
+                    emailRepository.updateEmbedding768(entity.getId(), embeddingString);
+                } else if (dimension == 384) {
+                    emailRepository.updateEmbedding384(entity.getId(), embeddingString);
+                } else {
+                    log.warn("Unexpected embedding dimension: {}. Skipping.", dimension);
+                }
             }
         } catch (Exception e) {
             log.error("Failed to generate embedding for email: {}", entity.getMessageId(), e);
