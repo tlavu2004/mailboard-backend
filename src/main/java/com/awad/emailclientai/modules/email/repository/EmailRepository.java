@@ -24,18 +24,18 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     List<EmailEntity> findByAccountId(Long accountId);
 
     @Query(value = "SELECT e.* FROM emails e WHERE e.account_id = :accountId AND " +
-           "(similarity(e.subject, :query) > 0.1 OR similarity(e.sender, :query) > 0.1 OR " +
+           "(word_similarity(:query, e.subject) > 0.3 OR word_similarity(:query, e.sender) > 0.3 OR " +
            "LOWER(e.subject) LIKE LOWER(CONCAT('%', :query, '%')) OR " +
            "LOWER(e.sender) LIKE LOWER(CONCAT('%', :query, '%'))) " +
-           "ORDER BY GREATEST(similarity(e.subject, :query), similarity(e.sender, :query)) DESC " +
+           "ORDER BY GREATEST(word_similarity(:query, e.subject), word_similarity(:query, e.sender)) DESC " +
            "LIMIT 20", nativeQuery = true)
     List<EmailEntity> searchEmails(@Param("accountId") Long accountId, @Param("query") String query);
 
     @Query(value = "SELECT e.id, e.message_id, e.uid, e.subject, e.sender, e.snippet, e.body, " +
            "e.status, e.received_date, e.snoozed_until, e.summary, e.is_read, e.has_attachments, e.account_id, " +
-           "GREATEST(similarity(e.subject, :query), similarity(e.sender, :query)) AS relevance_score " +
+           "GREATEST(word_similarity(:query, e.subject), word_similarity(:query, e.sender)) AS relevance_score " +
            "FROM emails e WHERE e.account_id = :accountId AND " +
-           "(similarity(e.subject, :query) > 0.1 OR similarity(e.sender, :query) > 0.1 OR " +
+           "(word_similarity(:query, e.subject) > 0.3 OR word_similarity(:query, e.sender) > 0.3 OR " +
            "LOWER(e.subject) LIKE LOWER(CONCAT('%', :query, '%')) OR " +
            "LOWER(e.sender) LIKE LOWER(CONCAT('%', :query, '%'))) " +
            "ORDER BY relevance_score DESC " +
