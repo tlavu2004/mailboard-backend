@@ -23,6 +23,7 @@ public class EmailSyncService {
     private final ImapService imapService;
     private final EmailRepository emailRepository;
     private final EmailAccountRepository emailAccountRepository;
+    private final EmbeddingService embeddingService;
 
     /**
      * Syncs emails for all accounts or a specific account.
@@ -49,13 +50,32 @@ public class EmailSyncService {
                     msg.getBody() != null ? msg.getBody().length() : 0);
                 if (existingOpt.isPresent()) {
                     EmailEntity existing = existingOpt.get();
+                    boolean changed = false;
+
                     // If body is missing, update it
                     if (existing.getBody() == null || existing.getBody().isEmpty()) {
                         if (msg.getBody() != null && !msg.getBody().isEmpty()) {
                             existing.setBody(msg.getBody());
-                            emailRepository.save(existing); // Save body update
-                            log.info("Updated body for email ID: {}", existing.getId());
+                            changed = true;
                         }
+                    }
+
+                    // If embedding of the currently preferred dimension is missing, generate it
+                    int preferredDim = embeddingService.getPreferredDimension();
+                    boolean hasPreferred = (preferredDim == 768 && existing.getEmbedding768() != null) ||
+                                         (preferredDim == 384 && existing.getEmbedding384() != null);
+
+                    if (!hasPreferred && existing.getBody() != null && !existing.getBody().isEmpty()) {
+                        generateAndSetEmbedding(existing, existing.getSubject(), existing.getBody());
+                        // Re-check after generation
+                        if (existing.getEmbedding768() != null || existing.getEmbedding384() != null) {
+                            changed = true;
+                        }
+                    }
+
+                    if (changed) {
+                        emailRepository.save(existing);
+                        log.info("Updated email ID: {} (Body/Embedding)", existing.getId());
                     }
 
                     // Update read status if changed
@@ -89,6 +109,9 @@ public class EmailSyncService {
                         .account(account)
                         .build();
 
+                // Generate embedding for new email
+                generateAndSetEmbedding(entity, msg.getSubject(), msg.getBody());
+
                 emailRepository.save(entity);
             }
         } catch (jakarta.mail.MessagingException e) {
@@ -111,6 +134,40 @@ public class EmailSyncService {
             email.setStatus(EmailStatus.INBOX);
             email.setSnoozedUntil(null);
             emailRepository.save(email);
+        }
+    }
+
+    private void generateAndSetEmbedding(EmailEntity entity, String subject, String body) {
+        try {
+            String textToEmbed = (subject != null ? subject : "") + " " + (body != null ? body : "");
+            // Truncate to avoid token limits if necessary (basic check)
+            if (textToEmbed.length() > 8000) {
+                textToEmbed = textToEmbed.substring(0, 8000);
+            }
+            if (!textToEmbed.trim().isEmpty()) {
+                List<Float> embeddingList = embeddingService.generateEmbedding(textToEmbed);
+                String embeddingString = "[" + embeddingList.stream()
+                        .map(String::valueOf)
+                        .collect(java.util.stream.Collectors.joining(",")) + "]";
+                
+                // If the entity is new, we must save it first to get an ID
+                if (entity.getId() == null) {
+                    emailRepository.save(entity);
+                }
+
+                // Route to correct column based on embedding dimension
+                int dimension = embeddingList.size();
+                if (dimension == 768) {
+                    emailRepository.updateEmbedding768(entity.getId(), embeddingString);
+                } else if (dimension == 384) {
+                    emailRepository.updateEmbedding384(entity.getId(), embeddingString);
+                } else {
+                    log.warn("Unexpected embedding dimension: {}. Skipping.", dimension);
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to generate embedding for email: {}", entity.getMessageId(), e);
+            // We continue without embedding, can retry later
         }
     }
 }

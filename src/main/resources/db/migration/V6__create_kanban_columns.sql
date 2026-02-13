@@ -1,0 +1,19 @@
+-- Migration: V6__create_kanban_columns.sql
+-- Description: Create table for dynamic Kanban columns configuration per account
+
+CREATE TABLE kanban_columns (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    position INTEGER NOT NULL,
+    linked_status VARCHAR(50),
+    account_id BIGINT NOT NULL,
+    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+    
+    CONSTRAINT fk_kanban_columns_account 
+        FOREIGN KEY (account_id) 
+        REFERENCES email_accounts(id) 
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_kanban_columns_account_id ON kanban_columns(account_id);

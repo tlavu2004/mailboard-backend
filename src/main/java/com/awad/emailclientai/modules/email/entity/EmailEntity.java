@@ -1,5 +1,6 @@
 package com.awad.emailclientai.modules.email.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -52,5 +53,12 @@ public class EmailEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "account_id")
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private EmailAccount account;
+
+    @Column(name = "embedding_768", columnDefinition = "vector", insertable = false, updatable = false)
+    private String embedding768;
+
+    @Column(name = "embedding_384", columnDefinition = "vector", insertable = false, updatable = false)
+    private String embedding384;
 }
