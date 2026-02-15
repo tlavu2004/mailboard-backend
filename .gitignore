@@ -40,3 +40,6 @@ build/
 
 # Logs
 **/logs/
+
+# Python Virtual Environment
+**/.venv
