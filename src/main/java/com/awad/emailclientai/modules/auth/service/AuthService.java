@@ -5,7 +5,6 @@ import com.awad.emailclientai.modules.auth.dto.request.LoginRequest;
 import com.awad.emailclientai.modules.auth.dto.request.RefreshTokenRequest;
 import com.awad.emailclientai.modules.auth.dto.request.RegisterRequest;
 import com.awad.emailclientai.modules.auth.dto.response.AuthResponse;
-import com.awad.emailclientai.modules.auth.entity.RefreshToken;
 import com.awad.emailclientai.modules.user.entity.User;
 import com.awad.emailclientai.modules.user.repository.UserRepository;
 import com.awad.emailclientai.shared.config.properties.JwtProperties;
@@ -80,22 +79,10 @@ public class AuthService {
     public AuthResponse refreshToken(RefreshTokenRequest request) {
         log.debug("Refresh token request");
 
-        RefreshToken refreshToken = refreshTokenService.findByToken(request.getRefreshToken());
-        refreshTokenService.verifyExpiration(refreshToken);
-
-        User user = refreshToken.getUser();
-        UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
-
-        String newAccessToken = jwtService.generateAccessToken(userDetails);
-
+        User user = refreshTokenService.rotateRefreshToken(request.getRefreshToken());
         log.info("Access token refreshed for user: {}", user.getEmail());
 
-        return AuthResponse.builder()
-                .accessToken(newAccessToken)
-                .refreshToken(refreshToken.getToken())
-                .tokenType("Bearer")
-                .expiresIn(jwtProperties.getAccessTokenExpiration() / 1000)
-                .build();
+        return generateAuthResponse(user);
     }
 
     @Transactional

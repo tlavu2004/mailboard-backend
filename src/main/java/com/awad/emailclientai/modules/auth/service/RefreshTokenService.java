@@ -4,8 +4,12 @@ import com.awad.emailclientai.modules.auth.entity.RefreshToken;
 import com.awad.emailclientai.modules.auth.repository.RefreshTokenRepository;
 import com.awad.emailclientai.modules.user.entity.User;
 import com.awad.emailclientai.shared.config.properties.JwtProperties;
+import com.awad.emailclientai.shared.exception.TokenRefreshException;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -55,6 +59,22 @@ public class RefreshTokenService {
     @Transactional
     public void deleteByUserId(Long userId) {
         refreshTokenRepository.deleteByUserId(userId);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW, noRollbackFor = TokenRefreshException.class)
+    public User rotateRefreshToken(String token) {
+        RefreshToken refreshToken = refreshTokenRepository.findByTokenWithLock(token)
+                .orElseThrow(() -> new TokenRefreshException(token, "Refresh token not found"));
+
+        if (refreshToken.isExpired()) {
+            refreshTokenRepository.delete(refreshToken);
+            refreshTokenRepository.flush();
+            throw new TokenRefreshException(token, "Refresh token expired. Please login again");
+        }
+
+        User user = refreshToken.getUser();
+        refreshTokenRepository.delete(refreshToken);
+        return user;
     }
 
     @Transactional

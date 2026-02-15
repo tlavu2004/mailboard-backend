@@ -8,11 +8,17 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
+import org.springframework.data.jpa.repository.Lock;
+import jakarta.persistence.LockModeType;
 
 @Repository
 public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long> {
 
     Optional<RefreshToken> findByToken(String token);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT rt FROM RefreshToken rt WHERE rt.token = :token")
+    Optional<RefreshToken> findByTokenWithLock(String token);
 
     @Modifying
     @Query("DELETE FROM RefreshToken rt WHERE rt.user.id = :userId")
