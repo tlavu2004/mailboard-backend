@@ -203,11 +203,16 @@ public class ImapService {
     }
 
     /**
-     * Synchronizes a label to a message.
-     * In Gmail IMAP, copying a message to a folder is equivalent to adding a label.
+     * Synchronizes a label change on a message using Gmail's native label API.
+     * Uses GmailFolder.setLabels() to directly add/remove labels on the message
+     * from the source folder (INBOX), avoiding UID mismatch issues across folders.
+     *
+     * @param oldLabelName the old label to remove (can be null to skip removal)
+     * @param newLabelName the new label to add
      */
-    public void syncLabel(EmailAccount account, String folderName, long uid, String labelName) throws MessagingException {
-        if (labelName == null || labelName.isBlank()) return;
+    public void syncLabel(EmailAccount account, String folderName, long uid, 
+                          String oldLabelName, String newLabelName) throws MessagingException {
+        if (newLabelName == null || newLabelName.isBlank()) return;
         
         try (Store store = connectToStore(account)) {
             Folder sourceFolder = store.getFolder(folderName);
@@ -220,18 +225,40 @@ public class ImapService {
             UIDFolder uidFolder = (UIDFolder) sourceFolder;
             Message message = uidFolder.getMessageByUID(uid);
             
-            if (message != null) {
-                Folder targetFolder = store.getFolder(labelName);
-                if (!targetFolder.exists()) {
-                    log.info("Creating folder/label: {}", labelName);
-                    targetFolder.create(Folder.HOLDS_MESSAGES);
-                }
-                sourceFolder.copyMessages(new Message[]{message}, targetFolder);
-                log.info("Synced label '{}' for email UID {}", labelName, uid);
-            } else {
+            if (message == null) {
                 log.warn("Message with UID {} not found in folder {}", uid, folderName);
+                sourceFolder.close(false);
+                return;
             }
-            
+
+            Message[] msgs = new Message[]{message};
+
+            // Use GmailFolder API to directly add/remove labels
+            if (sourceFolder instanceof org.eclipse.angus.mail.gimap.GmailFolder gmailFolder) {
+                // 1. Remove old label first
+                if (oldLabelName != null && !oldLabelName.isBlank() && !oldLabelName.equals(newLabelName)) {
+                    gmailFolder.setLabels(msgs, new String[]{oldLabelName}, false);
+                    log.info("Removed label '{}' for email UID {}", oldLabelName, uid);
+                }
+                
+                // 2. Add new label
+                if (!newLabelName.equals(oldLabelName)) {
+                    gmailFolder.setLabels(msgs, new String[]{newLabelName}, true);
+                    log.info("Added label '{}' for email UID {}", newLabelName, uid);
+                }
+            } else {
+                // Fallback for non-Gmail: use copy approach
+                log.info("Non-Gmail folder, using copy approach for label sync");
+                if (!newLabelName.equals(oldLabelName)) {
+                    Folder targetFolder = store.getFolder(newLabelName);
+                    if (!targetFolder.exists()) {
+                        targetFolder.create(Folder.HOLDS_MESSAGES);
+                    }
+                    sourceFolder.copyMessages(msgs, targetFolder);
+                    log.info("Copied message to folder '{}' for UID {}", newLabelName, uid);
+                }
+            }
+
             sourceFolder.close(false);
         }
     }

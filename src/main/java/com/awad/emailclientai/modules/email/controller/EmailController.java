@@ -130,6 +130,7 @@ public class EmailController {
         EmailEntity email = emailRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Email not found"));
         
+        String oldStatus = email.getStatus();
         email.setStatus(status);
         
         // If moving out of snoozed, clear the date
@@ -140,12 +141,24 @@ public class EmailController {
         EmailEntity saved = emailRepository.save(email);
 
         try {
+            // Look up old label to remove
+            String oldLabelId = null;
+            if (oldStatus != null) {
+                oldLabelId = kanbanColumnRepository
+                        .findByAccountIdAndLinkedStatus(email.getAccount().getId(), oldStatus)
+                        .map(col -> col.getGmailLabelId())
+                        .filter(label -> label != null && !label.isBlank())
+                        .orElse(null);
+            }
+
+            // Look up new label to add
+            String finalOldLabelId = oldLabelId;
             kanbanColumnRepository.findByAccountIdAndLinkedStatus(email.getAccount().getId(), status)
                 .ifPresent(column -> {
                     if (column.getGmailLabelId() != null && !column.getGmailLabelId().isBlank()) {
                         try {
-                            // Default to INBOX as source folder for MVP
-                            imapService.syncLabel(email.getAccount(), "INBOX", email.getUid(), column.getGmailLabelId());
+                            imapService.syncLabel(email.getAccount(), "INBOX", email.getUid(), 
+                                    finalOldLabelId, column.getGmailLabelId());
                         } catch (Exception e) {
                             log.error("Failed to sync Gmail label: {}", e.getMessage());
                         }
