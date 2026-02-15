@@ -135,6 +135,11 @@
             <version>2.0.3</version>
         </dependency>
         <dependency>
+            <groupId>org.eclipse.angus</groupId>
+            <artifactId>gimap</artifactId>
+            <version>2.0.3</version>
+        </dependency>
+        <dependency>
             <groupId>com.microsoft.onnxruntime</groupId>
             <artifactId>onnxruntime</artifactId>
             <version>1.18.0</version>

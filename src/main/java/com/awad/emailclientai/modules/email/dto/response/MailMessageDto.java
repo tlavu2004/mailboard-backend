@@ -88,6 +88,11 @@ public class MailMessageDto {
     private boolean hasAttachments;
     
     /**
+     * Gmail labels (fetched via X-GM-LABELS).
+     */
+    private List<String> labels;
+
+    /**
      * Size of the message in bytes.
      */
     private int size;

@@ -6,6 +6,9 @@ import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.entity.EmailStatus;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
+import com.awad.emailclientai.modules.kanban.entity.KanbanColumn;
+import com.awad.emailclientai.modules.kanban.repository.KanbanColumnRepository;
+import com.awad.emailclientai.modules.kanban.service.KanbanService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -13,7 +16,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -22,32 +26,38 @@ public class EmailSyncService {
 
     private final ImapService imapService;
     private final EmailRepository emailRepository;
-    private final EmailAccountRepository emailAccountRepository;
+    private final EmailAccountRepository accountRepository;
     private final EmbeddingService embeddingService;
+    private final KanbanColumnRepository kanbanColumnRepository;
+    private final KanbanService kanbanService;
 
-    /**
-     * Syncs emails for all accounts or a specific account.
-     * For MVP, we might just call this manually or periodically.
-     */
+    /** Gmail system labels to ignore when determining custom labels */
+    private static final Set<String> SYSTEM_LABELS = Set.of(
+            "INBOX", "SENT", "DRAFT", "DRAFTS", "SPAM", "TRASH",
+            "STARRED", "IMPORTANT", "UNREAD",
+            "CATEGORY_PERSONAL", "CATEGORY_SOCIAL",
+            "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS"
+    );
+
     @Transactional
     public void syncEmailsForAccount(Long accountId, String folderName, int limit, int page) {
-        EmailAccount account = emailAccountRepository.findById(accountId)
+        EmailAccount account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new RuntimeException("Account not found"));
 
         if (!imapService.testConnection(account)) {
-            log.error("Cannot connect to account: " + account.getEmailAddress());
+            log.info("Cannot connect to account: " + account.getEmailAddress());
             return;
         }
 
-        // Fetch recent emails from specified folder (or INBOX)
-        // In a real app, we would track the last synced UID per folder.
         try {
             List<MailMessageDto> messages = imapService.getMessages(account, folderName, page, limit);
 
             for (MailMessageDto msg : messages) {
+                String targetStatus = determineStatusFromLabels(msg, accountId);
+                log.info("Syncing email: {} | Labels: {} | Target Status: {}",
+                    msg.getSubject(), msg.getLabels(), targetStatus);
+
                 java.util.Optional<EmailEntity> existingOpt = emailRepository.findByMessageId(msg.getMessageId());
-                log.debug("Processing email: {} | Body length: {}", msg.getSubject(), 
-                    msg.getBody() != null ? msg.getBody().length() : 0);
                 if (existingOpt.isPresent()) {
                     EmailEntity existing = existingOpt.get();
                     boolean changed = false;
@@ -67,7 +77,6 @@ public class EmailSyncService {
 
                     if (!hasPreferred && existing.getBody() != null && !existing.getBody().isEmpty()) {
                         generateAndSetEmbedding(existing, existing.getSubject(), existing.getBody());
-                        // Re-check after generation
                         if (existing.getEmbedding768() != null || existing.getEmbedding384() != null) {
                             changed = true;
                         }
@@ -84,12 +93,24 @@ public class EmailSyncService {
                         emailRepository.save(existing);
                     }
 
-                    // Update attachment status if changed (fix for false positives)
+                    // Update status if label mapping changed it
+                    if (!existing.getStatus().equals(targetStatus)) {
+                        log.info("Updating status for email ID {} from {} to {} based on labels",
+                            existing.getId(), existing.getStatus(), targetStatus);
+                        existing.setStatus(targetStatus);
+                        changed = true;
+                    }
+
+                    // Update hasAttachments if changed
                     if (existing.isHasAttachments() != msg.isHasAttachments()) {
                         existing.setHasAttachments(msg.isHasAttachments());
+                        changed = true;
+                    }
+
+                    if (changed) {
                         emailRepository.save(existing);
                     }
-                    continue; 
+                    continue;
                 }
 
                 EmailEntity entity = EmailEntity.builder()
@@ -98,14 +119,11 @@ public class EmailSyncService {
                         .subject(msg.getSubject())
                         .sender(msg.getFrom())
                         .snippet(msg.getPreview())
-                        .body(msg.getBody()) // Now actually saving the body
+                        .body(msg.getBody())
                         .receivedDate(msg.getReceivedAt())
                         .isRead(msg.isRead())
                         .hasAttachments(msg.isHasAttachments())
-                        // Note: We might want to track folder name in entity later, 
-                        // but for now we just treat everything as INBOX scope or generic email.
-                        // Setting status as INBOX for now for all synced emails so they appear on board.
-                        .status(EmailStatus.INBOX)
+                        .status(targetStatus)
                         .account(account)
                         .build();
 
@@ -140,34 +158,87 @@ public class EmailSyncService {
     private void generateAndSetEmbedding(EmailEntity entity, String subject, String body) {
         try {
             String textToEmbed = (subject != null ? subject : "") + " " + (body != null ? body : "");
-            // Truncate to avoid token limits if necessary (basic check)
             if (textToEmbed.length() > 8000) {
                 textToEmbed = textToEmbed.substring(0, 8000);
             }
-            if (!textToEmbed.trim().isEmpty()) {
-                List<Float> embeddingList = embeddingService.generateEmbedding(textToEmbed);
-                String embeddingString = "[" + embeddingList.stream()
-                        .map(String::valueOf)
-                        .collect(java.util.stream.Collectors.joining(",")) + "]";
-                
-                // If the entity is new, we must save it first to get an ID
-                if (entity.getId() == null) {
-                    emailRepository.save(entity);
-                }
+            if (textToEmbed.trim().isEmpty()) {
+                return;
+            }
 
-                // Route to correct column based on embedding dimension
-                int dimension = embeddingList.size();
-                if (dimension == 768) {
-                    emailRepository.updateEmbedding768(entity.getId(), embeddingString);
-                } else if (dimension == 384) {
-                    emailRepository.updateEmbedding384(entity.getId(), embeddingString);
-                } else {
-                    log.warn("Unexpected embedding dimension: {}. Skipping.", dimension);
-                }
+            List<Float> embeddingList = embeddingService.generateEmbedding(textToEmbed);
+            if (embeddingList == null || embeddingList.isEmpty()) {
+                return;
+            }
+
+            String embeddingString = "[" + embeddingList.stream()
+                    .map(String::valueOf)
+                    .collect(java.util.stream.Collectors.joining(",")) + "]";
+
+            if (entity.getId() == null) {
+                emailRepository.save(entity);
+            }
+
+            int dimension = embeddingList.size();
+            if (dimension == 768) {
+                emailRepository.updateEmbedding768(entity.getId(), embeddingString);
+            } else if (dimension == 384) {
+                emailRepository.updateEmbedding384(entity.getId(), embeddingString);
+            } else {
+                log.warn("Unexpected embedding dimension: {}. Skipping.", dimension);
             }
         } catch (Exception e) {
             log.error("Failed to generate embedding for email: {}", entity.getMessageId(), e);
-            // We continue without embedding, can retry later
         }
+    }
+
+    /**
+     * Determines the Kanban status for an email based on its Gmail labels.
+     * Rules:
+     *   - Filter out system labels (INBOX, SENT, SPAM, etc.)
+     *   - If exactly 1 custom label remains -> find or create a Kanban column for it
+     *   - If 0 or >1 custom labels -> default to INBOX
+     */
+    private String determineStatusFromLabels(MailMessageDto msg, Long accountId) {
+        if (msg.getLabels() == null || msg.getLabels().isEmpty()) {
+            return EmailStatus.INBOX;
+        }
+
+        // Filter out system labels (case-insensitive)
+        List<String> customLabels = msg.getLabels().stream()
+                .filter(label -> !SYSTEM_LABELS.contains(label.toUpperCase()))
+                .collect(Collectors.toList());
+
+        if (customLabels.size() != 1) {
+            if (customLabels.size() > 1) {
+                log.info("Email '{}' has {} custom labels {} -> keeping in INBOX",
+                        msg.getSubject(), customLabels.size(), customLabels);
+            }
+            return EmailStatus.INBOX;
+        }
+
+        // Exactly 1 custom label -> find or create column
+        String labelName = customLabels.get(0);
+        KanbanColumn column = findOrCreateColumn(accountId, labelName);
+        log.info("Auto-mapping email '{}' to column '{}' (status: {}) based on label '{}'",
+                msg.getSubject(), column.getName(), column.getLinkedStatus(), labelName);
+        return column.getLinkedStatus();
+    }
+
+    /**
+     * Finds an existing Kanban column matching the given label (case-insensitive),
+     * or creates a new one if none exists.
+     */
+    private KanbanColumn findOrCreateColumn(Long accountId, String labelName) {
+        // Try to find existing column by gmailLabelId (case-insensitive)
+        Optional<KanbanColumn> existing = kanbanColumnRepository
+                .findByAccountIdAndGmailLabelIdIgnoreCase(accountId, labelName);
+
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+
+        // Create new column
+        log.info("Creating new Kanban column for label: '{}'", labelName);
+        return kanbanService.createColumn(accountId, labelName, labelName);
     }
 }

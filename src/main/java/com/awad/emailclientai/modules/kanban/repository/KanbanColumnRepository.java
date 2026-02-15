@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface KanbanColumnRepository extends JpaRepository<KanbanColumn, Long> {
@@ -17,5 +18,10 @@ public interface KanbanColumnRepository extends JpaRepository<KanbanColumn, Long
     /**
      * Find a column by account and its linked status.
      */
-    java.util.Optional<KanbanColumn> findByAccountIdAndLinkedStatus(Long accountId, String linkedStatus);
+    Optional<KanbanColumn> findByAccountIdAndLinkedStatus(Long accountId, String linkedStatus);
+
+    /**
+     * Find a column by account and Gmail label ID (case-insensitive).
+     */
+    Optional<KanbanColumn> findByAccountIdAndGmailLabelIdIgnoreCase(Long accountId, String gmailLabelId);
 }
