@@ -1,9 +1,12 @@
 package com.awad.emailclientai.modules.email.controller;
 
+import com.awad.emailclientai.modules.email.dto.response.SuggestionDto;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.service.SearchService;
+import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -17,13 +20,15 @@ public class SearchController {
     private final SearchService searchService;
 
     @PostMapping("/semantic")
+    @Operation(summary = "AI Semantic Email Search", description = "Search emails using AI embeddings for conceptual matching.")
     public ResponseEntity<List<EmailEntity>> semanticSearch(@RequestBody SearchRequest request) {
         return ResponseEntity.ok(searchService.semanticSearch(request.getQuery()));
     }
 
     @GetMapping("/suggestions")
-    public ResponseEntity<List<String>> getSuggestions(@RequestParam("q") String query) {
-        return ResponseEntity.ok(searchService.getSuggestions(query));
+    @Operation(summary = "Search Suggestions Provider", description = "Provides real-time subject and sender suggestions as the user types.")
+    public ResponseEntity<ApiResponse<List<SuggestionDto>>> getSuggestions(@RequestParam("q") String query) {
+        return ResponseEntity.ok(ApiResponse.success(searchService.getSuggestions(query)));
     }
 
 

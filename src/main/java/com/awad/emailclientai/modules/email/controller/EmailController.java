@@ -1,10 +1,13 @@
 package com.awad.emailclientai.modules.email.controller;
 
 import com.awad.emailclientai.modules.email.dto.response.EmailEntityDto;
+import com.awad.emailclientai.modules.email.dto.response.SearchResultDto;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.entity.EmailStatus;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import com.awad.emailclientai.modules.email.service.EmailSyncService;
+import com.awad.emailclientai.modules.email.service.ImapService;
+import com.awad.emailclientai.modules.kanban.repository.KanbanColumnRepository;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -26,11 +29,13 @@ import java.util.stream.Collectors;
 public class EmailController {
 
     private final EmailRepository emailRepository;
+    private final ImapService imapService;
+    private final KanbanColumnRepository kanbanColumnRepository;
     private final EmailSyncService emailSyncService;
     private final com.awad.emailclientai.modules.email.service.AiService aiService;
 
     @PostMapping("/{id}/summarize")
-    @Operation(summary = "Summarize email content", description = "Generates a summary using AI or local fallback.")
+    @Operation(summary = "Generate AI Email Summary", description = "Generates a summary using AI or local fallback.")
     public ResponseEntity<ApiResponse<String>> summarizeEmail(@PathVariable Long id) {
         String summary = aiService.summarizeEmail(id);
         // "Summary generated" is the message, summary is the data.
@@ -39,7 +44,7 @@ public class EmailController {
     }
 
     @PostMapping("/sync")
-    @Operation(summary = "Sync emails using IMAP", description = "Fetches recent emails from IMAP and saves them to the DB.")
+    @Operation(summary = "Sync Emails from Gmail", description = "Fetches recent emails from IMAP and saves them to the DB.")
     public ResponseEntity<ApiResponse<String>> syncEmails(
             @RequestParam Long accountId,
             @RequestParam(defaultValue = "INBOX") String folderName,
@@ -50,24 +55,47 @@ public class EmailController {
     }
 
     @GetMapping("/search")
-    @Operation(summary = "Search emails", description = "Fuzzy search by subject or sender.")
-    public ResponseEntity<ApiResponse<List<EmailEntityDto>>> searchEmails(
+    @Operation(summary = "Fuzzy Search Emails with Relevance Ranking", description = "Fuzzy search by subject or sender with relevance ranking.")
+    public ResponseEntity<ApiResponse<List<SearchResultDto>>> searchEmails(
             @RequestParam Long accountId,
             @RequestParam String q) {
         
-        List<EmailEntity> entities = emailRepository.searchEmails(accountId, q);
-        List<EmailEntityDto> dtos = entities.stream()
-                .map(this::mapToDto)
+        List<Object[]> rows = emailRepository.searchEmailsWithScore(accountId, q);
+        List<SearchResultDto> results = rows.stream()
+                .map(row -> {
+                    EmailEntityDto emailDto = EmailEntityDto.builder()
+                            .id(((Number) row[0]).longValue())
+                            .messageId((String) row[1])
+                            .uid(row[2] != null ? ((Number) row[2]).longValue() : null)
+                            .subject((String) row[3])
+                            .sender((String) row[4])
+                            .snippet((String) row[5])
+                            .body((String) row[6])
+                            .status((String) row[7])
+                            .receivedDate(row[8] != null ? ((java.sql.Timestamp) row[8]).toLocalDateTime() : null)
+                            .snoozedUntil(row[9] != null ? ((java.sql.Timestamp) row[9]).toLocalDateTime() : null)
+                            .summary((String) row[10])
+                            .isRead(row[11] != null && (Boolean) row[11])
+                            .hasAttachments(row[12] != null && (Boolean) row[12])
+                            .gmailLink(String.format("https://mail.google.com/mail/u/0/#search/rfc822msgid:%s", 
+                                    java.net.URLEncoder.encode((String) row[1], java.nio.charset.StandardCharsets.UTF_8)))
+                            .build();
+                    double score = row[14] != null ? ((Number) row[14]).doubleValue() : 0.0;
+                    return SearchResultDto.builder()
+                            .email(emailDto)
+                            .relevanceScore(Math.round(score * 100.0) / 100.0)
+                            .build();
+                })
                 .collect(Collectors.toList());
         
-        return ResponseEntity.ok(ApiResponse.success(dtos));
+        return ResponseEntity.ok(ApiResponse.success(results));
     }
 
     @GetMapping
-    @Operation(summary = "Get emails by status", description = "Retrieve emails for Kanban columns with filtering and sorting.")
+    @Operation(summary = "List and Filter Emails", description = "Retrieve emails for Kanban columns with filtering and sorting.")
     public ResponseEntity<ApiResponse<List<EmailEntityDto>>> getEmails(
             @RequestParam Long accountId,
-            @RequestParam(required = false) EmailStatus status,
+            @RequestParam(required = false) String status,
             @RequestParam(required = false) Boolean unread,
             @RequestParam(required = false) Boolean hasAttachments,
             @RequestParam(defaultValue = "receivedDate,desc") String sort) {
@@ -94,27 +122,57 @@ public class EmailController {
     }
 
     @PutMapping("/{id}/status")
-    @Operation(summary = "Update email status", description = "Move card between columns (e.g., INBOX -> DONE).")
+    @Operation(summary = "Update Email Task Status", description = "Move card between columns (e.g., INBOX -> DONE). Also syncs Gmail labels if mapped.")
     public ResponseEntity<ApiResponse<EmailEntityDto>> updateStatus(
             @PathVariable Long id,
-            @RequestParam EmailStatus status) {
+            @RequestParam String status) {
         
         EmailEntity email = emailRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Email not found"));
         
+        String oldStatus = email.getStatus();
         email.setStatus(status);
         
         // If moving out of snoozed, clear the date
-        if (status != EmailStatus.SNOOZED) {
+        if (!EmailStatus.SNOOZED.equals(status)) {
             email.setSnoozedUntil(null);
         }
         
         EmailEntity saved = emailRepository.save(email);
+
+        try {
+            // Look up old label to remove
+            String oldLabelId = null;
+            if (oldStatus != null) {
+                oldLabelId = kanbanColumnRepository
+                        .findByAccountIdAndLinkedStatus(email.getAccount().getId(), oldStatus)
+                        .map(col -> col.getGmailLabelId())
+                        .filter(label -> label != null && !label.isBlank())
+                        .orElse(null);
+            }
+
+            // Look up new label to add
+            String finalOldLabelId = oldLabelId;
+            kanbanColumnRepository.findByAccountIdAndLinkedStatus(email.getAccount().getId(), status)
+                .ifPresent(column -> {
+                    if (column.getGmailLabelId() != null && !column.getGmailLabelId().isBlank()) {
+                        try {
+                            imapService.syncLabel(email.getAccount(), "INBOX", email.getUid(), 
+                                    finalOldLabelId, column.getGmailLabelId());
+                        } catch (Exception e) {
+                            log.error("Failed to sync Gmail label: {}", e.getMessage());
+                        }
+                    }
+                });
+        } catch (Exception e) {
+            log.warn("Failed to find kanban column mapping: {}", e.getMessage());
+        }
+
         return ResponseEntity.ok(ApiResponse.success(mapToDto(saved)));
     }
 
     @PutMapping("/{id}/snooze")
-    @Operation(summary = "Snooze email", description = "Move to SNOOZED status until a specific time.")
+    @Operation(summary = "Snooze Email to Future", description = "Move to SNOOZED status until a specific time.")
     public ResponseEntity<ApiResponse<EmailEntityDto>> snoozeEmail(
             @PathVariable Long id,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime until) {
@@ -144,6 +202,8 @@ public class EmailController {
                 .summary(entity.getSummary())
                 .isRead(entity.isRead())
                 .hasAttachments(entity.isHasAttachments())
+                .gmailLink(String.format("https://mail.google.com/mail/u/0/#search/rfc822msgid:%s", 
+                        java.net.URLEncoder.encode(entity.getMessageId(), java.nio.charset.StandardCharsets.UTF_8)))
                 .build();
     }
 }

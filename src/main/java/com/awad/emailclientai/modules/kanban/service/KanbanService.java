@@ -74,6 +74,7 @@ public class KanbanService {
             newColumns.add(KanbanColumn.builder()
                     .name(def[0])
                     .linkedStatus(def[1])
+                    .gmailLabelId(def[1].equals("INBOX") ? "INBOX" : null)
                     .position(maxPos)
                     .account(account)
                     .build());
@@ -86,7 +87,7 @@ public class KanbanService {
     }
 
     @Transactional
-    public KanbanColumn createColumn(Long accountId, String name) {
+    public KanbanColumn createColumn(Long accountId, String name, String gmailLabelId) {
         // ... existing logic ...
         EmailAccount account = emailAccountRepository.findById(accountId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_ACCOUNT_NOT_FOUND));
@@ -101,6 +102,7 @@ public class KanbanService {
         KanbanColumn column = KanbanColumn.builder()
                 .name(name)
                 .linkedStatus(name.toUpperCase().replace(" ", "_")) // Default linked status for now
+                .gmailLabelId(gmailLabelId)
                 .account(account)
                 .position(maxPos + 1)
                 .build();
@@ -109,7 +111,7 @@ public class KanbanService {
     }
 
     @Transactional
-    public KanbanColumn updateColumn(Long id, String name, Integer position) {
+    public KanbanColumn updateColumn(Long id, String name, Integer position, String gmailLabelId) {
         KanbanColumn column = kanbanColumnRepository.findById(id)
                 .orElseThrow(() -> new BusinessException(ErrorCode.KANBAN_COLUMN_NOT_FOUND));
 
@@ -124,6 +126,10 @@ public class KanbanService {
         
         if (position != null) {
             column.setPosition(position);
+        }
+
+        if (gmailLabelId != null) {
+            column.setGmailLabelId(gmailLabelId);
         }
         
         return kanbanColumnRepository.save(column);

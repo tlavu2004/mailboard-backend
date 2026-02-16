@@ -101,6 +101,7 @@ public class ImapService {
             folder.open(Folder.READ_ONLY);
             
             int totalMessages = folder.getMessageCount();
+            log.info("Opening IMAP folder: {} (Total messages: {})", folderName, totalMessages);
             if (totalMessages == 0) {
                 folder.close(false);
                 return messages;
@@ -109,6 +110,7 @@ public class ImapService {
             // Calculate message range (IMAP messages are 1-indexed, newest first)
             int end = totalMessages - (page * size);
             int start = Math.max(1, end - size + 1);
+            log.info("Fetching IMAP message range: {} to {} (page: {}, size: {})", start, end, page, size);
             
             if (end < 1) {
                 folder.close(false);
@@ -123,6 +125,16 @@ public class ImapService {
             fetchProfile.add(FetchProfile.Item.FLAGS);
             fetchProfile.add(FetchProfile.Item.CONTENT_INFO);
             fetchProfile.add(UIDFolder.FetchProfileItem.UID);
+            
+            // Add Gmail labels to FetchProfile using the gimap provider's FetchProfileItem
+            try {
+                fetchProfile.add(org.eclipse.angus.mail.gimap.GmailFolder.FetchProfileItem.LABELS);
+                log.info("Added Gmail LABELS FetchProfileItem to profile.");
+            } catch (Exception e) {
+                log.warn("Failed to add Gmail labels FetchProfile item: {}", e.getMessage());
+                fetchProfile.add("X-GM-LABELS");
+            }
+
             folder.fetch(imapMessages, fetchProfile);
             
             // Convert to DTOs (reverse order for newest first)
@@ -187,6 +199,67 @@ public class ImapService {
             }
             
             folder.close(false);
+        }
+    }
+
+    /**
+     * Synchronizes a label change on a message using Gmail's native label API.
+     * Uses GmailFolder.setLabels() to directly add/remove labels on the message
+     * from the source folder (INBOX), avoiding UID mismatch issues across folders.
+     *
+     * @param oldLabelName the old label to remove (can be null to skip removal)
+     * @param newLabelName the new label to add
+     */
+    public void syncLabel(EmailAccount account, String folderName, long uid, 
+                          String oldLabelName, String newLabelName) throws MessagingException {
+        if (newLabelName == null || newLabelName.isBlank()) return;
+        
+        try (Store store = connectToStore(account)) {
+            Folder sourceFolder = store.getFolder(folderName);
+            if (!sourceFolder.exists()) {
+                log.error("Source folder {} does not exist", folderName);
+                return;
+            }
+            
+            sourceFolder.open(Folder.READ_WRITE);
+            UIDFolder uidFolder = (UIDFolder) sourceFolder;
+            Message message = uidFolder.getMessageByUID(uid);
+            
+            if (message == null) {
+                log.warn("Message with UID {} not found in folder {}", uid, folderName);
+                sourceFolder.close(false);
+                return;
+            }
+
+            Message[] msgs = new Message[]{message};
+
+            // Use GmailFolder API to directly add/remove labels
+            if (sourceFolder instanceof org.eclipse.angus.mail.gimap.GmailFolder gmailFolder) {
+                // 1. Remove old label first
+                if (oldLabelName != null && !oldLabelName.isBlank() && !oldLabelName.equals(newLabelName)) {
+                    gmailFolder.setLabels(msgs, new String[]{oldLabelName}, false);
+                    log.info("Removed label '{}' for email UID {}", oldLabelName, uid);
+                }
+                
+                // 2. Add new label
+                if (!newLabelName.equals(oldLabelName)) {
+                    gmailFolder.setLabels(msgs, new String[]{newLabelName}, true);
+                    log.info("Added label '{}' for email UID {}", newLabelName, uid);
+                }
+            } else {
+                // Fallback for non-Gmail: use copy approach
+                log.info("Non-Gmail folder, using copy approach for label sync");
+                if (!newLabelName.equals(oldLabelName)) {
+                    Folder targetFolder = store.getFolder(newLabelName);
+                    if (!targetFolder.exists()) {
+                        targetFolder.create(Folder.HOLDS_MESSAGES);
+                    }
+                    sourceFolder.copyMessages(msgs, targetFolder);
+                    log.info("Copied message to folder '{}' for UID {}", newLabelName, uid);
+                }
+            }
+
+            sourceFolder.close(false);
         }
     }
 
@@ -357,25 +430,33 @@ public class ImapService {
 
     private Store connectToStore(EmailAccount account) throws MessagingException {
         Properties props = new Properties();
-        props.put("mail.store.protocol", "imaps");
-        props.put("mail.imaps.host", account.getImapHost());
-        props.put("mail.imaps.port", String.valueOf(account.getImapPort()));
-        props.put("mail.imaps.ssl.enable", String.valueOf(account.getImapSsl()));
-        props.put("mail.imaps.ssl.trust", "*");
-        props.put("mail.imaps.connectiontimeout", "10000");
-        props.put("mail.imaps.timeout", "30000");
+        
+        // Use 'gimaps' for Gmail (enables X-GM-LABELS, X-GM-MSGID, etc.), 'imaps' for others
+        boolean isGmail = account.getImapHost() != null && 
+                account.getImapHost().toLowerCase().contains("gmail");
+        String protocol = isGmail ? "gimaps" : "imaps";
+        
+        log.info("Connecting to {} using protocol: {}", account.getImapHost(), protocol);
+        
+        props.put("mail.store.protocol", protocol);
+        props.put("mail." + protocol + ".host", account.getImapHost());
+        props.put("mail." + protocol + ".port", String.valueOf(account.getImapPort()));
+        props.put("mail." + protocol + ".ssl.enable", String.valueOf(account.getImapSsl()));
+        props.put("mail." + protocol + ".ssl.trust", "*");
+        props.put("mail." + protocol + ".connectiontimeout", "10000");
+        props.put("mail." + protocol + ".timeout", "30000");
 
         Session session = Session.getInstance(props);
-        Store store = session.getStore("imaps");
+        Store store = session.getStore(protocol);
 
         String password = encryptionService.decrypt(account.getEncryptedPassword());
 
         if (account.getAuthType() == EmailAuthType.OAUTH2) {
             // For OAuth2, password is the access token
             // Use XOAUTH2 authentication mechanism
-            props.put("mail.imaps.auth.mechanisms", "XOAUTH2");
-            props.put("mail.imaps.sasl.enable", "true");
-            props.put("mail.imaps.sasl.mechanisms", "XOAUTH2");
+            props.put("mail." + protocol + ".auth.mechanisms", "XOAUTH2");
+            props.put("mail." + protocol + ".sasl.enable", "true");
+            props.put("mail." + protocol + ".sasl.mechanisms", "XOAUTH2");
         }
 
         store.connect(account.getImapHost(), account.getUsername(), password);
@@ -417,6 +498,9 @@ public class ImapService {
                 ? message.getReceivedDate().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime()
                 : sentAt;
 
+        // Fetch Gmail labels using raw IMAP FETCH X-GM-LABELS command
+        List<String> labels = fetchGmailLabels(message, folder);
+
         return MailMessageDto.builder()
                 .uid(uid)
                 .messageId(getHeaderValue(message, "Message-ID"))
@@ -432,9 +516,45 @@ public class ImapService {
                 .read(read)
                 .starred(starred)
                 .hasAttachments(hasAttachments)
+                .labels(labels)
                 .size(message.getSize())
                 .build();
     }
+
+    /**
+     * Fetches Gmail labels for a message using the GIMAP provider's GmailMessage.getLabels().
+     * Requires 'gimaps' protocol (provided by org.eclipse.angus:gimap dependency).
+     */
+    private List<String> fetchGmailLabels(Message message, Folder folder) {
+        List<String> labels = new ArrayList<>();
+        try {
+            // With gimaps protocol, messages should be GmailMessage instances
+            if (message instanceof org.eclipse.angus.mail.gimap.GmailMessage gmailMsg) {
+                String[] gmLabels = gmailMsg.getLabels();
+                if (gmLabels != null && gmLabels.length > 0) {
+                    for (String label : gmLabels) {
+                        // Filter out Gmail system labels (start with \)
+                        if (label != null && !label.startsWith("\\")) {
+                            labels.add(label);
+                        }
+                    }
+                    log.info("[GmailLabels] Got {} labels for msg #{}: {}", 
+                            labels.size(), message.getMessageNumber(), labels);
+                } else {
+                    log.debug("[GmailLabels] No labels for msg #{}", message.getMessageNumber());
+                }
+            } else {
+                log.debug("[GmailLabels] Message is not a GmailMessage (class={}), skipping label fetch",
+                        message.getClass().getName());
+            }
+        } catch (MessagingException e) {
+            log.warn("[GmailLabels] MessagingException: {}", e.getMessage());
+        } catch (Exception e) {
+            log.warn("[GmailLabels] Exception: {}", e.getMessage(), e);
+        }
+        return labels;
+    }
+
 
     private String fetchBodyContent(Message message) {
          try {
