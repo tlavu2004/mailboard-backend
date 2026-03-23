@@ -1,6 +1,7 @@
 package com.awad.emailclientai.modules.email.service;
 
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
+import com.awad.emailclientai.modules.email.entity.EmailAuthType;
 import com.awad.emailclientai.modules.email.entity.EmailProvider;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.shared.service.EncryptionService;
@@ -39,7 +40,7 @@ public class GmailWatchService {
      */
     @Transactional
     public void watchInbox(EmailAccount account) {
-        if (account.getProvider() != EmailProvider.GMAIL) {
+        if (account.getProvider() != EmailProvider.GMAIL || account.getAuthType() != EmailAuthType.OAUTH2) {
             return;
         }
 
