@@ -86,7 +86,7 @@ public class GmailWatchService {
      * Scheduled task to renew Gmail watches before they expire.
      * Gmail watches expire after 7 days. We renew them every 6 hours if they expire within 1 day.
      */
-    @Scheduled(fixedRate = 21600000) // 6 hours
+    @Scheduled(fixedRate = 21600000, initialDelay = 10000) // 6 hours, starts after 10s
     @Transactional
     public void renewWatches() {
         LocalDateTime threshold = LocalDateTime.now().plusDays(1);
