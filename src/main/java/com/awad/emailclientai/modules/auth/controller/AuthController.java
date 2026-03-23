@@ -1,9 +1,7 @@
 package com.awad.emailclientai.modules.auth.controller;
 
 import com.awad.emailclientai.modules.auth.dto.request.GoogleLoginRequest;
-import com.awad.emailclientai.modules.auth.dto.request.LoginRequest;
 import com.awad.emailclientai.modules.auth.dto.request.RefreshTokenRequest;
-import com.awad.emailclientai.modules.auth.dto.request.RegisterRequest;
 import com.awad.emailclientai.modules.auth.dto.response.AuthResponse;
 import com.awad.emailclientai.modules.auth.service.AuthService;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
@@ -19,6 +17,7 @@ public class AuthController {
 
     private final AuthService authService;
 
+    /*
     @PostMapping("/register")
     public ResponseEntity<ApiResponse<String>> register(@Valid @RequestBody RegisterRequest request) {
         authService.register(request);
@@ -29,6 +28,18 @@ public class AuthController {
     public ResponseEntity<ApiResponse<AuthResponse>> login(@Valid @RequestBody LoginRequest request) {
         AuthResponse response = authService.login(request);
         return ResponseEntity.ok(ApiResponse.success(response));
+    }
+    */
+
+    // Sealing local login for now to focus on Google OAuth2
+    @PostMapping("/register")
+    public ResponseEntity<ApiResponse<String>> register() {
+        return ResponseEntity.status(403).body(ApiResponse.error("Local registration is temporarily disabled. Please use Google Login."));
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<ApiResponse<AuthResponse>> login() {
+        return ResponseEntity.status(403).body(ApiResponse.error("Local login is temporarily disabled. Please use Google Login."));
     }
 
     @PostMapping("/google")
