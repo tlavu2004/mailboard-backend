@@ -7,15 +7,23 @@ import com.awad.emailclientai.modules.auth.service.AuthService;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
+@Slf4j
 public class AuthController {
 
     private final AuthService authService;
+
+    @GetMapping("/ping")
+    public ResponseEntity<String> ping() {
+        log.info("Ping request received");
+        return ResponseEntity.ok("pong");
+    }
 
     /*
     @PostMapping("/register")
