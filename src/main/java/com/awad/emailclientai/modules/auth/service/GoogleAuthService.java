@@ -52,10 +52,26 @@ public class GoogleAuthService {
                             return userRepository.save(newUser);
                         });
             } else {
-                throw new RuntimeException("Invalid Google ID token");
+                // Log the token's audience and issuer to find mismatch
+                try {
+                    GoogleIdToken unsafeToken = GoogleIdToken.parse(GsonFactory.getDefaultInstance(), idTokenString);
+                    GoogleIdToken.Payload payload = unsafeToken.getPayload();
+                    log.error("GoogleIdTokenVerifier returned null. Token details (UNVERIFIED): \n" +
+                             "  - Issuer (iss): {}\n" +
+                             "  - Audience (aud): {}\n" +
+                             "  - Email: {}\n" +
+                             "  - Expiration (exp): {}\n" +
+                             "  - Current server time (s): {}", 
+                             payload.getIssuer(), payload.getAudience(), payload.getEmail(), 
+                             payload.getExpirationTimeSeconds(), System.currentTimeMillis() / 1000);
+                } catch (Exception e) {
+                    log.error("Failed to parse invalid token for debugging: {}", e.getMessage());
+                }
+                throw new RuntimeException("Invalid Google ID token (verifier returned null)");
             }
         } catch (Exception e) {
-            log.error("Google authentication failed: {}", e.getMessage());
+            log.error("Google authentication failed: {} - Token start: {}", e.getMessage(), 
+                     (idTokenString != null && idTokenString.length() > 20) ? idTokenString.substring(0, 20) : "null", e);
             throw new RuntimeException("Google authentication failed: " + e.getMessage());
         }
     }
