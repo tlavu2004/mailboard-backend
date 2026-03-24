@@ -50,9 +50,9 @@ server:
     include-binding-errors: always
 
 jwt:
-    secret: ${JWT_SECRET:defaultSecretKeyForTestingOnly1234567890!}
-    access-token-expiration: ${JWT_ACCESS_EXPIRATION:900000}
-    refresh-token-expiration: ${JWT_REFRESH_EXPIRATION:604800000}
+    secret: ${JWT_SECRET}
+    access-token-expiration: ${JWT_ACCESS_EXPIRATION}
+    refresh-token-expiration: ${JWT_REFRESH_EXPIRATION}
     issuer: email-client-ai
     header: Authorization
     prefix: "Bearer "
@@ -60,13 +60,13 @@ jwt:
 google:
   oauth:
     enabled: true
-    client-id: ${GOOGLE_CLIENT_ID:dummy-client-id}
-    client-secret: ${GOOGLE_CLIENT_SECRET:dummy-client-secret}
-    redirect-uri: ${GOOGLE_REDIRECT_URI:http://localhost:8080/login/oauth2/code/google}
+    client-id: ${GOOGLE_CLIENT_ID}
+    client-secret: ${GOOGLE_CLIENT_SECRET}
+    redirect-uri: ${GOOGLE_REDIRECT_URI}
 
 # Encryption Configuration (for secure credential storage - GA04)
 encryption:
-  aes-secret-key: ${ENCRYPTION_AES_KEY:DefaultSecretKeyForDev1234567890!}
+  aes-secret-key: ${ENCRYPTION_AES_KEY}
 
 # CORS Configuration
 cors:
@@ -90,7 +90,7 @@ logging:
   level:
     com.awad.emailclientai: DEBUG
     org.springframework.security: DEBUG
-    org.springframework.web: INFO
+    org.springframework.web: DEBUG
     org.hibernate.SQL: DEBUG
     org.hibernate.type.descriptor.sql.BasicBinder: TRACE
     com.zaxxer.hikari: DEBUG
@@ -99,9 +99,9 @@ logging:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
 
 gemini:
-  api-key: ${GEMINI_API_KEY:dummy-api-key}
-  embedding-model: ${GEMINI_EMBEDDING_MODEL:embedding-001}
-  chat-model: ${GEMINI_CHAT_MODEL:gemini-2.5-flash}
+  api-key: ${GEMINI_API_KEY}
+  embedding-model: ${GEMINI_EMBEDDING_MODEL}
+  chat-model: ${GEMINI_CHAT_MODEL}
 
 gmail:
   pubsub:
