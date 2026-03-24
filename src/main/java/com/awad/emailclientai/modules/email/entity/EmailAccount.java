@@ -134,6 +134,19 @@ public class EmailAccount {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
+    // ========== Gmail Watch Metadata ==========
+    /**
+     * Expiration time for the Gmail watch registration.
+     */
+    @Column(name = "watch_expiration")
+    private LocalDateTime watchExpiration;
+
+    /**
+     * History ID from the last watch registration or notification.
+     */
+    @Column(name = "watch_history_id")
+    private Long watchHistoryId;
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();

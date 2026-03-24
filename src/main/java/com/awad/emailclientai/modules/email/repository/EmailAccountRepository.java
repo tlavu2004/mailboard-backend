@@ -29,6 +29,11 @@ public interface EmailAccountRepository extends JpaRepository<EmailAccount, Long
     Optional<EmailAccount> findByUserIdAndEmailAddress(Long userId, String emailAddress);
 
     /**
+     * Find an email account by its email address.
+     */
+    Optional<EmailAccount> findByEmailAddress(String emailAddress);
+
+    /**
      * Check if an email account already exists for a user.
      */
     boolean existsByUserIdAndEmailAddress(Long userId, String emailAddress);

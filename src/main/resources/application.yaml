@@ -102,3 +102,7 @@ gemini:
   api-key: ${GEMINI_API_KEY:dummy-api-key}
   embedding-model: ${GEMINI_EMBEDDING_MODEL:embedding-001}
   chat-model: ${GEMINI_CHAT_MODEL:gemini-2.5-flash}
+
+gmail:
+  pubsub:
+    topic: ${GMAIL_PUBSUB_TOPIC:projects/mailboard/topics/gmail-notifications}

@@ -35,6 +35,7 @@ public class EmailAccountService {
     private final EncryptionService encryptionService;
     private final ImapService imapService;
     private final SmtpService smtpService;
+    private final GmailWatchService gmailWatchService;
 
     /**
      * Connects a new email account for the user.
@@ -66,6 +67,11 @@ public class EmailAccountService {
 
         account.setLastSyncAt(LocalDateTime.now());
         EmailAccount saved = emailAccountRepository.save(account);
+
+        // Start Gmail watch if it's a Gmail account
+        if (saved.getProvider() == EmailProvider.GMAIL) {
+            gmailWatchService.watchInbox(saved);
+        }
 
         log.info("Email account connected: {} for user {}", request.getEmailAddress(), userId);
         return toResponseDto(saved);
