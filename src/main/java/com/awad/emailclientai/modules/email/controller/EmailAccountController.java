@@ -7,6 +7,8 @@ import com.awad.emailclientai.modules.user.security.UserPrincipal;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.awad.emailclientai.shared.exception.BusinessException;
+import com.awad.emailclientai.shared.exception.ErrorCode;
 import jakarta.mail.MessagingException;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -45,10 +47,12 @@ public class EmailAccountController {
             @AuthenticationPrincipal UserPrincipal principal,
             @Valid @RequestBody ConnectEmailAccountRequestDto request) {
         
-        // Enforce Restricted Social Mode: only LOCAL users can link multiple accounts
+        // Enforce Restricted Social Mode: Social users can ONLY link their PRIMARY email account
         if (principal.getAuthProvider() != com.awad.emailclientai.modules.user.entity.AuthProvider.LOCAL) {
-            throw new com.awad.emailclientai.shared.exception.BusinessException(
-                    com.awad.emailclientai.shared.exception.ErrorCode.EMAIL_LINKING_DISABLED_FOR_SOCIAL);
+            String primaryEmail = principal.getEmail();
+            if (primaryEmail == null || !primaryEmail.equalsIgnoreCase(request.getEmailAddress())) {
+                throw new BusinessException(ErrorCode.EMAIL_LINKING_DISABLED_FOR_SOCIAL);
+            }
         }
         
         log.info("Connecting email account {} for user {}", 
