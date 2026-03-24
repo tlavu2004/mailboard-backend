@@ -97,6 +97,8 @@ logging:
     com.zaxxer.hikari.HikariConfig: DEBUG
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+  # file:
+  #   name: /app/logs/mailboard.log
 
 gemini:
   api-key: ${GEMINI_API_KEY}
