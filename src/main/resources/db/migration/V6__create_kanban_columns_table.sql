@@ -1,12 +1,13 @@
--- Migration: V6__create_kanban_columns.sql
--- Description: Create table for dynamic Kanban columns configuration per account
+-- Migration: V6__create_kanban_columns_table
+-- Description: Create kanban_columns table with Gmail label mapping
 
-CREATE TABLE kanban_columns (
+CREATE TABLE IF NOT EXISTS kanban_columns (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     position INTEGER NOT NULL,
     linked_status VARCHAR(50),
     account_id BIGINT NOT NULL,
+    gmail_label_id VARCHAR(255),
     created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
     
@@ -17,3 +18,4 @@ CREATE TABLE kanban_columns (
 );
 
 CREATE INDEX idx_kanban_columns_account_id ON kanban_columns(account_id);
+COMMENT ON COLUMN kanban_columns.gmail_label_id IS 'Associated Gmail label ID for syncing status';

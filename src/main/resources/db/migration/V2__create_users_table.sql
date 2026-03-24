@@ -1,5 +1,5 @@
--- Migration: V1__create_users_table.sql
--- Description: Add users table to store user information
+-- Migration: V2__create_users_table
+-- Description: Create users table and audit triggers
 
 CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,
@@ -27,14 +27,3 @@ CREATE TRIGGER trg_update_users_updated_at
     BEFORE UPDATE ON users
     FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
-
--- Insert initial user data (Password: User@01!)
-INSERT INTO users (email, password, google_id, name, created_at, updated_at)
-VALUES (
-        'user01@example.com',
-        '$2a$12$FnBj1aHRSbYM1lF2P1REbeFg/Mx2Okqm.YPPf4nHIWstJWbkwZgkG',
-        NULL,
-        'User 01',
-        now(),
-        now()
-)
