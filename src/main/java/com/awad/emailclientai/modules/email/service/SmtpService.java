@@ -29,6 +29,7 @@ import java.util.Properties;
 public class SmtpService {
 
     private final EncryptionService encryptionService;
+    private final GoogleTokenService googleTokenService;
 
     /**
      * Sends an email using the given account's SMTP settings.
@@ -38,6 +39,10 @@ public class SmtpService {
      * @return The sent MimeMessage (for IMAP APPEND to Sent folder)
      */
     public MimeMessage sendEmail(EmailAccount account, SendEmailRequestDto request) throws MessagingException {
+        return sendEmailInternal(account, request, true);
+    }
+
+    private MimeMessage sendEmailInternal(EmailAccount account, SendEmailRequestDto request, boolean retryOnAuthFailure) throws MessagingException {
         Properties props = createSmtpProperties(account);
         
         String password = encryptionService.decrypt(account.getEncryptedPassword());
@@ -54,7 +59,18 @@ public class SmtpService {
         
         MimeMessage message = createMimeMessage(session, account, request);
         
-        Transport.send(message);
+        try {
+            Transport.send(message);
+        } catch (AuthenticationFailedException e) {
+            if (retryOnAuthFailure && account.getAuthType() == EmailAuthType.OAUTH2) {
+                log.info("SMTP authentication failed for {}, attempting token refresh...", account.getEmailAddress());
+                String newAccessToken = googleTokenService.refreshAccessToken(account);
+                if (newAccessToken != null) {
+                    return sendEmailInternal(account, request, false);
+                }
+            }
+            throw e;
+        }
         
         log.info("Email sent successfully from {} to {}", 
                 account.getEmailAddress(), request.getTo());
@@ -72,6 +88,11 @@ public class SmtpService {
      */
     public MimeMessage sendEmailWithAttachments(EmailAccount account, SendEmailRequestDto request, 
                                            MultipartFile[] attachments) throws MessagingException, IOException {
+        return sendEmailWithAttachmentsInternal(account, request, attachments, true);
+    }
+
+    private MimeMessage sendEmailWithAttachmentsInternal(EmailAccount account, SendEmailRequestDto request, 
+                                           MultipartFile[] attachments, boolean retryOnAuthFailure) throws MessagingException, IOException {
         Properties props = createSmtpProperties(account);
         
         String password = encryptionService.decrypt(account.getEncryptedPassword());
@@ -87,7 +108,18 @@ public class SmtpService {
         
         MimeMessage message = createMimeMessageWithAttachments(session, account, request, attachments);
         
-        Transport.send(message);
+        try {
+            Transport.send(message);
+        } catch (AuthenticationFailedException e) {
+            if (retryOnAuthFailure && account.getAuthType() == EmailAuthType.OAUTH2) {
+                log.info("SMTP (attachments) authentication failed for {}, attempting token refresh...", account.getEmailAddress());
+                String newAccessToken = googleTokenService.refreshAccessToken(account);
+                if (newAccessToken != null) {
+                    return sendEmailWithAttachmentsInternal(account, request, attachments, false);
+                }
+            }
+            throw e;
+        }
         
         log.info("Email with {} attachments sent from {} to {}", 
                 attachments != null ? attachments.length : 0,
@@ -100,14 +132,29 @@ public class SmtpService {
      * Tests SMTP connection for an account.
      */
     public boolean testConnection(EmailAccount account) {
+        return testConnectionInternal(account, true);
+    }
+
+    private boolean testConnectionInternal(EmailAccount account, boolean retryOnAuthFailure) {
         try {
             Properties props = createSmtpProperties(account);
             String password = encryptionService.decrypt(account.getEncryptedPassword());
             
             Session session = Session.getInstance(props);
             Transport transport = session.getTransport("smtp");
-            transport.connect(account.getSmtpHost(), account.getSmtpPort(), 
-                    account.getUsername(), password);
+            try {
+                transport.connect(account.getSmtpHost(), account.getSmtpPort(), 
+                        account.getUsername(), password);
+            } catch (AuthenticationFailedException e) {
+                if (retryOnAuthFailure && account.getAuthType() == EmailAuthType.OAUTH2) {
+                    log.info("SMTP test connection failed for {}, attempting token refresh...", account.getEmailAddress());
+                    String newAccessToken = googleTokenService.refreshAccessToken(account);
+                    if (newAccessToken != null) {
+                        return testConnectionInternal(account, false);
+                    }
+                }
+                throw e;
+            }
             transport.close();
             
             return true;
