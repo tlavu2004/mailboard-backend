@@ -11,6 +11,8 @@ import com.awad.emailclientai.modules.kanban.repository.KanbanColumnRepository;
 import com.awad.emailclientai.modules.kanban.service.KanbanService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.awad.emailclientai.shared.exception.BusinessException;
+import com.awad.emailclientai.shared.exception.ErrorCode;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,12 +44,43 @@ public class EmailSyncService {
     @Transactional
     public void syncEmailsForAccount(Long accountId, String folderName, int limit, int page) {
         EmailAccount account = accountRepository.findById(accountId)
-                .orElseThrow(() -> new RuntimeException("Account not found"));
+                .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_ACCOUNT_NOT_FOUND));
 
+        syncAccount(account, folderName, limit, page);
+    }
+
+    @Transactional
+    public void syncEmailsForAccount(Long accountId, Long userId, String folderName, int limit, int page) {
+        EmailAccount account = accountRepository.findByIdAndUserId(accountId, userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_ACCOUNT_NOT_FOUND));
+
+        syncAccount(account, folderName, limit, page);
+    }
+
+    @Transactional
+    public void syncEmailsForUser(Long userId, String folderName, int limit, int page) {
+        List<EmailAccount> accounts = accountRepository.findByUserIdAndActiveTrue(userId);
+        if (accounts.isEmpty()) {
+            log.info("No active email accounts found for user ID: {}", userId);
+            return;
+        }
+
+        for (EmailAccount account : accounts) {
+            try {
+                syncAccount(account, folderName, limit, page);
+            } catch (Exception e) {
+                log.error("Failed to sync account: {} for user: {}", account.getEmailAddress(), userId, e);
+            }
+        }
+    }
+
+    private void syncAccount(EmailAccount account, String folderName, int limit, int page) {
         if (!imapService.testConnection(account)) {
             log.info("Cannot connect to account: " + account.getEmailAddress());
             return;
         }
+
+        Long accountId = account.getId();
 
         try {
             List<MailMessageDto> messages = imapService.getMessages(account, folderName, page, limit);
