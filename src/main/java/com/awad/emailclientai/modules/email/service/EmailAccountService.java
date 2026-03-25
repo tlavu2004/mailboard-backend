@@ -42,16 +42,17 @@ public class EmailAccountService {
      */
     @Transactional
     public EmailAccountResponseDto connectAccount(Long userId, ConnectEmailAccountRequestDto request) {
-        // Check if account already exists
-        if (emailAccountRepository.existsByUserIdAndEmailAddress(userId, request.getEmailAddress())) {
-            throw new IllegalArgumentException("Email account already linked: " + request.getEmailAddress());
-        }
-
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
-        // Build the account entity
-        EmailAccount account = buildEmailAccount(user, request);
+        // Check if account already exists
+        EmailAccount account = emailAccountRepository.findByUserIdAndEmailAddress(userId, request.getEmailAddress())
+                .orElseGet(() -> buildEmailAccount(user, request));
+
+        if (account.getId() != null) {
+            log.info("Updating existing email account: {} for user {}", request.getEmailAddress(), userId);
+            updateEmailAccountDetails(account, request);
+        }
 
         // Test the connection before saving
         boolean imapOk = imapService.testConnection(account);
@@ -213,6 +214,24 @@ public class EmailAccountService {
     private EmailAccount getAccountForUser(Long userId, Long accountId) {
         return emailAccountRepository.findByIdAndUserId(accountId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_ACCOUNT_NOT_FOUND));
+    }
+
+    private void updateEmailAccountDetails(EmailAccount account, ConnectEmailAccountRequestDto request) {
+        // Update credentials
+        account.setEncryptedPassword(encryptionService.encrypt(request.getPassword()));
+        if (request.getRefreshToken() != null) {
+            account.setEncryptedRefreshToken(encryptionService.encrypt(request.getRefreshToken()));
+        }
+        
+        // Update other settings if provided
+        if (request.getDisplayName() != null) account.setDisplayName(request.getDisplayName());
+        if (request.getImapHost() != null) account.setImapHost(request.getImapHost());
+        if (request.getImapPort() != null) account.setImapPort(request.getImapPort());
+        if (request.getSmtpHost() != null) account.setSmtpHost(request.getSmtpHost());
+        if (request.getSmtpPort() != null) account.setSmtpPort(request.getSmtpPort());
+        if (request.getUsername() != null) account.setUsername(request.getUsername());
+        
+        account.setActive(true);
     }
 
     private EmailAccount buildEmailAccount(User user, ConnectEmailAccountRequestDto request) {

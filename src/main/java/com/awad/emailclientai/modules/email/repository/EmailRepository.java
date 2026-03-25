@@ -1,5 +1,6 @@
 package com.awad.emailclientai.modules.email.repository;
 
+import com.awad.emailclientai.modules.email.dto.response.EmailStatusStatsDto;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -64,4 +65,32 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
             "WHERE sender % :prefix OR LOWER(sender) LIKE LOWER(CONCAT('%', :prefix, '%'))" +
             ") sub GROUP BY val ORDER BY max_score DESC LIMIT 10", nativeQuery = true)
     List<Object[]> findSuggestions(@Param("prefix") String prefix);
+    @Query("SELECT new com.awad.emailclientai.modules.email.dto.response.EmailStatusStatsDto(e.status, COUNT(e)) " +
+           "FROM EmailEntity e WHERE e.account.id = :accountId GROUP BY e.status")
+    List<EmailStatusStatsDto> countByStatusForAccount(@Param("accountId") Long accountId);
+
+    @Query(value = "SELECT TO_CHAR(received_date, 'YYYY-MM-DD') as date, COUNT(*) as count " +
+           "FROM emails WHERE account_id = :accountId AND received_date >= :startDate " +
+           "GROUP BY TO_CHAR(received_date, 'YYYY-MM-DD') ORDER BY date", nativeQuery = true)
+    List<Object[]> getEmailTrend(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
+
+    @Query(value = "SELECT sender, COUNT(*) as count FROM emails " +
+           "WHERE account_id = :accountId AND received_date >= :startDate " +
+           "GROUP BY sender ORDER BY count DESC LIMIT 10", nativeQuery = true)
+    List<Object[]> getTopSenders(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
+
+    @Query(value = "SELECT EXTRACT(DOW FROM received_date) as day, EXTRACT(HOUR FROM received_date) as hour, COUNT(*) as count " +
+           "FROM emails WHERE account_id = :accountId AND received_date >= :startDate " +
+           "GROUP BY day, hour ORDER BY day, hour", nativeQuery = true)
+    List<Object[]> getDailyActivity(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
+
+    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId")
+    long countByAccountId(@Param("accountId") Long accountId);
+
+    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isRead = false")
+    long countUnreadByAccountId(@Param("accountId") Long accountId);
+
+    // Mock starred for now or assume a column if it exists later
+    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.status = 'STARRED'")
+    long countStarredByAccountId(@Param("accountId") Long accountId);
 }

@@ -30,6 +30,7 @@ import java.util.*;
 public class ImapService {
 
     private final EncryptionService encryptionService;
+    private final GoogleTokenService googleTokenService;
 
     /**
      * Tests the connection to an IMAP server.
@@ -429,6 +430,10 @@ public class ImapService {
     // ================== Private Helper Methods ==================
 
     private Store connectToStore(EmailAccount account) throws MessagingException {
+        return connectToStoreInternal(account, true);
+    }
+
+    private Store connectToStoreInternal(EmailAccount account, boolean retryOnAuthFailure) throws MessagingException {
         Properties props = new Properties();
         
         // Use 'gimaps' for Gmail (enables X-GM-LABELS, X-GM-MSGID, etc.), 'imaps' for others
@@ -436,7 +441,7 @@ public class ImapService {
                 account.getImapHost().toLowerCase().contains("gmail");
         String protocol = isGmail ? "gimaps" : "imaps";
         
-        log.info("Connecting to {} using protocol: {}", account.getImapHost(), protocol);
+        log.debug("Connecting to {} using protocol: {}", account.getImapHost(), protocol);
         
         props.put("mail.store.protocol", protocol);
         props.put("mail." + protocol + ".host", account.getImapHost());
@@ -459,8 +464,19 @@ public class ImapService {
             props.put("mail." + protocol + ".sasl.mechanisms", "XOAUTH2");
         }
 
-        store.connect(account.getImapHost(), account.getUsername(), password);
-        return store;
+        try {
+            store.connect(account.getImapHost(), account.getUsername(), password);
+            return store;
+        } catch (AuthenticationFailedException e) {
+            if (retryOnAuthFailure && account.getAuthType() == EmailAuthType.OAUTH2) {
+                log.info("IMAP authentication failed for {}, attempting token refresh...", account.getEmailAddress());
+                String newAccessToken = googleTokenService.refreshAccessToken(account);
+                if (newAccessToken != null) {
+                    return connectToStoreInternal(account, false);
+                }
+            }
+            throw e;
+        }
     }
 
     private MailMessageDto convertToDto(Message message, Folder folder) throws MessagingException {

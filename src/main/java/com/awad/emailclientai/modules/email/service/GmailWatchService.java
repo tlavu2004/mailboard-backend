@@ -10,6 +10,7 @@ import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.gmail.Gmail;
 import com.google.api.services.gmail.model.WatchRequest;
 import com.google.api.services.gmail.model.WatchResponse;
+import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,6 +32,7 @@ public class GmailWatchService {
 
     private final EmailAccountRepository accountRepository;
     private final EncryptionService encryptionService;
+    private final GoogleTokenService googleTokenService;
     
     @Value("${gmail.pubsub.topic}")
     private String topicName;
@@ -40,6 +42,10 @@ public class GmailWatchService {
      */
     @Transactional
     public void watchInbox(EmailAccount account) {
+        watchInboxInternal(account, true);
+    }
+
+    private void watchInboxInternal(EmailAccount account, boolean retryOnAuthFailure) {
         if (account.getProvider() != EmailProvider.GMAIL || account.getAuthType() != EmailAuthType.OAUTH2) {
             return;
         }
@@ -60,6 +66,17 @@ public class GmailWatchService {
             log.info("Gmail watch registered for {}. Expires at: {}", 
                     account.getEmailAddress(), account.getWatchExpiration());
             
+        } catch (GoogleJsonResponseException e) {
+            if (retryOnAuthFailure && e.getStatusCode() == 401) {
+                log.info("Gmail Watch authentication failed for {}, attempting token refresh...", account.getEmailAddress());
+                if (googleTokenService.refreshAccessToken(account) != null) {
+                    watchInboxInternal(account, false);
+                    return;
+                }
+            }
+            log.error("Failed to register Gmail watch for {}: {}", account.getEmailAddress(), e.getMessage());
+            account.setLastError("Gmail Watch error: " + e.getMessage());
+            accountRepository.save(account);
         } catch (Exception e) {
             log.error("Failed to register Gmail watch for {}: {}", account.getEmailAddress(), e.getMessage());
             account.setLastError("Gmail Watch error: " + e.getMessage());
@@ -71,6 +88,10 @@ public class GmailWatchService {
      * Stop watching Gmail inbox.
      */
     public void stopWatch(EmailAccount account) {
+        stopWatchInternal(account, true);
+    }
+
+    private void stopWatchInternal(EmailAccount account, boolean retryOnAuthFailure) {
         try {
             Gmail gmail = getGmailService(account);
             gmail.users().stop("me").execute();
@@ -78,6 +99,15 @@ public class GmailWatchService {
             account.setWatchExpiration(null);
             accountRepository.save(account);
             log.info("Gmail watch stopped for {}", account.getEmailAddress());
+        } catch (GoogleJsonResponseException e) {
+            if (retryOnAuthFailure && e.getStatusCode() == 401) {
+                log.info("Gmail Stop Auth failed for {}, attempting token refresh...", account.getEmailAddress());
+                if (googleTokenService.refreshAccessToken(account) != null) {
+                    stopWatchInternal(account, false);
+                    return;
+                }
+            }
+            log.error("Failed to stop Gmail watch for {}: {}", account.getEmailAddress(), e.getMessage());
         } catch (Exception e) {
             log.error("Failed to stop Gmail watch for {}: {}", account.getEmailAddress(), e.getMessage());
         }

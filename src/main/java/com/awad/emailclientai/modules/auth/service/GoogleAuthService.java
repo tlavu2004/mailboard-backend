@@ -12,7 +12,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Collections;
+import java.util.ArrayList;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -25,11 +26,19 @@ public class GoogleAuthService {
     @Transactional
     public User authenticateGoogleUser(String idTokenString) {
         try {
+            List<String> allowedAudiences = new ArrayList<>();
+            allowedAudiences.add(googleOAuthProperties.getClientId());
+            
+            String playgroundId = googleOAuthProperties.getPlaygroundClientId();
+            if (playgroundId != null && !playgroundId.isBlank()) {
+                allowedAudiences.add(playgroundId);
+            }
+
             GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(
                     new NetHttpTransport(),
                     GsonFactory.getDefaultInstance()
             )
-                    .setAudience(Collections.singletonList(googleOAuthProperties.getClientId()))
+                    .setAudience(allowedAudiences)
                     .build();
 
             GoogleIdToken idToken = verifier.verify(idTokenString);
@@ -52,10 +61,26 @@ public class GoogleAuthService {
                             return userRepository.save(newUser);
                         });
             } else {
-                throw new RuntimeException("Invalid Google ID token");
+                // Log the token's audience and issuer to find mismatch
+                try {
+                    GoogleIdToken unsafeToken = GoogleIdToken.parse(GsonFactory.getDefaultInstance(), idTokenString);
+                    GoogleIdToken.Payload payload = unsafeToken.getPayload();
+                    log.error("GoogleIdTokenVerifier returned null. Token details (UNVERIFIED): \n" +
+                             "  - Issuer (iss): {}\n" +
+                             "  - Audience (aud): {}\n" +
+                             "  - Email: {}\n" +
+                             "  - Expiration (exp): {}\n" +
+                             "  - Current server time (s): {}", 
+                             payload.getIssuer(), payload.getAudience(), payload.getEmail(), 
+                             payload.getExpirationTimeSeconds(), System.currentTimeMillis() / 1000);
+                } catch (Exception e) {
+                    log.error("Failed to parse invalid token for debugging: {}", e.getMessage());
+                }
+                throw new RuntimeException("Invalid Google ID token (verifier returned null)");
             }
         } catch (Exception e) {
-            log.error("Google authentication failed: {}", e.getMessage());
+            log.error("Google authentication failed: {} - Token start: {}", e.getMessage(), 
+                     (idTokenString != null && idTokenString.length() > 20) ? idTokenString.substring(0, 20) : "null", e);
             throw new RuntimeException("Google authentication failed: " + e.getMessage());
         }
     }

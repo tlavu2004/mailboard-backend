@@ -5,6 +5,9 @@ import com.awad.emailclientai.modules.auth.dto.request.LoginRequest;
 import com.awad.emailclientai.modules.auth.dto.request.RefreshTokenRequest;
 import com.awad.emailclientai.modules.auth.dto.request.RegisterRequest;
 import com.awad.emailclientai.modules.auth.dto.response.AuthResponse;
+import com.awad.emailclientai.modules.email.dto.request.ConnectEmailAccountRequestDto;
+import com.awad.emailclientai.modules.email.entity.EmailAuthType;
+import com.awad.emailclientai.modules.email.entity.EmailProvider;
 import com.awad.emailclientai.modules.user.entity.User;
 import com.awad.emailclientai.modules.user.repository.UserRepository;
 import com.awad.emailclientai.shared.config.properties.JwtProperties;
@@ -28,6 +31,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
     private final GoogleAuthService googleAuthService;
+    private final EmailAccountLinkHandler emailAccountLinkHandler;
     private final AuthenticationManager authenticationManager;
     private final UserDetailsService userDetailsService;
     private final JwtProperties jwtProperties;
@@ -70,7 +74,23 @@ public class AuthService {
         log.debug("Google login attempt");
 
         User user = googleAuthService.authenticateGoogleUser(request.getIdToken());
-        log.info("Google user logged in successfully: {}", user.getEmail());
+        log.info("Google user logged in successfully: {}. AccessToken present: {}, RefreshToken present: {}", 
+                user.getEmail(), request.getAccessToken() != null, request.getRefreshToken() != null);
+
+        // Automatic account linking if tokens are provided
+        if (request.getAccessToken() != null && !request.getAccessToken().isBlank()) {
+            log.info("Auto-linking email account for: {}", user.getEmail());
+            ConnectEmailAccountRequestDto connectRequest = ConnectEmailAccountRequestDto.builder()
+                    .emailAddress(user.getEmail())
+                    .displayName(user.getName())
+                    .provider(EmailProvider.GMAIL)
+                    .authType(EmailAuthType.OAUTH2)
+                    .password(request.getAccessToken())
+                    .refreshToken(request.getRefreshToken())
+                    .build();
+                    
+            emailAccountLinkHandler.linkAccount(user.getId(), connectRequest);
+        }
 
         return generateAuthResponse(user);
     }
