@@ -1,6 +1,6 @@
 spring:
   application:
-    name: Email Client AI
+    name: MailBoard
 
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/mailboard}
@@ -64,11 +64,9 @@ google:
     client-secret: ${GOOGLE_CLIENT_SECRET}
     redirect-uri: ${GOOGLE_REDIRECT_URI}
 
-# Encryption Configuration (for secure credential storage - GA04)
 encryption:
-  aes-secret-key: ${ENCRYPTION_AES_KEY:mof2yOLgNiCFaYwwXBjYDgCjHrW0bQadDB39/cDKHog=}
+  aes-secret-key: ${ENCRYPTION_AES_KEY}
 
-# CORS Configuration
 cors:
   allowed-origins:
     - ${CORS_ALLOWED_ORIGIN_1}
