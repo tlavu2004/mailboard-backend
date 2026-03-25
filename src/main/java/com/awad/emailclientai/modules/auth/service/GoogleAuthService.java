@@ -12,7 +12,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Collections;
+import java.util.ArrayList;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -25,11 +26,19 @@ public class GoogleAuthService {
     @Transactional
     public User authenticateGoogleUser(String idTokenString) {
         try {
+            List<String> allowedAudiences = new ArrayList<>();
+            allowedAudiences.add(googleOAuthProperties.getClientId());
+            
+            String playgroundId = googleOAuthProperties.getPlaygroundClientId();
+            if (playgroundId != null && !playgroundId.isBlank()) {
+                allowedAudiences.add(playgroundId);
+            }
+
             GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(
                     new NetHttpTransport(),
                     GsonFactory.getDefaultInstance()
             )
-                    .setAudience(Collections.singletonList(googleOAuthProperties.getClientId()))
+                    .setAudience(allowedAudiences)
                     .build();
 
             GoogleIdToken idToken = verifier.verify(idTokenString);

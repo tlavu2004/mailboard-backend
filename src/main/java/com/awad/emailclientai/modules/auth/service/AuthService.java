@@ -8,7 +8,6 @@ import com.awad.emailclientai.modules.auth.dto.response.AuthResponse;
 import com.awad.emailclientai.modules.email.dto.request.ConnectEmailAccountRequestDto;
 import com.awad.emailclientai.modules.email.entity.EmailAuthType;
 import com.awad.emailclientai.modules.email.entity.EmailProvider;
-import com.awad.emailclientai.modules.email.service.EmailAccountService;
 import com.awad.emailclientai.modules.user.entity.User;
 import com.awad.emailclientai.modules.user.repository.UserRepository;
 import com.awad.emailclientai.shared.config.properties.JwtProperties;
@@ -32,10 +31,10 @@ public class AuthService {
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
     private final GoogleAuthService googleAuthService;
+    private final EmailAccountLinkHandler emailAccountLinkHandler;
     private final AuthenticationManager authenticationManager;
     private final UserDetailsService userDetailsService;
     private final JwtProperties jwtProperties;
-    private final EmailAccountService emailAccountService;
 
     @Transactional
     public void register(RegisterRequest request) {
@@ -75,7 +74,8 @@ public class AuthService {
         log.debug("Google login attempt");
 
         User user = googleAuthService.authenticateGoogleUser(request.getIdToken());
-        log.info("Google user logged in successfully: {}", user.getEmail());
+        log.info("Google user logged in successfully: {}. AccessToken present: {}, RefreshToken present: {}", 
+                user.getEmail(), request.getAccessToken() != null, request.getRefreshToken() != null);
 
         // Automatic account linking if tokens are provided
         if (request.getAccessToken() != null && !request.getAccessToken().isBlank()) {
@@ -89,13 +89,7 @@ public class AuthService {
                     .refreshToken(request.getRefreshToken())
                     .build();
                     
-            try {
-                emailAccountService.connectAccount(user.getId(), connectRequest);
-            } catch (Exception e) {
-                log.error("Failed to auto-link email account during login for {}: {}", 
-                        user.getEmail(), e.getMessage());
-                // Don't fail the whole login if auto-link fails
-            }
+            emailAccountLinkHandler.linkAccount(user.getId(), connectRequest);
         }
 
         return generateAuthResponse(user);

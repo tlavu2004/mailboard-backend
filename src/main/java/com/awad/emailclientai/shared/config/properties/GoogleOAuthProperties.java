@@ -25,6 +25,8 @@ public class GoogleOAuthProperties {
 
     private String redirectUri;
 
+    private String playgroundClientId;
+
     /**
      * Check if Google OAuth is enabled and properly configured
      *
