@@ -66,7 +66,7 @@ google:
 
 # Encryption Configuration (for secure credential storage - GA04)
 encryption:
-  aes-secret-key: ${ENCRYPTION_AES_KEY}
+  aes-secret-key: ${ENCRYPTION_AES_KEY:mof2yOLgNiCFaYwwXBjYDgCjHrW0bQadDB39/cDKHog=}
 
 # CORS Configuration
 cors:
