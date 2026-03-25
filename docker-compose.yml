@@ -14,6 +14,8 @@ services:
       - .env
     depends_on:
       - postgresql
+    networks:
+      - mailboard-network
 
   ngrok:
     image: ngrok/ngrok:latest
@@ -27,18 +29,27 @@ services:
       - app
     env_file:
       - .env
+    networks:
+      - mailboard-network
 
   postgresql:
-      image: pgvector/pgvector:pg17
-      container_name: mailboard-db
-      environment:
-        POSTGRES_USER: ${DB_USERNAME:-postgres}
-        POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-        POSTGRES_DB: mailboard
-      ports:
-        - "5432:5432"
-      volumes:
-        - postgres_data:/var/lib/postgresql/data
+    image: pgvector/pgvector:pg17
+    container_name: mailboard-db
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: mailboard
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - mailboard-network
 
 volumes:
   postgres_data:
+
+networks:
+  mailboard-network:
+    driver: bridge
+    name: mailboard-unified-network
