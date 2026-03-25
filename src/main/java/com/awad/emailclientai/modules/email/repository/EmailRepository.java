@@ -67,7 +67,7 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     List<Object[]> findSuggestions(@Param("prefix") String prefix);
     @Query("SELECT new com.awad.emailclientai.modules.email.dto.response.EmailStatusStatsDto(e.status, COUNT(e)) " +
            "FROM EmailEntity e WHERE e.account.id = :accountId GROUP BY e.status")
-    List<EmailStatusStatsDto> getStatusStats(@Param("accountId") Long accountId);
+    List<EmailStatusStatsDto> countByStatusForAccount(@Param("accountId") Long accountId);
 
     @Query(value = "SELECT TO_CHAR(received_date, 'YYYY-MM-DD') as date, COUNT(*) as count " +
            "FROM emails WHERE account_id = :accountId AND received_date >= :startDate " +
@@ -75,8 +75,9 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     List<Object[]> getEmailTrend(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
 
     @Query(value = "SELECT sender, COUNT(*) as count FROM emails " +
-           "WHERE account_id = :accountId GROUP BY sender ORDER BY count DESC LIMIT :limit", nativeQuery = true)
-    List<Object[]> getTopSenders(@Param("accountId") Long accountId, @Param("limit") int limit);
+           "WHERE account_id = :accountId AND received_date >= :startDate " +
+           "GROUP BY sender ORDER BY count DESC LIMIT 10", nativeQuery = true)
+    List<Object[]> getTopSenders(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
 
     @Query(value = "SELECT EXTRACT(DOW FROM received_date) as day, EXTRACT(HOUR FROM received_date) as hour, COUNT(*) as count " +
            "FROM emails WHERE account_id = :accountId AND received_date >= :startDate " +
