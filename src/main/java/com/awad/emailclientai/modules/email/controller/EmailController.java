@@ -15,6 +15,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import com.awad.emailclientai.modules.user.security.UserPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -46,11 +48,18 @@ public class EmailController {
     @PostMapping("/sync")
     @Operation(summary = "Sync Emails from Gmail", description = "Fetches recent emails from IMAP and saves them to the DB.")
     public ResponseEntity<ApiResponse<String>> syncEmails(
-            @RequestParam Long accountId,
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(required = false) Long accountId,
             @RequestParam(defaultValue = "INBOX") String folderName,
-            @RequestParam(defaultValue = "50") int limit,
+            @RequestParam(defaultValue = "10") int limit,
             @RequestParam(defaultValue = "0") int page) {
-        emailSyncService.syncEmailsForAccount(accountId, folderName, limit, page);
+        
+        if (accountId != null) {
+            emailSyncService.syncEmailsForAccount(accountId, principal.getId(), folderName, limit, page);
+        } else {
+            emailSyncService.syncEmailsForUser(principal.getId(), folderName, limit, page);
+        }
+        
         return ResponseEntity.ok(ApiResponse.success("Sync completed"));
     }
 
