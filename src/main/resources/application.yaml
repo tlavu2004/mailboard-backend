@@ -50,9 +50,9 @@ server:
     include-binding-errors: always
 
 jwt:
-    secret: ${JWT_SECRET}
-    access-token-expiration: ${JWT_ACCESS_EXPIRATION}
-    refresh-token-expiration: ${JWT_REFRESH_EXPIRATION}
+    secret: ${JWT_SECRET:dummy-secret-at-least-32-chars-long-for-hs256}
+    access-token-expiration: ${JWT_ACCESS_EXPIRATION:900000}
+    refresh-token-expiration: ${JWT_REFRESH_EXPIRATION:604800000}
     issuer: email-client-ai
     header: Authorization
     prefix: "Bearer "
@@ -60,16 +60,16 @@ jwt:
 google:
   oauth:
     enabled: true
-    client-id: ${GOOGLE_CLIENT_ID}
-    client-secret: ${GOOGLE_CLIENT_SECRET}
-    redirect-uri: ${GOOGLE_REDIRECT_URI}
+    client-id: ${GOOGLE_CLIENT_ID:dummy-id}
+    client-secret: ${GOOGLE_CLIENT_SECRET:dummy-secret}
+    redirect-uri: ${GOOGLE_REDIRECT_URI:http://localhost:8080/login/oauth2/code/google}
 
 encryption:
-  aes-secret-key: ${ENCRYPTION_AES_KEY}
+  aes-secret-key: ${ENCRYPTION_AES_KEY:dummy-key-16-chs}
 
 cors:
   allowed-origins:
-    - ${CORS_ALLOWED_ORIGIN_1}
+    - ${CORS_ALLOWED_ORIGIN_1:http://localhost:3000}
   allowed-methods:
     - GET
     - POST
@@ -99,9 +99,9 @@ logging:
   #   name: /app/logs/mailboard.log
 
 gemini:
-  api-key: ${GEMINI_API_KEY}
-  embedding-model: ${GEMINI_EMBEDDING_MODEL}
-  chat-model: ${GEMINI_CHAT_MODEL}
+  api-key: ${GEMINI_API_KEY:}
+  embedding-model: ${GEMINI_EMBEDDING_MODEL:gemini-embedding-001}
+  chat-model: ${GEMINI_CHAT_MODEL:gemini-2.5-flash}
 
 gmail:
   pubsub:
