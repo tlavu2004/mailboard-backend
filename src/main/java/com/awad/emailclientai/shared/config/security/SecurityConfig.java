@@ -71,6 +71,12 @@ public class SecurityConfig {
                                 "/swagger-ui.html"
                         ).permitAll()
 
+                        // Bridge endpoints for legacy frontend (drifted paths)
+                        .requestMatchers(
+                                "/api/v1/mailboxes",
+                                "/api/v1/search/generate-embeddings"
+                        ).authenticated()
+
                         // All other endpoints require authentication
                         .anyRequest().authenticated()
                 )
