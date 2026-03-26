@@ -33,6 +33,11 @@ public class LegacyDashboardController {
     private final EmailRepository emailRepository;
     private final AiService aiService;
 
+    @GetMapping("/check")
+    public ResponseEntity<String> check() {
+        return ResponseEntity.ok("LegacyBridge-v2-Defensive");
+    }
+
     @GetMapping("/mailboxes")
     @Operation(summary = "Legacy Mailboxes Provider", description = "Bridge for frontend sidebar initialization.")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getMailboxes(
