@@ -63,6 +63,8 @@ public class RefreshTokenService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW, noRollbackFor = TokenRefreshException.class)
     public User rotateRefreshToken(String token) {
+        log.debug("Rotating refresh token starting with: {}", 
+                (token != null && token.length() > 10) ? token.substring(0, 10) : "short-token");
         RefreshToken refreshToken = refreshTokenRepository.findByTokenWithLock(token)
                 .orElseThrow(() -> new TokenRefreshException(token, "Refresh token not found"));
 

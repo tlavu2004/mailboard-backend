@@ -3,8 +3,10 @@ package com.awad.emailclientai.modules.auth.service;
 import com.awad.emailclientai.modules.user.entity.User;
 import com.awad.emailclientai.modules.user.repository.UserRepository;
 import com.awad.emailclientai.shared.config.properties.GoogleOAuthProperties;
+import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeTokenRequest;
 import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
 import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
+import com.google.api.client.googleapis.auth.oauth2.GoogleTokenResponse;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import lombok.RequiredArgsConstructor;
@@ -12,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -84,4 +87,43 @@ public class GoogleAuthService {
             throw new RuntimeException("Google authentication failed: " + e.getMessage());
         }
     }
-}
+
+    /**
+     * Authenticate user using Authorization Code from Google
+     * Returns User and the exchanged tokens
+     */
+    @Transactional
+    public GoogleTokenData authenticateUserInfoWithCode(String code) {
+        try {
+            log.debug("Exchanging authorization code for tokens. RedirectUri: {}", googleOAuthProperties.getRedirectUri());
+            
+            GoogleTokenResponse tokenResponse = new GoogleAuthorizationCodeTokenRequest(
+                    new NetHttpTransport(),
+                    GsonFactory.getDefaultInstance(),
+                    "https://oauth2.googleapis.com/token",
+                    googleOAuthProperties.getClientId(),
+                    googleOAuthProperties.getClientSecret(),
+                    code,
+                    googleOAuthProperties.getRedirectUri())
+                    .execute();
+
+            String idTokenString = tokenResponse.getIdToken();
+            if (idTokenString == null) {
+                throw new RuntimeException("Google Token Response did not contain an ID Token");
+            }
+
+            User user = authenticateGoogleUser(idTokenString);
+            
+            return new GoogleTokenData(
+                    user,
+                    tokenResponse.getAccessToken(),
+                    tokenResponse.getRefreshToken()
+            );
+        } catch (IOException e) {
+            log.error("Failed to exchange Google authorization code: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to authenticate with Google: " + e.getMessage());
+        }
+    }
+
+    public record GoogleTokenData(User user, String accessToken, String refreshToken) {}
+}
