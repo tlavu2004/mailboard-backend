@@ -1,10 +1,13 @@
 package com.awad.emailclientai.modules.kanban.controller;
 
+import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.kanban.entity.KanbanColumn;
 import com.awad.emailclientai.modules.kanban.service.KanbanService;
+import com.awad.emailclientai.modules.user.security.UserPrincipal;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -15,9 +18,19 @@ import java.util.List;
 public class KanbanController {
 
     private final KanbanService kanbanService;
+    private final EmailAccountRepository emailAccountRepository;
 
     @GetMapping
-    public ResponseEntity<List<KanbanColumn>> getColumns(@RequestParam("accountId") Long accountId) {
+    public ResponseEntity<List<KanbanColumn>> getColumns(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(value = "accountId", required = false) Long accountId
+    ) {
+        if (accountId == null) {
+            accountId = emailAccountRepository.findByUserIdAndActiveTrue(principal.getId())
+                    .stream().findFirst()
+                    .orElseThrow(() -> new RuntimeException("No active email account found"))
+                    .getId();
+        }
         return ResponseEntity.ok(kanbanService.getColumns(accountId));
     }
 
