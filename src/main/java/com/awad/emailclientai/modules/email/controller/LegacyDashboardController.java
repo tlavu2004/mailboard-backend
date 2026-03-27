@@ -1,6 +1,7 @@
 package com.awad.emailclientai.modules.email.controller;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
 import com.awad.emailclientai.modules.email.service.AiService;
+import com.awad.emailclientai.modules.email.service.ImapService;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
@@ -32,6 +33,7 @@ public class LegacyDashboardController {
     private final EmailAccountRepository emailAccountRepository;
     private final EmailRepository emailRepository;
     private final AiService aiService;
+    private final ImapService imapService;
 
     @GetMapping("/check")
     public ResponseEntity<String> check() {
@@ -203,6 +205,23 @@ public class LegacyDashboardController {
         
         if (changed) {
             emailRepository.save(email);
+            
+            // Sync to Gmail
+            try {
+                if (removeLabels.contains("UNREAD")) {
+                    imapService.setMessageRead(email.getAccount(), "INBOX", email.getUid(), true);
+                } else if (addLabels.contains("UNREAD")) {
+                    imapService.setMessageRead(email.getAccount(), "INBOX", email.getUid(), false);
+                }
+                
+                if (addLabels.contains("STARRED")) {
+                    imapService.setMessageStarred(email.getAccount(), "INBOX", email.getUid(), true);
+                } else if (removeLabels.contains("STARRED")) {
+                    imapService.setMessageStarred(email.getAccount(), "INBOX", email.getUid(), false);
+                }
+            } catch (Exception e) {
+                log.error("Failed to sync flags to Gmail for email {}: {}", email.getUid(), e.getMessage());
+            }
         }
         
         return ResponseEntity.ok(ApiResponse.success("Modify completed"));
