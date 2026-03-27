@@ -93,4 +93,8 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     // Mock starred for now or assume a column if it exists later
     @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.status = 'STARRED'")
     long countStarredByAccountId(@Param("accountId") Long accountId);
+
+    @Query("SELECT e FROM EmailEntity e WHERE e.account.id = :accountId AND " +
+           "(e.body LIKE '%body {%' OR e.body LIKE '%.ie-browser%' OR e.body LIKE '%.mso-container%' OR e.body LIKE '%ExternalClass%')")
+    List<EmailEntity> findCorruptedEmails(@Param("accountId") Long accountId);
 }

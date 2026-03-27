@@ -74,6 +74,77 @@ public class EmailSyncService {
         }
     }
 
+    @Transactional
+    public void repairEmailsForUser(Long userId) {
+        List<EmailAccount> accounts = accountRepository.findByUserIdAndActiveTrue(userId);
+        for (EmailAccount account : accounts) {
+            repairCorruptedEmails(account.getId());
+        }
+    }
+
+    @Transactional
+    public void repairCorruptedEmails(Long accountId) {
+        List<EmailEntity> corrupted = emailRepository.findCorruptedEmails(accountId);
+        if (corrupted.isEmpty()) {
+            log.info("No corrupted emails found for account: {}", accountId);
+            return;
+        }
+
+        log.info("Found {} corrupted emails for account: {}. Starting repair...", corrupted.size(), accountId);
+        EmailAccount account = accountRepository.findById(accountId).orElse(null);
+        if (account == null) return;
+
+        for (EmailEntity entity : corrupted) {
+            try {
+                // Fetch full detail with HTML
+                var detail = imapService.getMessageDetail(account, "INBOX", entity.getUid());
+                String newBody = (detail.getBodyHtml() != null && !detail.getBodyHtml().isEmpty()) 
+                                 ? detail.getBodyHtml() 
+                                 : detail.getBodyText();
+
+                if (detail != null && newBody != null) {
+                    entity.setBody(newBody);
+                    // Re-generate preview and snippet
+                    String plainText = imapService.stripHtml(newBody);
+                    entity.setSnippet(plainText.length() > 150 ? plainText.substring(0, 147) + "..." : plainText);
+                    
+                    // Re-generate embedding
+                    generateAndSetEmbedding(entity, entity.getSubject(), newBody);
+                    
+                    emailRepository.save(entity);
+                    log.info("Successfully repaired email ID: {}", entity.getId());
+                }
+            } catch (Exception e) {
+                log.error("Failed to repair email ID: {}. Error: {}", entity.getId(), e.getMessage());
+            }
+        }
+    }
+
+    @Transactional
+    public void refreshEmail(Long emailId) {
+        EmailEntity entity = emailRepository.findById(emailId).orElseThrow(() -> new RuntimeException("Email not found"));
+        EmailAccount account = entity.getAccount();
+        
+        try {
+            var detail = imapService.getMessageDetail(account, "INBOX", entity.getUid());
+            String newBody = (detail.getBodyHtml() != null && !detail.getBodyHtml().isEmpty()) 
+                             ? detail.getBodyHtml() 
+                             : detail.getBodyText();
+
+            if (newBody != null) {
+                entity.setBody(newBody);
+                String plainText = imapService.stripHtml(newBody);
+                entity.setSnippet(plainText.length() > 150 ? plainText.substring(0, 147) + "..." : plainText);
+                generateAndSetEmbedding(entity, entity.getSubject(), newBody);
+                emailRepository.save(entity);
+                log.info("Successfully refreshed email ID: {}", emailId);
+            }
+        } catch (Exception e) {
+            log.error("Failed to refresh email ID: {}. Error: {}", emailId, e.getMessage());
+            throw new RuntimeException("Refresh failed: " + e.getMessage());
+        }
+    }
+
     private void syncAccount(EmailAccount account, String folderName, int limit, int page) {
         if (!imapService.testConnection(account)) {
             log.info("Cannot connect to account: " + account.getEmailAddress());
@@ -95,8 +166,14 @@ public class EmailSyncService {
                     EmailEntity existing = existingOpt.get();
                     boolean changed = false;
 
-                    // If body is missing, update it
-                    if (existing.getBody() == null || existing.getBody().isEmpty()) {
+                    // If body is missing or looks corrupted (e.g. starts with CSS after the stripping bug), update it
+                    boolean isCorrupted = existing.getBody() != null && 
+                                          (existing.getBody().contains("body {") || 
+                                           existing.getBody().contains(".ie-browser") ||
+                                           existing.getBody().contains(".mso-container") ||
+                                           existing.getBody().contains("ExternalClass")); 
+                    
+                    if (existing.getBody() == null || existing.getBody().isEmpty() || isCorrupted) {
                         if (msg.getBody() != null && !msg.getBody().isEmpty()) {
                             existing.setBody(msg.getBody());
                             changed = true;
@@ -190,7 +267,8 @@ public class EmailSyncService {
 
     private void generateAndSetEmbedding(EmailEntity entity, String subject, String body) {
         try {
-            String textToEmbed = (subject != null ? subject : "") + " " + (body != null ? body : "");
+            String cleanBody = imapService.stripHtml(body);
+            String textToEmbed = (subject != null ? subject : "") + " " + (cleanBody != null ? cleanBody : "");
             if (textToEmbed.length() > 8000) {
                 textToEmbed = textToEmbed.substring(0, 8000);
             }

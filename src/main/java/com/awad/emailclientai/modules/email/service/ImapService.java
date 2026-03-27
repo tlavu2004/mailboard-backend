@@ -525,7 +525,7 @@ public class ImapService {
                 .to(to)
                 .cc(cc)
                 .subject(message.getSubject())
-                .preview("") // Preview often unreliable from envelope alone
+                .preview(generatePreview(message)) 
                 .body(fetchBodyContent(message)) // Fetch limited body
                 .sentAt(sentAt)
                 .receivedAt(receivedAt)
@@ -588,21 +588,50 @@ public class ImapService {
          return "";
     }
 
+    private String generatePreview(Message message) {
+        try {
+            String body = fetchBodyContent(message);
+            String plainText = stripHtml(body);
+            if (plainText.length() > 150) {
+                return plainText.substring(0, 147) + "...";
+            }
+            return plainText;
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    public String stripHtml(String html) {
+        if (html == null) return "";
+        // 1. Remove style tags and their content
+        String scriptRegex = "<script[^>]*>[\\s\\S]*?</script>";
+        String styleRegex = "<style[^>]*>[\\s\\S]*?</style>";
+        String result = html.replaceAll(scriptRegex, "").replaceAll(styleRegex, "");
+        // 2. Remove all other HTML tags
+        result = result.replaceAll("<[^>]*>", "");
+        // 3. Unescape entities
+        return result.replaceAll("&nbsp;", " ").replaceAll("&lt;", "<").replaceAll("&gt;", ">").trim();
+    }
+
     private String getTextFromMultipart(Multipart multipart) throws Exception {
-        StringBuilder result = new StringBuilder();
+        String plainText = null;
         for (int i = 0; i < multipart.getCount(); i++) {
             BodyPart bodyPart = multipart.getBodyPart(i);
-            if (bodyPart.isMimeType("text/plain")) {
+            if (bodyPart.isMimeType("text/html")) {
                 return (String) bodyPart.getContent();
-            } else if (bodyPart.isMimeType("text/html")) {
-                String html = (String) bodyPart.getContent();
-                // Basic HTML cleanup without Jsoup to avoid dependency issues if not present
-                return html.replaceAll("<[^>]*>", "").replaceAll("&nbsp;", " ").trim(); 
+            } else if (bodyPart.isMimeType("text/plain")) {
+                if (plainText == null) plainText = (String) bodyPart.getContent();
             } else if (bodyPart.getContent() instanceof Multipart) {
-                result.append(getTextFromMultipart((Multipart) bodyPart.getContent()));
+                String result = getTextFromMultipart((Multipart) bodyPart.getContent());
+                // If the recursive call found HTML, return it immediately
+                // We can check if it looks like HTML by seeing if it contains '<'
+                if (result != null && (result.contains("<html") || result.contains("<body") || result.contains("<div"))) {
+                    return result;
+                }
+                if (plainText == null) plainText = result;
             }
         }
-        return result.toString();
+        return plainText;
     }
 
     private MailMessageDetailDto convertToDetailDto(Message message, long uid) 

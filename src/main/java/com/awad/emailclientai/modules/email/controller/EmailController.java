@@ -63,6 +63,22 @@ public class EmailController {
         return ResponseEntity.ok(ApiResponse.success("Sync completed"));
     }
 
+    @PostMapping("/repair")
+    @Operation(summary = "Repair Corrupted Email Bodies", description = "Scans for emails with corrupted bodies and re-syncs them from Gmail.")
+    public ResponseEntity<ApiResponse<String>> repairEmails(
+            @AuthenticationPrincipal UserPrincipal principal) {
+        
+        emailSyncService.repairEmailsForUser(principal.getId());
+        return ResponseEntity.ok(ApiResponse.success("Repair process completed"));
+    }
+
+    @PostMapping("/{id}/refresh")
+    @Operation(summary = "Force Refresh Email Content", description = "Re-fetches the full email content from Gmail for a specific email ID.")
+    public ResponseEntity<ApiResponse<String>> refreshEmail(@PathVariable Long id) {
+        emailSyncService.refreshEmail(id);
+        return ResponseEntity.ok(ApiResponse.success("Email refreshed successfully"));
+    }
+
     @GetMapping("/search")
     @Operation(summary = "Fuzzy Search Emails with Relevance Ranking", description = "Fuzzy search by subject or sender with relevance ranking.")
     public ResponseEntity<ApiResponse<List<SearchResultDto>>> searchEmails(
