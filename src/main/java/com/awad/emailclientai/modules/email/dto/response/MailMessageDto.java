@@ -21,6 +21,8 @@ public class MailMessageDto {
      * IMAP UID of the message (unique within folder).
      */
     private long uid;
+    private String threadId;
+    private String gmailMessageId;
     
     /**
      * Message-ID header.

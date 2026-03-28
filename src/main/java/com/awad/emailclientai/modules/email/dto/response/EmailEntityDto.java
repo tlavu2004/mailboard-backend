@@ -11,6 +11,8 @@ import java.time.LocalDateTime;
 public class EmailEntityDto {
     private Long id;
     private String messageId;
+    private String threadId;
+    private String gmailMessageId;
     private Long uid;
     private String subject;
     private String sender;
@@ -23,4 +25,5 @@ public class EmailEntityDto {
     private boolean isRead;
     private boolean hasAttachments;
     private String gmailLink;
+    private String accountEmail;
 }

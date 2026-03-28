@@ -130,7 +130,9 @@ public class ImapService {
             // Add Gmail labels to FetchProfile using the gimap provider's FetchProfileItem
             try {
                 fetchProfile.add(org.eclipse.angus.mail.gimap.GmailFolder.FetchProfileItem.LABELS);
-                log.info("Added Gmail LABELS FetchProfileItem to profile.");
+                fetchProfile.add(org.eclipse.angus.mail.gimap.GmailFolder.FetchProfileItem.MSGID);
+                fetchProfile.add(org.eclipse.angus.mail.gimap.GmailFolder.FetchProfileItem.THRID);
+                log.info("Added Gmail LABELS, MSGID, and THRID FetchProfileItem to profile.");
             } catch (Exception e) {
                 log.warn("Failed to add Gmail labels FetchProfile item: {}", e.getMessage());
                 fetchProfile.add("X-GM-LABELS");
@@ -533,6 +535,8 @@ public class ImapService {
                 .starred(starred)
                 .hasAttachments(hasAttachments)
                 .labels(labels)
+                .gmailMessageId(extractGmailMsgId(message))
+                .threadId(extractGmailThreadId(message))
                 .size(message.getSize())
                 .build();
     }
@@ -685,6 +689,8 @@ public class ImapService {
                 .bodyText(textBuilder.toString())
                 .bodyHtml(htmlBuilder.toString())
                 .attachments(attachments)
+                .gmailMessageId(extractGmailMsgId(message))
+                .threadId(extractGmailThreadId(message))
                 .inReplyTo(getHeaderValue(message, "In-Reply-To"))
                 .references(parseReferences(getHeaderValue(message, "References")))
                 .build();
@@ -834,5 +840,28 @@ public class ImapService {
             }
         }
         return false;
+    }
+
+    private String extractGmailMsgId(Message message) {
+        try {
+            if (message instanceof org.eclipse.angus.mail.gimap.GmailMessage gmailMsg) {
+                return Long.toHexString(gmailMsg.getMsgId());
+            }
+        } catch (MessagingException e) {
+            log.warn("Failed to extract Gmail MsgId: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private String extractGmailThreadId(Message message) {
+        try {
+            if (message instanceof org.eclipse.angus.mail.gimap.GmailMessage gmailMsg) {
+                // Some versions call it getThrId or similar, but MSGID is more critical
+                return Long.toHexString(gmailMsg.getMsgId()); // Fallback to msgId as threadId usually contains it
+            }
+        } catch (MessagingException e) {
+            log.warn("Failed to extract Gmail ThreadId: {}", e.getMessage());
+        }
+        return null;
     }
 }

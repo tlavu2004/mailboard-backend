@@ -32,10 +32,10 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
            "LIMIT 20", nativeQuery = true)
     List<EmailEntity> searchEmails(@Param("accountId") Long accountId, @Param("query") String query);
 
-    @Query(value = "SELECT e.id, e.message_id, e.uid, e.subject, e.sender, e.snippet, e.body, " +
-           "e.status, e.received_date, e.snoozed_until, e.summary, e.is_read, e.has_attachments, e.account_id, " +
+    @Query(value = "SELECT e.id, e.message_id, e.thread_id, e.gmail_message_id, e.uid, e.subject, e.sender, e.snippet, e.body, " +
+           "e.status, e.received_date, e.snoozed_until, e.summary, e.is_read, e.has_attachments, e.account_id, a.email_address as account_email, " +
            "GREATEST(word_similarity(:query, e.subject), word_similarity(:query, e.sender)) AS relevance_score " +
-           "FROM emails e WHERE e.account_id = :accountId AND " +
+           "FROM emails e JOIN email_accounts a ON e.account_id = a.id WHERE e.account_id = :accountId AND " +
            "(word_similarity(:query, e.subject) > 0.3 OR word_similarity(:query, e.sender) > 0.3 OR " +
            "LOWER(e.subject) LIKE LOWER(CONCAT('%', :query, '%')) OR " +
            "LOWER(e.sender) LIKE LOWER(CONCAT('%', :query, '%'))) " +

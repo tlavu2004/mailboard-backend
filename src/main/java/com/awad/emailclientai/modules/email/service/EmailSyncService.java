@@ -18,7 +18,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -161,10 +163,20 @@ public class EmailSyncService {
                 log.info("Syncing email: {} | Labels: {} | Target Status: {}",
                     msg.getSubject(), msg.getLabels(), targetStatus);
 
-                java.util.Optional<EmailEntity> existingOpt = emailRepository.findByMessageId(msg.getMessageId());
+                Optional<EmailEntity> existingOpt = emailRepository.findByMessageId(msg.getMessageId());
                 if (existingOpt.isPresent()) {
                     EmailEntity existing = existingOpt.get();
                     boolean changed = false;
+
+                    // Update Gmail IDs if missing
+                    if (existing.getGmailMessageId() == null && msg.getGmailMessageId() != null) {
+                        existing.setGmailMessageId(msg.getGmailMessageId());
+                        changed = true;
+                    }
+                    if (existing.getThreadId() == null && msg.getThreadId() != null) {
+                        existing.setThreadId(msg.getThreadId());
+                        changed = true;
+                    }
 
                     // If body is missing or looks corrupted (e.g. starts with CSS after the stripping bug), update it
                     boolean isCorrupted = existing.getBody() != null && 
@@ -225,6 +237,8 @@ public class EmailSyncService {
 
                 EmailEntity entity = EmailEntity.builder()
                         .messageId(msg.getMessageId())
+                        .threadId(msg.getThreadId())
+                        .gmailMessageId(msg.getGmailMessageId())
                         .uid(msg.getUid())
                         .subject(msg.getSubject())
                         .sender(msg.getFrom())
@@ -283,7 +297,7 @@ public class EmailSyncService {
 
             String embeddingString = "[" + embeddingList.stream()
                     .map(String::valueOf)
-                    .collect(java.util.stream.Collectors.joining(",")) + "]";
+                    .collect(Collectors.joining(",")) + "]";
 
             if (entity.getId() == null) {
                 emailRepository.save(entity);

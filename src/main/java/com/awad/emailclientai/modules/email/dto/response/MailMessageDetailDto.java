@@ -19,6 +19,8 @@ public class MailMessageDetailDto {
     
     private long uid;
     private String messageId;
+    private String threadId;
+    private String gmailMessageId;
     private String from;
     private String fromName;
     private List<String> to;

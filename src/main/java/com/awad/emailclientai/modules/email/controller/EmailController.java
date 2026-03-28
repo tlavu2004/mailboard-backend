@@ -19,6 +19,8 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import com.awad.emailclientai.modules.user.security.UserPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -91,21 +93,28 @@ public class EmailController {
                     EmailEntityDto emailDto = EmailEntityDto.builder()
                             .id(((Number) row[0]).longValue())
                             .messageId((String) row[1])
-                            .uid(row[2] != null ? ((Number) row[2]).longValue() : null)
-                            .subject((String) row[3])
-                            .sender((String) row[4])
-                            .snippet((String) row[5])
-                            .body((String) row[6])
-                            .status((String) row[7])
-                            .receivedDate(row[8] != null ? ((java.sql.Timestamp) row[8]).toLocalDateTime() : null)
-                            .snoozedUntil(row[9] != null ? ((java.sql.Timestamp) row[9]).toLocalDateTime() : null)
-                            .summary((String) row[10])
-                            .isRead(row[11] != null && (Boolean) row[11])
-                            .hasAttachments(row[12] != null && (Boolean) row[12])
-                            .gmailLink(String.format("https://mail.google.com/mail/u/0/#search/rfc822msgid:%s", 
-                                    java.net.URLEncoder.encode((String) row[1], java.nio.charset.StandardCharsets.UTF_8)))
+                            .threadId((String) row[2])
+                            .gmailMessageId((String) row[3])
+                            .uid(row[4] != null ? ((Number) row[4]).longValue() : null)
+                            .subject((String) row[5])
+                            .sender((String) row[6])
+                            .snippet((String) row[7])
+                            .body((String) row[8])
+                            .status((String) row[9])
+                            .receivedDate(row[10] != null ? ((java.sql.Timestamp) row[10]).toLocalDateTime() : null)
+                            .snoozedUntil(row[11] != null ? ((java.sql.Timestamp) row[11]).toLocalDateTime() : null)
+                            .summary((String) row[12])
+                            .isRead(row[13] != null && (Boolean) row[13])
+                            .hasAttachments(row[14] != null && (Boolean) row[14])
+                            .accountEmail((String) row[15])
+                            .gmailLink((String) row[3] != null ? 
+                                    String.format("https://mail.google.com/mail/u/%s/#inbox/%s", 
+                                        URLEncoder.encode((String) row[15], StandardCharsets.UTF_8), (String) row[3]) :
+                                    String.format("https://mail.google.com/mail/u/%s/#search/rfc822msgid:%s", 
+                                        URLEncoder.encode((String) row[15], StandardCharsets.UTF_8),
+                                        URLEncoder.encode((String) row[1], StandardCharsets.UTF_8)))
                             .build();
-                    double score = row[14] != null ? ((Number) row[14]).doubleValue() : 0.0;
+                    double score = row[17] != null ? ((Number) row[17]).doubleValue() : 0.0;
                     return SearchResultDto.builder()
                             .email(emailDto)
                             .relevanceScore(Math.round(score * 100.0) / 100.0)
@@ -227,8 +236,14 @@ public class EmailController {
                 .summary(entity.getSummary())
                 .isRead(entity.isRead())
                 .hasAttachments(entity.isHasAttachments())
-                .gmailLink(String.format("https://mail.google.com/mail/u/0/#search/rfc822msgid:%s", 
-                        java.net.URLEncoder.encode(entity.getMessageId(), java.nio.charset.StandardCharsets.UTF_8)))
+                .accountEmail(entity.getAccount().getEmailAddress())
+                .gmailLink(entity.getGmailMessageId() != null ? 
+                        String.format("https://mail.google.com/mail/u/%s/#inbox/%s", 
+                            URLEncoder.encode(entity.getAccount().getEmailAddress(), StandardCharsets.UTF_8),
+                            entity.getGmailMessageId()) :
+                        String.format("https://mail.google.com/mail/u/%s/#search/rfc822msgid:%s", 
+                            URLEncoder.encode(entity.getAccount().getEmailAddress(), StandardCharsets.UTF_8),
+                            URLEncoder.encode(entity.getMessageId(), StandardCharsets.UTF_8)))
                 .build();
     }
 }

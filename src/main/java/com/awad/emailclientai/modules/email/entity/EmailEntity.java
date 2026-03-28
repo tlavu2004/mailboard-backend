@@ -22,6 +22,9 @@ public class EmailEntity {
     @Column(unique = true, nullable = false)
     private String messageId; // Unique Message-ID header
 
+    private String threadId; // Gmail Thread ID (hex)
+    private String gmailMessageId; // Gmail Message ID (hex)
+
     private Long uid; // IMAP UID
 
     private String subject;

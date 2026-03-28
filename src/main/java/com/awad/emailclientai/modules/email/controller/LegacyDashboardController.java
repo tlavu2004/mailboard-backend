@@ -1,5 +1,7 @@
 package com.awad.emailclientai.modules.email.controller;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import com.awad.emailclientai.modules.email.service.AiService;
 import com.awad.emailclientai.modules.email.service.ImapService;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
@@ -291,8 +293,19 @@ public class LegacyDashboardController {
         try {
             Map<String, Object> m = new HashMap<>();
             m.put("id", entity.getId().toString());
-            m.put("threadId", entity.getMessageId()); // Default to messageId
+            m.put("messageId", entity.getMessageId());
+            m.put("threadId", entity.getThreadId() != null ? entity.getThreadId() : entity.getMessageId());
+            m.put("gmailMessageId", entity.getGmailMessageId());
+            m.put("accountEmail", entity.getAccount().getEmailAddress());
             m.put("mailboxId", entity.getStatus() != null ? entity.getStatus() : "INBOX");
+            
+            // Generate gmailLink
+            String encodedEmail = URLEncoder.encode(entity.getAccount().getEmailAddress(), StandardCharsets.UTF_8);
+            String gmailLink = entity.getGmailMessageId() != null ? 
+                    String.format("https://mail.google.com/mail/u/%s/#inbox/%s", encodedEmail, entity.getGmailMessageId()) :
+                    String.format("https://mail.google.com/mail/u/%s/#search/rfc822msgid:%s", 
+                        encodedEmail, URLEncoder.encode(entity.getMessageId(), StandardCharsets.UTF_8));
+            m.put("gmailLink", gmailLink);
             
             // Map from: { name, email }
             Map<String, String> from = new HashMap<>();
@@ -342,11 +355,22 @@ public class LegacyDashboardController {
     private Map<String, Object> mapToKanbanCard(EmailEntity email) {
         Map<String, Object> card = new HashMap<>();
         card.put("id", email.getId().toString());
+        card.put("message_id", email.getMessageId());
+        card.put("gmail_message_id", email.getGmailMessageId());
+        card.put("thread_id", email.getThreadId());
+        card.put("account_email", email.getAccount().getEmailAddress());
         card.put("sender", email.getSender());
         card.put("subject", email.getSubject());
         card.put("summary", email.getSummary());
         card.put("preview", email.getSnippet());
-        card.put("gmail_url", String.format("https://mail.google.com/mail/u/0/#search/rfc822msgid:%s", email.getMessageId()));
+        
+        String encodedEmail = URLEncoder.encode(email.getAccount().getEmailAddress(), StandardCharsets.UTF_8);
+        String gmailUrl = email.getGmailMessageId() != null ? 
+                String.format("https://mail.google.com/mail/u/%s/#inbox/%s", encodedEmail, email.getGmailMessageId()) :
+                String.format("https://mail.google.com/mail/u/%s/#search/rfc822msgid:%s", 
+                    encodedEmail, URLEncoder.encode(email.getMessageId(), StandardCharsets.UTF_8));
+        
+        card.put("gmail_url", gmailUrl);
         card.put("received_at", email.getReceivedDate() != null ? email.getReceivedDate().toString() : "");
         card.put("is_read", email.isRead());
         card.put("has_attachments", email.isHasAttachments());
