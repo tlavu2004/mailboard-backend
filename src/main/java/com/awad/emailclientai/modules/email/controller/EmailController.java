@@ -21,7 +21,8 @@ import org.springframework.web.bind.annotation.*;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -102,7 +103,7 @@ public class EmailController {
                             .body((String) row[8])
                             .status((String) row[9])
                             .receivedDate(row[10] != null ? ((java.sql.Timestamp) row[10]).toLocalDateTime() : null)
-                            .snoozedUntil(row[11] != null ? ((java.sql.Timestamp) row[11]).toLocalDateTime() : null)
+                            .snoozedUntil(row[11] != null ? ((java.sql.Timestamp) row[11]).toInstant().atOffset(ZoneOffset.UTC) : null)
                             .summary((String) row[12])
                             .summarySource(row.length > 18 ? (String) row[18] : null)
                             .isRead(row[13] != null && (Boolean) row[13])
@@ -210,7 +211,7 @@ public class EmailController {
     @Operation(summary = "Snooze Email to Future", description = "Move to SNOOZED status until a specific time.")
     public ResponseEntity<ApiResponse<EmailEntityDto>> snoozeEmail(
             @PathVariable Long id,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime until) {
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime until) {
         
         EmailEntity email = emailRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Email not found"));

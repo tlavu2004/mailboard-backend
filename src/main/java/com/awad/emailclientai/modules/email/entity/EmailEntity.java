@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 @Entity
 @Table(name = "emails")
@@ -42,7 +43,7 @@ public class EmailEntity {
 
     private LocalDateTime receivedDate;
 
-    private LocalDateTime snoozedUntil;
+    private OffsetDateTime snoozedUntil;
 
     @Column(columnDefinition = "TEXT")
     private String summary;

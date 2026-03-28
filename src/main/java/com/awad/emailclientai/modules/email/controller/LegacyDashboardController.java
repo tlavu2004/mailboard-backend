@@ -17,6 +17,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -168,6 +169,26 @@ public class LegacyDashboardController {
         result.put("ok", true);
         result.put("summary", summary);
         return ResponseEntity.ok(result);
+    }
+    
+    @PostMapping("/kanban/snooze")
+    public ResponseEntity<ApiResponse<Void>> snoozeCard(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestBody Map<String, String> request
+    ) {
+        Long emailId = Long.parseLong(request.get("email_id"));
+        String untilStr = request.get("until");
+        
+        EmailEntity email = emailRepository.findById(emailId)
+                .orElseThrow(() -> new RuntimeException("Email not found"));
+        
+        email.setStatus(EmailStatus.SNOOZED);
+        // Parse ISO 8601 string (e.g. 2024-03-27T10:00:00.000Z)
+        email.setSnoozedUntil(OffsetDateTime.parse(untilStr));
+        
+        emailRepository.save(email);
+        
+        return ResponseEntity.ok(ApiResponse.success("Email snoozed"));
     }
 
     @GetMapping("/kanban/meta")

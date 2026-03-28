@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 @Data
 @Builder
@@ -20,7 +21,7 @@ public class EmailEntityDto {
     private String body;
     private String status;
     private LocalDateTime receivedDate;
-    private LocalDateTime snoozedUntil;
+    private OffsetDateTime snoozedUntil;
     private String summary;
     private String summarySource;
     private boolean isRead;
