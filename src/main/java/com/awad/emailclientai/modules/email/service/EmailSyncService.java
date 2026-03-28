@@ -261,6 +261,7 @@ public class EmailSyncService {
                         .hasAttachments(msg.isHasAttachments())
                         .status(targetStatus)
                         .account(account)
+                        .kanbanOrder((double) msg.getReceivedAt().atZone(java.time.ZoneId.systemDefault()).toEpochSecond())
                         .build();
 
                 // Generate embedding for new email
