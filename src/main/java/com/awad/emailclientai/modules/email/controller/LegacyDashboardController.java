@@ -82,7 +82,7 @@ public class LegacyDashboardController {
         // Map mailbox ID to status (lowercase)
         String status = id.toUpperCase();
         
-        List<EmailEntity> emails = emailRepository.findAllByAccountIdOrderByReceivedDateDesc(account.getId());
+        List<EmailEntity> emails = emailRepository.findAllByAccountIdOrderByKanbanOrderDescReceivedDateDesc(account.getId());
         String finalStatus = status;
         List<Map<String, Object>> filtered = emails.stream()
                 .filter(e -> {
@@ -110,7 +110,7 @@ public class LegacyDashboardController {
             @AuthenticationPrincipal UserPrincipal principal
     ) {
         EmailAccount account = getPrimaryAccount(principal);
-        List<EmailEntity> emails = emailRepository.findAllByAccountIdOrderByReceivedDateDesc(account.getId());
+        List<EmailEntity> emails = emailRepository.findAllByAccountIdOrderByKanbanOrderDescReceivedDateDesc(account.getId());
         
         Map<String, List<Map<String, Object>>> columnsData = new HashMap<>();
         
@@ -137,15 +137,20 @@ public class LegacyDashboardController {
     @PostMapping("/kanban/move")
     public ResponseEntity<ApiResponse<Void>> moveCard(
             @AuthenticationPrincipal UserPrincipal principal,
-            @RequestBody Map<String, String> request
+            @RequestBody Map<String, Object> request
     ) {
-        Long emailId = Long.parseLong(request.get("email_id"));
-        String toStatus = request.get("to_status");
+        Long emailId = Long.parseLong(request.get("email_id").toString());
+        String toStatus = request.get("to_status").toString();
         
         EmailEntity email = emailRepository.findById(emailId)
                 .orElseThrow(() -> new RuntimeException("Email not found"));
         
         email.setStatus(toStatus);
+        
+        if (request.containsKey("kanban_order")) {
+            email.setKanbanOrder(Double.parseDouble(request.get("kanban_order").toString()));
+        }
+        
         emailRepository.save(email);
         
         return ResponseEntity.ok(ApiResponse.success("Card moved"));

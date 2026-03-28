@@ -59,6 +59,8 @@ public class EmailEntity {
     @Builder.Default
     private boolean hasAttachments = false;
 
+    private Double kanbanOrder;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "account_id")
     @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
