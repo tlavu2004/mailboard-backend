@@ -89,7 +89,7 @@ public class LegacyDashboardController {
                     if ("STARRED".equalsIgnoreCase(finalStatus)) {
                         return e.isStarred();
                     }
-                    return finalStatus.equals("INBOX") || finalStatus.equals(e.getStatus());
+                    return finalStatus.equalsIgnoreCase("INBOX") || finalStatus.equalsIgnoreCase(e.getStatus());
                 })
                 .map(this::mapToFrontendEmail)
                 .collect(Collectors.toList());
