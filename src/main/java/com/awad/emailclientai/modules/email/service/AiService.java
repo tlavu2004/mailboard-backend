@@ -2,6 +2,7 @@ package com.awad.emailclientai.modules.email.service;
 
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDetailDto;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
+import com.awad.emailclientai.modules.email.entity.SummarySource;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
@@ -46,19 +47,19 @@ public class AiService {
         EmailEntity email = emailRepository.findById(emailId)
                 .orElseThrow(() -> new RuntimeException("Email not found"));
 
-        // Return existing summary if available
-        if (email.getSummary() != null && !email.getSummary().isEmpty()) {
+        // Rule 1: [Gemini] -> Do nothing, return immediately
+        if (email.getSummarySource() == SummarySource.GEMINI && email.getSummary() != null && !email.getSummary().isEmpty()) {
+            log.info("Email already has Gemini summary. Skipping.");
             return email.getSummary();
         }
 
-        // Prefer body, fallback to snippet
+        // Rule 2 & 3: [Local Model] or [Local Algo] -> Try upgrading to Gemini
+        // Fetch content if missing
         String content = (email.getBody() != null && !email.getBody().isEmpty()) 
                 ? email.getBody() 
                 : email.getSnippet();
 
-        // If content is still empty, fetch on-demand from IMAP
         if (content == null || content.isEmpty()) {
-            log.info("Body empty for email ID: {}, fetching on-demand via IMAP...", emailId);
             content = fetchBodyOnDemand(email);
         }
 
@@ -66,22 +67,34 @@ public class AiService {
             return "No content to summarize.";
         }
 
-        String summary;
         try {
-            if (geminiApiKey == null || geminiApiKey.isEmpty()) {
-                throw new RuntimeException("Gemini API Key not configured");
-            }
-            summary = callGeminiApi(content);
-            summary = "[Gemini] " + summary;
+            // Attempt Tier 1: Gemini
+            String summary = callGeminiApi(content);
+            email.setSummary("[Gemini] " + summary);
+            email.setSummarySource(SummarySource.GEMINI);
+            emailRepository.save(email);
+            return email.getSummary();
         } catch (Exception e) {
-            log.error("Gemini API failed: {}", e.getMessage());
-            summary = extractiveSummary(content, 3, 300);
-            summary = "[Local Algo] " + summary;
-        }
+            log.warn("Gemini upgrade failed, checking for local model fallback: {}", e.getMessage());
+            
+            // Tier 2: Local Model (Placeholder for Ollama/Local LLM)
+            // Currently we don't have a local LLM, so we fallback to Local Algo if current is ALGO or null.
+            // If current is already LOCAL_MODEL, we keep it.
+            
+            if (email.getSummarySource() == SummarySource.LOCAL_MODEL && email.getSummary() != null) {
+                return email.getSummary();
+            }
 
-        email.setSummary(summary);
-        emailRepository.save(email);
-        return summary;
+            // Tier 3: Local Algorithm (Extractive)
+            if (email.getSummarySource() != SummarySource.LOCAL_ALGO) {
+                String summary = extractiveSummary(content, 3, 300);
+                email.setSummary("[Local Algo] " + summary);
+                email.setSummarySource(SummarySource.LOCAL_ALGO);
+                emailRepository.save(email);
+            }
+            
+            return email.getSummary();
+        }
     }
 
     /**

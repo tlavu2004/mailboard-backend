@@ -22,6 +22,7 @@ public class EmailEntityDto {
     private LocalDateTime receivedDate;
     private LocalDateTime snoozedUntil;
     private String summary;
+    private String summarySource;
     private boolean isRead;
     private boolean hasAttachments;
     private String gmailLink;

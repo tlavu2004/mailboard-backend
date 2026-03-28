@@ -47,6 +47,9 @@ public class EmailEntity {
     @Column(columnDefinition = "TEXT")
     private String summary;
 
+    @Enumerated(EnumType.STRING)
+    private SummarySource summarySource;
+
     @Builder.Default
     private boolean isRead = false;
 
