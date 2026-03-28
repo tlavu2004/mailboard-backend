@@ -212,11 +212,23 @@ public class EmailSyncService {
                     // Update read status if changed
                     if (existing.isRead() != msg.isRead()) {
                         existing.setRead(msg.isRead());
-                        emailRepository.save(existing);
+                        changed = true;
                     }
 
-                    // Update status if label mapping changed it
-                    if (!existing.getStatus().equals(targetStatus)) {
+                    // Update star status if changed
+                    if (existing.isStarred() != msg.isStarred()) {
+                        existing.setStarred(msg.isStarred());
+                        changed = true;
+                    }
+
+                    // Migration: If existing status is STARRED, move to targetStatus and set isStarred based on Gmail
+                    if ("STARRED".equalsIgnoreCase(existing.getStatus())) {
+                        existing.setStatus(targetStatus);
+                        existing.setStarred(msg.isStarred());
+                        changed = true;
+                        log.info("Migrating legacy STARRED status to {} and setting isStarred={}", 
+                            targetStatus, msg.isStarred());
+                    } else if (!existing.getStatus().equals(targetStatus)) {
                         log.info("Updating status for email ID {} from {} to {} based on labels",
                             existing.getId(), existing.getStatus(), targetStatus);
                         existing.setStatus(targetStatus);

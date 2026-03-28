@@ -54,6 +54,9 @@ public class EmailEntity {
     private boolean isRead = false;
 
     @Builder.Default
+    private boolean isStarred = false;
+
+    @Builder.Default
     private boolean hasAttachments = false;
 
     @ManyToOne(fetch = FetchType.LAZY)

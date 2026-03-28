@@ -1,5 +1,6 @@
 package com.awad.emailclientai.modules.email.controller;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
+import com.awad.emailclientai.modules.email.entity.EmailStatus;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import com.awad.emailclientai.modules.email.service.AiService;
@@ -84,7 +85,12 @@ public class LegacyDashboardController {
         List<EmailEntity> emails = emailRepository.findByAccountId(account.getId());
         String finalStatus = status;
         List<Map<String, Object>> filtered = emails.stream()
-                .filter(e -> finalStatus.equals("INBOX") || finalStatus.equals(e.getStatus()))
+                .filter(e -> {
+                    if ("STARRED".equalsIgnoreCase(finalStatus)) {
+                        return e.isStarred();
+                    }
+                    return finalStatus.equals("INBOX") || finalStatus.equals(e.getStatus());
+                })
                 .map(this::mapToFrontendEmail)
                 .collect(Collectors.toList());
 
@@ -191,7 +197,16 @@ public class LegacyDashboardController {
         boolean changed = false;
         
         if (addLabels.contains("STARRED")) {
-            email.setStatus("STARRED");
+            email.setStarred(true);
+            changed = true;
+        }
+        
+        if (removeLabels.contains("STARRED")) {
+            email.setStarred(false);
+            // Also reset legacy STARRED status if present
+            if ("STARRED".equalsIgnoreCase(email.getStatus())) {
+                email.setStatus(EmailStatus.INBOX);
+            }
             changed = true;
         }
         
@@ -341,7 +356,7 @@ public class LegacyDashboardController {
             m.put("preview", entity.getSnippet() != null ? entity.getSnippet() : "");
             m.put("body", entity.getBody() != null ? entity.getBody() : "");
             m.put("isRead", entity.isRead());
-            m.put("isStarred", "STARRED".equalsIgnoreCase(entity.getStatus()));
+            m.put("isStarred", entity.isStarred());
             m.put("hasAttachments", entity.isHasAttachments());
             
             String dateStr = entity.getReceivedDate() != null ? entity.getReceivedDate().toString() : "2024-01-01T00:00:00Z";
@@ -381,6 +396,7 @@ public class LegacyDashboardController {
         card.put("gmail_url", gmailUrl);
         card.put("received_at", email.getReceivedDate() != null ? email.getReceivedDate().toString() : "");
         card.put("is_read", email.isRead());
+        card.put("is_starred", email.isStarred());
         card.put("has_attachments", email.isHasAttachments());
         return card;
     }
