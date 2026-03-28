@@ -287,7 +287,7 @@ public class ImapService {
     }
 
     /**
-     * Deletes a message (moves to Trash or marks as deleted).
+     * Deletes a message (marks as deleted).
      */
     public void deleteMessage(EmailAccount account, String folderName, 
                                long uid) throws MessagingException {
@@ -303,6 +303,51 @@ public class ImapService {
             }
             
             folder.close(true); // expunge on close
+        }
+    }
+
+    /**
+     * Moves a message to the Trash folder.
+     */
+    public void trashMessage(EmailAccount account, String folderName, long uid) throws MessagingException {
+        try (Store store = connectToStore(account)) {
+            Folder sourceFolder = store.getFolder(folderName);
+            sourceFolder.open(Folder.READ_WRITE);
+            
+            UIDFolder uidFolder = (UIDFolder) sourceFolder;
+            Message message = uidFolder.getMessageByUID(uid);
+            
+            if (message == null) {
+                sourceFolder.close(false);
+                return;
+            }
+
+            // Find trash folder by common names
+            String[] trashNames = {"[Gmail]/Trash", "[Gmail]/Thùng rác", "Trash", "Deleted Items", "Deleted"};
+            Folder trashFolder = null;
+            for (String name : trashNames) {
+                try {
+                    Folder f = store.getFolder(name);
+                    if (f.exists()) {
+                        trashFolder = f;
+                        break;
+                    }
+                } catch (Exception e) {
+                    // skip
+                }
+            }
+
+            if (trashFolder != null) {
+                sourceFolder.copyMessages(new Message[]{message}, trashFolder);
+                message.setFlag(Flags.Flag.DELETED, true);
+                log.info("Moved message UID {} to trash folder: {}", uid, trashFolder.getFullName());
+            } else {
+                // Fallback to just marking deleted
+                message.setFlag(Flags.Flag.DELETED, true);
+                log.warn("Could not find Trash folder for {}, falling back to DELETED flag", account.getEmailAddress());
+            }
+
+            sourceFolder.close(true); // expunge from source
         }
     }
 

@@ -221,8 +221,16 @@ public class LegacyDashboardController {
                 } else if (removeLabels.contains("STARRED")) {
                     imapService.setMessageStarred(email.getAccount(), "INBOX", email.getUid(), false);
                 }
+
+                if (addLabels.contains("TRASH")) {
+                    imapService.trashMessage(email.getAccount(), "INBOX", email.getUid());
+                    log.info("Successfully trashed email (UID: {}) from Gmail", email.getUid());
+                    // Crucial: remove from local DB so it doesn't re-sync from Inbox
+                    emailRepository.delete(email);
+                    log.info("Deleted local email record for UID: {}", email.getUid());
+                }
             } catch (Exception e) {
-                log.error("Failed to sync flags to Gmail for email {}: {}", email.getUid(), e.getMessage());
+                log.error("Failed to sync flags/deletion to Gmail for email {}: {}", email.getUid(), e.getMessage());
             }
         }
         
