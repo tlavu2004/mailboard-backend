@@ -22,7 +22,7 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
 
     List<EmailEntity> findBySnoozedUntilBeforeAndStatus(LocalDateTime now, String status);
     
-    List<EmailEntity> findByAccountId(Long accountId);
+    List<EmailEntity> findAllByAccountIdOrderByReceivedDateDesc(Long accountId);
 
     @Query(value = "SELECT e.* FROM emails e WHERE e.account_id = :accountId AND " +
            "(word_similarity(:query, e.subject) > 0.3 OR word_similarity(:query, e.sender) > 0.3 OR " +

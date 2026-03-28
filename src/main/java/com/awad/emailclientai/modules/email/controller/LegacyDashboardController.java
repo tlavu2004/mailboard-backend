@@ -82,7 +82,7 @@ public class LegacyDashboardController {
         // Map mailbox ID to status (lowercase)
         String status = id.toUpperCase();
         
-        List<EmailEntity> emails = emailRepository.findByAccountId(account.getId());
+        List<EmailEntity> emails = emailRepository.findAllByAccountIdOrderByReceivedDateDesc(account.getId());
         String finalStatus = status;
         List<Map<String, Object>> filtered = emails.stream()
                 .filter(e -> {
@@ -110,7 +110,7 @@ public class LegacyDashboardController {
             @AuthenticationPrincipal UserPrincipal principal
     ) {
         EmailAccount account = getPrimaryAccount(principal);
-        List<EmailEntity> emails = emailRepository.findByAccountId(account.getId());
+        List<EmailEntity> emails = emailRepository.findAllByAccountIdOrderByReceivedDateDesc(account.getId());
         
         Map<String, List<Map<String, Object>>> columnsData = new HashMap<>();
         
