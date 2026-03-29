@@ -71,6 +71,12 @@ public class LegacyDashboardController {
 
         Map<String, Object> data = new HashMap<>();
         data.put("mailboxes", mailboxes);
+        try {
+            EmailAccount account = getPrimaryAccount(principal);
+            data.put("accountId", account.getId());
+        } catch (Exception e) {
+            log.warn("Could not include accountId in mailboxes respond: {}", e.getMessage());
+        }
         return ResponseEntity.ok(ApiResponse.success(data));
     }
 

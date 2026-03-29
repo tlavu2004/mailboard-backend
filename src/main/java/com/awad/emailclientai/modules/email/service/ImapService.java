@@ -42,7 +42,7 @@ public class ImapService {
         try (Store store = connectToStore(account)) {
             return store.isConnected();
         } catch (Exception e) {
-            log.error("IMAP connection test failed for {}: {}", account.getEmailAddress(), e.getMessage());
+            log.error("IMAP connection test failed for {}: {}", account.getEmailAddress(), e.getMessage(), e);
             return false;
         }
     }
@@ -495,13 +495,19 @@ public class ImapService {
         props.put("mail." + protocol + ".port", String.valueOf(account.getImapPort()));
         props.put("mail." + protocol + ".ssl.enable", String.valueOf(account.getImapSsl()));
         props.put("mail." + protocol + ".ssl.trust", "*");
-        props.put("mail." + protocol + ".connectiontimeout", "10000");
-        props.put("mail." + protocol + ".timeout", "30000");
-
-        Session session = Session.getInstance(props);
-        Store store = session.getStore(protocol);
-
-        String password = encryptionService.decrypt(account.getEncryptedPassword());
+        
+        // Robust SSL/TLS settings
+        props.put("mail." + protocol + ".ssl.protocols", "TLSv1.2 TLSv1.3");
+        
+        // Timeouts (Increased for stability in container environments)
+        props.put("mail." + protocol + ".connectiontimeout", "30000"); // 30s
+        props.put("mail." + protocol + ".timeout", "60000");           // 60s
+        props.put("mail." + protocol + ".writetimeout", "30000");     // 30s
+        
+        // Performance and Stability
+        props.put("mail." + protocol + ".partialfetch", "false");
+        props.put("mail." + protocol + ".fetchsize", "81920"); // 80KB buffer
+        props.put("mail." + protocol + ".statuscachetimeout", "10000");
 
         if (account.getAuthType() == EmailAuthType.OAUTH2) {
             // For OAuth2, password is the access token
@@ -510,6 +516,11 @@ public class ImapService {
             props.put("mail." + protocol + ".sasl.enable", "true");
             props.put("mail." + protocol + ".sasl.mechanisms", "XOAUTH2");
         }
+
+        Session session = Session.getInstance(props);
+        Store store = session.getStore(protocol);
+
+        String password = encryptionService.decrypt(account.getEncryptedPassword());
 
         try {
             store.connect(account.getImapHost(), account.getUsername(), password);
