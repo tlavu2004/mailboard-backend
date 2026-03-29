@@ -8,7 +8,9 @@ import com.awad.emailclientai.modules.email.service.ImapService;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
+import com.awad.emailclientai.modules.email.service.EmailSyncService;
 import com.awad.emailclientai.modules.user.security.UserPrincipal;
+import org.springframework.data.domain.PageRequest;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +40,7 @@ public class LegacyDashboardController {
     private final EmailRepository emailRepository;
     private final AiService aiService;
     private final ImapService imapService;
+    private final EmailSyncService emailSyncService;
 
     @GetMapping("/check")
     public ResponseEntity<String> check() {
@@ -305,11 +308,34 @@ public class LegacyDashboardController {
     }
 
     @PostMapping("/search/generate-embeddings")
-    @Operation(summary = "Legacy Embedding Generator", description = "Dummy endpoint for frontend periodic task.")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> generateEmbeddings() {
+    @Operation(summary = "Active Embedding Generator", description = "Generates missing embeddings for the current user's emails.")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> generateEmbeddings(
+            @AuthenticationPrincipal UserPrincipal principal
+    ) {
+        EmailAccount account = getPrimaryAccount(principal);
+        
+        // Fetch a batch of emails missing embeddings
+        List<EmailEntity> missing = emailRepository.findEmailsMissingEmbeddings(account.getId(), PageRequest.of(0, 50));
+        
+        log.info("Generating embeddings for {} emails (Account: {})", missing.size(), account.getEmailAddress());
+        
+        int processed = 0;
+        int failed = 0;
+        
+        for (EmailEntity entity : missing) {
+            try {
+                // This method strips HTML internally and handles storage
+                emailSyncService.refreshEmail(entity.getId());
+                processed++;
+            } catch (Exception e) {
+                log.error("Failed to generate embedding for email {}: {}", entity.getId(), e.getMessage());
+                failed++;
+            }
+        }
+        
         Map<String, Object> result = new HashMap<>();
-        result.put("processed", 0);
-        result.put("failed", 0);
+        result.put("processed", processed);
+        result.put("failed", failed);
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 

@@ -114,11 +114,6 @@ public class AuthService {
         log.debug("Refresh token request");
 
         User user = refreshTokenService.rotateRefreshToken(request.getRefreshToken());
-        // Initialize the user proxy before the transaction from rotateRefreshToken is closed/suspended
-        // and before returning to the caller. This prevents LazyInitializationException.
-        if (user != null) {
-            user.getEmail(); 
-        }
         log.info("Access token refreshed for user: {}", user != null ? user.getEmail() : "unknown");
 
         return generateAuthResponse(user);

@@ -26,15 +26,18 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     List<EmailEntity> findAllByAccountIdOrderByKanbanOrderDescReceivedDateDesc(Long accountId);
 
     @Query(value = "SELECT e.* FROM emails e WHERE e.account_id = :accountId AND " +
-           "(word_similarity(:query, e.subject) > 0.3 OR word_similarity(:query, e.sender) > 0.3 OR " +
+           "(word_similarity(:query, e.subject) > 0.1 OR word_similarity(:query, e.sender) > 0.1 OR " +
+           "similarity(:query, e.subject) > 0.1 OR " +
            "LOWER(e.subject) LIKE LOWER(CONCAT('%', :query, '%')) OR " +
            "LOWER(e.sender) LIKE LOWER(CONCAT('%', :query, '%'))) " +
-           "ORDER BY GREATEST(word_similarity(:query, e.subject), word_similarity(:query, e.sender)) DESC " +
+           "ORDER BY " +
+           "  CASE WHEN LOWER(e.subject) = LOWER(:query) THEN 1 ELSE 2 END, " +
+           "  GREATEST(word_similarity(:query, e.subject), similarity(:query, e.subject)) DESC " +
            "LIMIT 20", nativeQuery = true)
     List<EmailEntity> searchEmails(@Param("accountId") Long accountId, @Param("query") String query);
 
     @Query(value = "SELECT e.id, e.message_id, e.thread_id, e.gmail_message_id, e.uid, e.subject, e.sender, e.snippet, e.body, " +
-           "e.status, e.received_date, e.snoozed_until, e.summary, e.is_read, e.has_attachments, e.account_id, a.email_address as account_email, " +
+           "e.status, e.received_date, e.snoozed_until, e.summary, e.is_read, e.is_starred, e.has_attachments, e.account_id, a.email_address as account_email, " +
            "GREATEST(word_similarity(:query, e.subject), word_similarity(:query, e.sender)) AS relevance_score, e.summary_source " +
            "FROM emails e JOIN email_accounts a ON e.account_id = a.id WHERE e.account_id = :accountId AND " +
            "(word_similarity(:query, e.subject) > 0.3 OR word_similarity(:query, e.sender) > 0.3 OR " +
@@ -52,20 +55,33 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     @Query(value = "UPDATE emails SET embedding_384 = cast(:embedding as vector) WHERE id = :id", nativeQuery = true)
     void updateEmbedding384(@Param("id") Long id, @Param("embedding") String embedding);
 
-    @Query(value = "SELECT e.id, e.message_id, e.uid, e.subject, e.sender, e.snippet, e.body, e.status, e.received_date, e.snoozed_until, e.summary, e.is_read, e.has_attachments, e.account_id, NULL as embedding_768, NULL as embedding_384 FROM emails e WHERE e.embedding_768 IS NOT NULL AND (e.embedding_768 <=> cast(:embedding as vector)) < :threshold ORDER BY e.embedding_768 <=> cast(:embedding as vector) LIMIT 10", nativeQuery = true)
-    List<EmailEntity> findSimilarEmails768(@Param("embedding") String embedding, @Param("threshold") double threshold);
+    @Query(value = "SELECT e.id, e.message_id, e.thread_id, e.gmail_message_id, e.uid, e.subject, e.sender, e.snippet, e.body, " +
+           "e.status, e.received_date, e.snoozed_until, e.summary, e.is_read, e.is_starred, e.has_attachments, e.account_id, a.email_address as account_email, " +
+           "(e.embedding_768 <=> cast(:embedding as vector)) as distance, e.summary_source " +
+           "FROM emails e JOIN email_accounts a ON e.account_id = a.id " +
+           "WHERE e.account_id = :accountId AND e.embedding_768 IS NOT NULL AND (e.embedding_768 <=> cast(:embedding as vector)) < :threshold " +
+           "ORDER BY distance LIMIT 10", nativeQuery = true)
+    List<Object[]> findSimilarEmails768WithDistance(@Param("accountId") Long accountId, @Param("embedding") String embedding, @Param("threshold") double threshold);
 
-    @Query(value = "SELECT e.id, e.message_id, e.uid, e.subject, e.sender, e.snippet, e.body, e.status, e.received_date, e.snoozed_until, e.summary, e.is_read, e.has_attachments, e.account_id, NULL as embedding_768, NULL as embedding_384 FROM emails e WHERE e.embedding_384 IS NOT NULL AND (e.embedding_384 <=> cast(:embedding as vector)) < :threshold ORDER BY e.embedding_384 <=> cast(:embedding as vector) LIMIT 10", nativeQuery = true)
-    List<EmailEntity> findSimilarEmails384(@Param("embedding") String embedding, @Param("threshold") double threshold);
+    @Query(value = "SELECT e.id, e.message_id, e.thread_id, e.gmail_message_id, e.uid, e.subject, e.sender, e.snippet, e.body, " +
+           "e.status, e.received_date, e.snoozed_until, e.summary, e.is_read, e.is_starred, e.has_attachments, e.account_id, a.email_address as account_email, " +
+           "(e.embedding_384 <=> cast(:embedding as vector)) as distance, e.summary_source " +
+           "FROM emails e JOIN email_accounts a ON e.account_id = a.id " +
+           "WHERE e.account_id = :accountId AND e.embedding_384 IS NOT NULL AND (e.embedding_384 <=> cast(:embedding as vector)) < :threshold " +
+           "ORDER BY distance LIMIT 10", nativeQuery = true)
+    List<Object[]> findSimilarEmails384WithDistance(@Param("accountId") Long accountId, @Param("embedding") String embedding, @Param("threshold") double threshold);
 
-    @Query(value = "SELECT val, MAX(score) as max_score FROM (" +
-            "SELECT subject AS val, similarity(subject, :prefix) AS score FROM emails " +
-            "WHERE subject % :prefix OR LOWER(subject) LIKE LOWER(CONCAT('%', :prefix, '%')) " +
+    @Query("SELECT e FROM EmailEntity e WHERE e.account.id = :accountId AND (e.embedding384 IS NULL AND e.embedding768 IS NULL) AND e.body IS NOT NULL")
+    List<EmailEntity> findEmailsMissingEmbeddings(@Param("accountId") Long accountId, org.springframework.data.domain.Pageable pageable);
+
+    @Query(value = "SELECT val, type, MAX(score) as max_score FROM (" +
+            "SELECT subject AS val, 'subject' as type, similarity(subject, :prefix) AS score FROM emails " +
+            "WHERE account_id = :accountId AND (subject % :prefix OR LOWER(subject) LIKE LOWER(CONCAT('%', :prefix, '%'))) " +
             "UNION ALL " +
-            "SELECT sender AS val, similarity(sender, :prefix) AS score FROM emails " +
-            "WHERE sender % :prefix OR LOWER(sender) LIKE LOWER(CONCAT('%', :prefix, '%'))" +
-            ") sub GROUP BY val ORDER BY max_score DESC LIMIT 10", nativeQuery = true)
-    List<Object[]> findSuggestions(@Param("prefix") String prefix);
+            "SELECT sender AS val, 'sender' as type, similarity(sender, :prefix) AS score FROM emails " +
+             "WHERE account_id = :accountId AND (sender % :prefix OR LOWER(sender) LIKE LOWER(CONCAT('%', :prefix, '%')))" +
+            ") sub GROUP BY val, type ORDER BY max_score DESC LIMIT 10", nativeQuery = true)
+    List<Object[]> findSuggestions(@Param("accountId") Long accountId, @Param("prefix") String prefix);
     @Query("SELECT new com.awad.emailclientai.modules.email.dto.response.EmailStatusStatsDto(e.status, COUNT(e)) " +
            "FROM EmailEntity e WHERE e.account.id = :accountId GROUP BY e.status")
     List<EmailStatusStatsDto> countByStatusForAccount(@Param("accountId") Long accountId);

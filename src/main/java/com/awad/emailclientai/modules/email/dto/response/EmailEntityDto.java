@@ -21,6 +21,7 @@ public class EmailEntityDto {
     private String body;
     private String status;
     private LocalDateTime receivedDate;
+    private String receivedAt;
     private OffsetDateTime snoozedUntil;
     private String summary;
     private String summarySource;
