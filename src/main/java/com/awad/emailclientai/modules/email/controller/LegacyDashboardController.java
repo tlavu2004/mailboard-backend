@@ -78,6 +78,8 @@ public class LegacyDashboardController {
     public ResponseEntity<ApiResponse<Map<String, Object>>> getEmailsByMailbox(
             @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable String id,
+            @RequestParam(required = false) Boolean unread,
+            @RequestParam(required = false) Boolean hasAttachments,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int perPage
     ) {
@@ -95,6 +97,8 @@ public class LegacyDashboardController {
                     }
                     return finalStatus.equalsIgnoreCase("INBOX") || finalStatus.equalsIgnoreCase(e.getStatus());
                 })
+                .filter(e -> unread == null || e.isRead() != unread) // if unread=true, show isRead=false
+                .filter(e -> hasAttachments == null || e.isHasAttachments() == hasAttachments)
                 .map(this::mapToFrontendEmail)
                 .collect(Collectors.toList());
 
@@ -105,17 +109,44 @@ public class LegacyDashboardController {
         data.put("perPage", perPage);
         data.put("hasNextPage", false);
         
-        log.info("Bridge: Returning {} emails for mailbox {}", filtered.size(), id);
+        log.info("Bridge: Returning {} emails for mailbox {} (Filters: unread={}, hasAttachments={})", 
+                filtered.size(), id, unread, hasAttachments);
         return ResponseEntity.ok(ApiResponse.success(data));
     }
 
     @GetMapping("/kanban")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getKanban(
-            @AuthenticationPrincipal UserPrincipal principal
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(required = false) Boolean unread,
+            @RequestParam(required = false) Boolean hasAttachments,
+            @RequestParam(defaultValue = "date") String sortBy,
+            @RequestParam(defaultValue = "desc") String sortOrder
     ) {
         EmailAccount account = getPrimaryAccount(principal);
         List<EmailEntity> emails = emailRepository.findAllByAccountIdOrderByKanbanOrderDescReceivedDateDesc(account.getId());
         
+        // Apply Filters
+        List<EmailEntity> filtered = emails.stream()
+                .filter(e -> unread == null || !e.isRead() == unread)
+                .filter(e -> hasAttachments == null || e.isHasAttachments() == hasAttachments)
+                .collect(Collectors.toList());
+
+        // Apply Sorting
+        if (sortBy != null) {
+            filtered.sort((a, b) -> {
+                int cmp = 0;
+                if ("date".equals(sortBy)) {
+                    if (a.getReceivedDate() == null || b.getReceivedDate() == null) cmp = 0;
+                    else cmp = a.getReceivedDate().compareTo(b.getReceivedDate());
+                } else if ("sender".equals(sortBy)) {
+                    String s1 = a.getSender() != null ? a.getSender() : "";
+                    String s2 = b.getSender() != null ? b.getSender() : "";
+                    cmp = s1.compareToIgnoreCase(s2);
+                }
+                return "desc".equalsIgnoreCase(sortOrder) ? -cmp : cmp;
+            });
+        }
+
         Map<String, List<Map<String, Object>>> columnsData = new HashMap<>();
         
         // Initialize columns
@@ -125,7 +156,7 @@ public class LegacyDashboardController {
         columnsData.put("DONE", new ArrayList<>());
         columnsData.put("SNOOZED", new ArrayList<>());
 
-        for (EmailEntity email : emails) {
+        for (EmailEntity email : filtered) {
             String status = email.getStatus() != null ? email.getStatus().toUpperCase() : "INBOX";
             if (!columnsData.containsKey(status)) {
                 columnsData.put(status, new ArrayList<>());
@@ -135,6 +166,8 @@ public class LegacyDashboardController {
 
         Map<String, Object> result = new HashMap<>();
         result.put("columns", columnsData);
+        log.info("Bridge: Returning Kanban board (Filters: unread={}, hasAttachments={}, sort={} {})", 
+                unread, hasAttachments, sortBy, sortOrder);
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
