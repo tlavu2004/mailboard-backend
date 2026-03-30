@@ -23,7 +23,8 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
 
     List<EmailEntity> findBySnoozedUntilBeforeAndStatus(OffsetDateTime now, String status);
     
-    List<EmailEntity> findAllByAccountIdOrderByKanbanOrderDescReceivedDateDesc(Long accountId);
+    @Query("SELECT e FROM EmailEntity e JOIN FETCH e.account WHERE e.account.id = :accountId ORDER BY e.kanbanOrder DESC, e.receivedDate DESC")
+    List<EmailEntity> findAllByAccountIdOrderByKanbanOrderDescReceivedDateDesc(@Param("accountId") Long accountId);
 
     @Query(value = "SELECT e.* FROM emails e WHERE e.account_id = :accountId AND " +
            "(word_similarity(:query, e.subject) > 0.1 OR word_similarity(:query, e.sender) > 0.1 OR " +

@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -261,7 +262,7 @@ public class EmailSyncService {
                         .hasAttachments(msg.isHasAttachments())
                         .status(targetStatus)
                         .account(account)
-                        .kanbanOrder((double) msg.getReceivedAt().atZone(java.time.ZoneId.systemDefault()).toEpochSecond())
+                        .kanbanOrder((double) msg.getReceivedAt().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
                         .build();
 
                 // Generate embedding for new email

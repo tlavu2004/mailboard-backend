@@ -59,7 +59,7 @@ public class GmailPubSubController {
                 // Trigger sync in a separate thread (non-blocking for Google)
                 new Thread(() -> {
                     try {
-                        emailSyncService.syncEmailsForAccount(account.getId(), "INBOX", 10, 0);
+                        emailSyncService.syncEmailsForAccount(account.getId(), "INBOX", 20, 0);
                         
                         // Notify frontend via WebSocket
                         webSocketHandler.sendNotification(account.getId(), "{\"type\": \"NEW_EMAILS\", \"message\": \"Sync completed for " + emailAddress + "\"}");

@@ -95,17 +95,42 @@ public class LegacyDashboardController {
         String status = id.toUpperCase();
         
         List<EmailEntity> emails = emailRepository.findAllByAccountIdOrderByKanbanOrderDescReceivedDateDesc(account.getId());
+        log.info("Bridge: Fetched {} emails from DB for account ID {}", emails.size(), account.getId());
+        
         String finalStatus = status;
         List<Map<String, Object>> filtered = emails.stream()
                 .filter(e -> {
+                    boolean match = false;
                     if ("STARRED".equalsIgnoreCase(finalStatus)) {
-                        return e.isStarred();
+                        match = e.isStarred();
+                    } else if ("INBOX".equalsIgnoreCase(finalStatus)) {
+                        // Show ALL emails except TRASH and SPAM — same as Kanban view
+                        String s = e.getStatus();
+                        match = s == null || (!s.equalsIgnoreCase("TRASH") && !s.equalsIgnoreCase("SPAM"));
+                    } else {
+                        match = finalStatus.equalsIgnoreCase(e.getStatus());
                     }
-                    return finalStatus.equalsIgnoreCase("INBOX") || finalStatus.equalsIgnoreCase(e.getStatus());
+                    
+                    if (!match && log.isDebugEnabled()) {
+                        log.debug("Email ID {} rejected by status filter (Status: {}, Target: {})", e.getId(), e.getStatus(), finalStatus);
+                    }
+                    return match;
                 })
-                .filter(e -> unread == null || e.isRead() != unread) // if unread=true, show isRead=false
-                .filter(e -> hasAttachments == null || e.isHasAttachments() == hasAttachments)
-                .map(this::mapToFrontendEmail)
+                .filter(e -> {
+                    boolean match = unread == null || !unread || !e.isRead();
+                    if (!match && log.isDebugEnabled()) {
+                        log.debug("Email ID {} rejected by unread filter", e.getId());
+                    }
+                    return match;
+                })
+                .filter(e -> {
+                    boolean match = hasAttachments == null || !hasAttachments || e.isHasAttachments();
+                    if (!match && log.isDebugEnabled()) {
+                        log.debug("Email ID {} rejected by attachments filter", e.getId());
+                    }
+                    return match;
+                })
+                .map(e -> this.mapToFrontendEmail(e, account))
                 .collect(Collectors.toList());
 
         Map<String, Object> data = new HashMap<>();
@@ -115,8 +140,8 @@ public class LegacyDashboardController {
         data.put("perPage", perPage);
         data.put("hasNextPage", false);
         
-        log.info("Bridge: Returning {} emails for mailbox {} (Filters: unread={}, hasAttachments={})", 
-                filtered.size(), id, unread, hasAttachments);
+        log.info("Bridge: Returning {}/{} emails for mailbox {} account {} (Filters: unread={}, hasAttachments={})", 
+                filtered.size(), emails.size(), id, account.getId(), unread, hasAttachments);
         return ResponseEntity.ok(ApiResponse.success(data));
     }
 
@@ -133,8 +158,8 @@ public class LegacyDashboardController {
         
         // Apply Filters
         List<EmailEntity> filtered = emails.stream()
-                .filter(e -> unread == null || !e.isRead() == unread)
-                .filter(e -> hasAttachments == null || e.isHasAttachments() == hasAttachments)
+                .filter(e -> unread == null || !unread || !e.isRead())
+                .filter(e -> hasAttachments == null || !hasAttachments || e.isHasAttachments())
                 .collect(Collectors.toList());
 
         // Apply Sorting
@@ -167,7 +192,7 @@ public class LegacyDashboardController {
             if (!columnsData.containsKey(status)) {
                 columnsData.put(status, new ArrayList<>());
             }
-            columnsData.get(status).add(mapToKanbanCard(email));
+            columnsData.get(status).add(mapToKanbanCard(email, account));
         }
 
         Map<String, Object> result = new HashMap<>();
@@ -329,7 +354,8 @@ public class LegacyDashboardController {
         EmailEntity email = emailRepository.findById(emailId)
                 .orElseThrow(() -> new RuntimeException("Email not found"));
         
-        return ResponseEntity.ok(ApiResponse.success(mapToFrontendEmail(email)));
+        EmailAccount account = getPrimaryAccount(principal);
+        return ResponseEntity.ok(ApiResponse.success(mapToFrontendEmail(email, account)));
     }
 
     @GetMapping("/gmail/labels")
@@ -403,18 +429,19 @@ public class LegacyDashboardController {
         return m;
     }
 
-    private Map<String, Object> mapToFrontendEmail(EmailEntity entity) {
+    private Map<String, Object> mapToFrontendEmail(EmailEntity entity, EmailAccount activeAccount) {
         try {
             Map<String, Object> m = new HashMap<>();
             m.put("id", entity.getId().toString());
             m.put("messageId", entity.getMessageId());
             m.put("threadId", entity.getThreadId() != null ? entity.getThreadId() : entity.getMessageId());
             m.put("gmailMessageId", entity.getGmailMessageId());
-            m.put("accountEmail", entity.getAccount().getEmailAddress());
+            m.put("accountEmail", activeAccount != null ? activeAccount.getEmailAddress() : entity.getAccount().getEmailAddress());
             m.put("mailboxId", entity.getStatus() != null ? entity.getStatus() : "INBOX");
             
             // Generate gmailLink
-            String encodedEmail = URLEncoder.encode(entity.getAccount().getEmailAddress(), StandardCharsets.UTF_8);
+            String emailAddr = activeAccount != null ? activeAccount.getEmailAddress() : entity.getAccount().getEmailAddress();
+            String encodedEmail = URLEncoder.encode(emailAddr, StandardCharsets.UTF_8);
             String gmailLink = entity.getGmailMessageId() != null ? 
                     String.format("https://mail.google.com/mail/u/%s/#inbox/%s", encodedEmail, entity.getGmailMessageId()) :
                     String.format("https://mail.google.com/mail/u/%s/#search/rfc822msgid:%s", 
@@ -466,13 +493,13 @@ public class LegacyDashboardController {
         }
     }
 
-    private Map<String, Object> mapToKanbanCard(EmailEntity email) {
+    private Map<String, Object> mapToKanbanCard(EmailEntity email, EmailAccount activeAccount) {
         Map<String, Object> card = new HashMap<>();
         card.put("id", email.getId().toString());
         card.put("message_id", email.getMessageId());
         card.put("gmail_message_id", email.getGmailMessageId());
         card.put("thread_id", email.getThreadId());
-        card.put("account_email", email.getAccount().getEmailAddress());
+        card.put("account_email", activeAccount != null ? activeAccount.getEmailAddress() : email.getAccount().getEmailAddress());
         card.put("sender", email.getSender());
         card.put("subject", email.getSubject());
         card.put("summary", email.getSummary());
