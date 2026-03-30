@@ -9,6 +9,8 @@ import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import com.awad.emailclientai.modules.email.service.EmailSyncService;
+import com.awad.emailclientai.modules.kanban.entity.KanbanColumn;
+import com.awad.emailclientai.modules.kanban.service.KanbanService;
 import com.awad.emailclientai.modules.user.security.UserPrincipal;
 import org.springframework.data.domain.PageRequest;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
@@ -41,6 +43,7 @@ public class LegacyDashboardController {
     private final AiService aiService;
     private final ImapService imapService;
     private final EmailSyncService emailSyncService;
+    private final KanbanService kanbanService;
 
     @GetMapping("/check")
     public ResponseEntity<String> check() {
@@ -201,25 +204,31 @@ public class LegacyDashboardController {
 
         Map<String, List<Map<String, Object>>> columnsData = new HashMap<>();
         
-        // Initialize columns
-        columnsData.put("INBOX", new ArrayList<>());
-        columnsData.put("TODO", new ArrayList<>());
-        columnsData.put("DOING", new ArrayList<>());
-        columnsData.put("DONE", new ArrayList<>());
-        columnsData.put("SNOOZED", new ArrayList<>());
+        // Fetch dynamic columns for this account
+        List<KanbanColumn> columns = kanbanService.getColumns(account.getId());
+        
+        // Initialize columns using linkedStatus
+        for (KanbanColumn col : columns) {
+            String statusKey = col.getLinkedStatus() != null ? col.getLinkedStatus().toUpperCase() : "INBOX";
+            columnsData.put(statusKey, new ArrayList<>());
+        }
 
         for (EmailEntity email : filtered) {
             String status = email.getStatus() != null ? email.getStatus().toUpperCase() : "INBOX";
-            if (!columnsData.containsKey(status)) {
-                columnsData.put(status, new ArrayList<>());
+            if (columnsData.containsKey(status)) {
+                columnsData.get(status).add(mapToKanbanCard(email, account));
+            } else {
+                // Fallback to INBOX if status doesn't match any dynamic column
+                if (columnsData.containsKey("INBOX")) {
+                    columnsData.get("INBOX").add(mapToKanbanCard(email, account));
+                }
             }
-            columnsData.get(status).add(mapToKanbanCard(email, account));
         }
 
         Map<String, Object> result = new HashMap<>();
         result.put("columns", columnsData);
-        log.info("Bridge: Returning Kanban board (Filters: unread={}, hasAttachments={}, sort={} {})", 
-                unread, hasAttachments, sortBy, sortOrder);
+        log.info("Bridge: Returning Dynamic Kanban board with {} columns (Filters: unread={}, hasAttachments={}, sort={} {})", 
+                columnsData.size(), unread, hasAttachments, sortBy, sortOrder);
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
@@ -283,15 +292,21 @@ public class LegacyDashboardController {
     public ResponseEntity<ApiResponse<Map<String, Object>>> getKanbanMeta(
             @AuthenticationPrincipal UserPrincipal principal
     ) {
-        List<Map<String, String>> columns = new ArrayList<>();
-        columns.add(createColMeta("INBOX", "Inbox", "#667eea"));
-        columns.add(createColMeta("TODO", "To Do", "#f6ad55"));
-        columns.add(createColMeta("DOING", "Doing", "#4299e1"));
-        columns.add(createColMeta("DONE", "Done", "#48bb78"));
-        columns.add(createColMeta("SNOOZED", "Snoozed", "#a0aec0"));
+        EmailAccount account = getPrimaryAccount(principal);
+        List<KanbanColumn> columns = kanbanService.getColumns(account.getId());
+        
+        List<Map<String, String>> mappedColumns = columns.stream()
+                .map(col -> {
+                    Map<String, String> m = new HashMap<>();
+                    m.put("key", col.getLinkedStatus() != null ? col.getLinkedStatus().toUpperCase() : "INBOX");
+                    m.put("label", col.getName());
+                    m.put("color", "#f1f5f9"); // Default slate-100 color
+                    return m;
+                })
+                .collect(Collectors.toList());
 
         Map<String, Object> data = new HashMap<>();
-        data.put("columns", columns);
+        data.put("columns", mappedColumns);
         return ResponseEntity.ok(ApiResponse.success(data));
     }
 
@@ -442,13 +457,6 @@ public class LegacyDashboardController {
         return m;
     }
 
-    private Map<String, String> createColMeta(String key, String label, String color) {
-        Map<String, String> m = new HashMap<>();
-        m.put("key", key);
-        m.put("label", label);
-        m.put("color", color);
-        return m;
-    }
 
     private Map<String, Object> mapToFrontendEmail(EmailEntity entity, EmailAccount activeAccount) {
         try {

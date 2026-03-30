@@ -27,14 +27,8 @@ public class KanbanController {
             @AuthenticationPrincipal UserPrincipal principal,
             @RequestParam(value = "accountId", required = false) Long accountId
     ) {
-        if (accountId == null) {
-            accountId = emailAccountRepository.findByUserIdAndActiveTrue(principal.getId())
-                    .stream().findFirst()
-                    .orElseThrow(() -> new RuntimeException("No active email account found"))
-                    .getId();
-        }
-        
-        List<KanbanColumn> columns = kanbanService.getColumns(accountId);
+        Long finalAccountId = resolveAccountId(principal, accountId);
+        List<KanbanColumn> columns = kanbanService.getColumns(finalAccountId);
         
         // Map to frontend format
         List<Map<String, Object>> mappedColumns = columns.stream()
@@ -45,7 +39,7 @@ public class KanbanController {
                     map.put("label", col.getName());
                     map.put("order", col.getPosition());
                     map.put("gmailLabel", col.getGmailLabelId());
-                    map.put("color", "#667eea"); // Default color
+                    map.put("color", "#f1f5f9"); // Default slate-100 color
                     map.put("isDefault", col.getLinkedStatus() != null); 
                     return map;
                 })
@@ -58,14 +52,30 @@ public class KanbanController {
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse<Map<String, Object>>> createColumn(@RequestBody CreateColumnRequest request) {
-        KanbanColumn col = kanbanService.createColumn(request.getAccountId(), request.getName(), request.getGmailLabelId());
+    public ResponseEntity<ApiResponse<Map<String, Object>>> createColumn(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestBody CreateColumnRequest request
+    ) {
+        Long accountId = resolveAccountId(principal, request.getAccountId());
+        // Handle alias from frontend (label -> name)
+        String name = request.getLabel() != null ? request.getLabel() : request.getName();
+        String gmailLabelId = request.getGmailLabel() != null ? request.getGmailLabel() : request.getGmailLabelId();
+        
+        KanbanColumn col = kanbanService.createColumn(accountId, name, gmailLabelId);
         return ResponseEntity.ok(ApiResponse.success(Map.of("column", col)));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> updateColumn(@PathVariable Long id, @RequestBody UpdateColumnRequest request) {
-        KanbanColumn col = kanbanService.updateColumn(id, request.getName(), request.getPosition(), request.getGmailLabelId());
+    public ResponseEntity<ApiResponse<Map<String, Object>>> updateColumn(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long id, 
+            @RequestBody UpdateColumnRequest request
+    ) {
+        // Handle alias from frontend (label -> name)
+        String name = request.getLabel() != null ? request.getLabel() : request.getName();
+        String gmailLabelId = request.getGmailLabel() != null ? request.getGmailLabel() : request.getGmailLabelId();
+        
+        KanbanColumn col = kanbanService.updateColumn(id, name, request.getPosition(), gmailLabelId);
         return ResponseEntity.ok(ApiResponse.success(Map.of("column", col)));
     }
 
@@ -76,29 +86,59 @@ public class KanbanController {
     }
 
     @PostMapping("/swap")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> swapColumns(@RequestBody SwapRequest request) {
-        List<KanbanColumn> columns = kanbanService.swapColumns(request.getAccountId(), request.getColumnId1(), request.getColumnId2());
+    public ResponseEntity<ApiResponse<Map<String, Object>>> swapColumns(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestBody SwapRequest request
+    ) {
+        Long accountId = resolveAccountId(principal, request.getAccountId());
+        List<KanbanColumn> columns = kanbanService.swapColumns(accountId, request.getColumnId1(), request.getColumnId2());
         return ResponseEntity.ok(ApiResponse.success(Map.of("columns", columns)));
     }
 
     @PostMapping("/reorder")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> reorderColumns(@RequestBody Map<String, Object> request) {
-        // Just a bridge for now, reorder logic can be complex, but for consistency:
-        return ResponseEntity.ok(ApiResponse.success("Reorder received"));
+    public ResponseEntity<ApiResponse<Map<String, Object>>> reorderColumns(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestBody ReorderRequest request
+    ) {
+        Long accountId = resolveAccountId(principal, request.getAccountId());
+        List<Long> ids = request.getColumnIds();
+        if (ids == null || ids.isEmpty()) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("List of IDs is required"));
+        }
+        List<KanbanColumn> columns = kanbanService.reorderColumns(accountId, ids);
+        return ResponseEntity.ok(ApiResponse.success(Map.of("columns", columns)));
+    }
+
+    private Long resolveAccountId(UserPrincipal principal, Long requestedAccountId) {
+        if (requestedAccountId != null) return requestedAccountId;
+        return emailAccountRepository.findByUserIdAndActiveTrue(principal.getId())
+                .stream().findFirst()
+                .orElseThrow(() -> new RuntimeException("No active email account found"))
+                .getId();
     }
 
     @Data
     public static class CreateColumnRequest {
         private Long accountId;
         private String name;
+        private String label; // Alias from frontend
         private String gmailLabelId;
+        private String gmailLabel; // Alias from frontend
     }
 
     @Data
     public static class UpdateColumnRequest {
         private String name;
+        private String label; // Alias from frontend
         private Integer position;
         private String gmailLabelId;
+        private String gmailLabel; // Alias from frontend
+    }
+
+    @Data
+    public static class ReorderRequest {
+        private Long accountId;
+        private List<Long> columnIds;
     }
     
     @Data

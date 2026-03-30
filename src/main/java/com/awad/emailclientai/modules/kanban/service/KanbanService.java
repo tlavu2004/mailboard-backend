@@ -172,6 +172,24 @@ public class KanbanService {
 
         kanbanColumnRepository.save(col1);
         kanbanColumnRepository.save(col2);
+        return kanbanColumnRepository.findAllByAccountIdOrderByPositionAsc(accountId);
+    }
+
+    @Transactional
+    public List<KanbanColumn> reorderColumns(Long accountId, List<Long> columnIds) {
+        List<KanbanColumn> columns = kanbanColumnRepository.findAllByAccountIdOrderByPositionAsc(accountId);
+        
+        Map<Long, KanbanColumn> columnMap = columns.stream()
+                .collect(Collectors.toMap(KanbanColumn::getId, c -> c));
+
+        for (int i = 0; i < columnIds.size(); i++) {
+            Long id = columnIds.get(i);
+            KanbanColumn col = columnMap.get(id);
+            if (col != null) {
+                col.setPosition(i);
+                kanbanColumnRepository.save(col);
+            }
+        }
 
         return kanbanColumnRepository.findAllByAccountIdOrderByPositionAsc(accountId);
     }
