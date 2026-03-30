@@ -87,7 +87,9 @@ public class LegacyDashboardController {
             @RequestParam(required = false) Boolean unread,
             @RequestParam(required = false) Boolean hasAttachments,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int perPage
+            @RequestParam(defaultValue = "20") int perPage,
+            @RequestParam(defaultValue = "date") String sortBy,
+            @RequestParam(defaultValue = "desc") String sortOrder
     ) {
         EmailAccount account = getPrimaryAccount(principal);
         
@@ -98,7 +100,7 @@ public class LegacyDashboardController {
         log.info("Bridge: Fetched {} emails from DB for account ID {}", emails.size(), account.getId());
         
         String finalStatus = status;
-        List<Map<String, Object>> filtered = emails.stream()
+        List<EmailEntity> filteredStream = emails.stream()
                 .filter(e -> {
                     boolean match = false;
                     if ("STARRED".equalsIgnoreCase(finalStatus)) {
@@ -130,18 +132,37 @@ public class LegacyDashboardController {
                     }
                     return match;
                 })
+                .collect(Collectors.toList());
+
+        // Apply Sorting
+        if (sortBy != null) {
+            filteredStream.sort((a, b) -> {
+                int cmp = 0;
+                if ("date".equals(sortBy)) {
+                    if (a.getReceivedDate() == null || b.getReceivedDate() == null) cmp = 0;
+                    else cmp = a.getReceivedDate().compareTo(b.getReceivedDate());
+                } else if ("sender".equals(sortBy)) {
+                    String s1 = a.getSender() != null ? a.getSender() : "";
+                    String s2 = b.getSender() != null ? b.getSender() : "";
+                    cmp = s1.compareToIgnoreCase(s2);
+                }
+                return "desc".equalsIgnoreCase(sortOrder) ? -cmp : cmp;
+            });
+        }
+
+        List<Map<String, Object>> mapped = filteredStream.stream()
                 .map(e -> this.mapToFrontendEmail(e, account))
                 .collect(Collectors.toList());
 
         Map<String, Object> data = new HashMap<>();
-        data.put("emails", filtered);
-        data.put("total", filtered.size());
+        data.put("emails", mapped);
+        data.put("total", mapped.size());
         data.put("page", page);
         data.put("perPage", perPage);
         data.put("hasNextPage", false);
         
-        log.info("Bridge: Returning {}/{} emails for mailbox {} account {} (Filters: unread={}, hasAttachments={})", 
-                filtered.size(), emails.size(), id, account.getId(), unread, hasAttachments);
+        log.info("Bridge: Returning {}/{} emails for mailbox {} account {} (Filters: unread={}, hasAttachments={}, sort={} {})", 
+                mapped.size(), emails.size(), id, account.getId(), unread, hasAttachments, sortBy, sortOrder);
         return ResponseEntity.ok(ApiResponse.success(data));
     }
 
