@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @RestController
@@ -22,6 +23,11 @@ public class KanbanController {
     private final KanbanService kanbanService;
     private final EmailAccountRepository emailAccountRepository;
 
+    // Must match service's DEFAULT_STATUSES
+    private static final Set<String> SYSTEM_DEFAULT_STATUSES = Set.of(
+        "INBOX", "TODO", "IN_PROGRESS", "DONE", "SNOOZED"
+    );
+
     @GetMapping
     public ResponseEntity<ApiResponse<Map<String, Object>>> getColumns(
             @AuthenticationPrincipal UserPrincipal principal,
@@ -29,26 +35,7 @@ public class KanbanController {
     ) {
         Long finalAccountId = resolveAccountId(principal, accountId);
         List<KanbanColumn> columns = kanbanService.getColumns(finalAccountId);
-        
-        // Map to frontend format
-        List<Map<String, Object>> mappedColumns = columns.stream()
-                .map(col -> {
-                    Map<String, Object> map = new HashMap<>();
-                    map.put("id", col.getId().toString());
-                    map.put("key", col.getLinkedStatus());
-                    map.put("label", col.getName());
-                    map.put("order", col.getPosition());
-                    map.put("gmailLabel", col.getGmailLabelId());
-                    map.put("color", "#f1f5f9"); // Default slate-100 color
-                    map.put("isDefault", col.getLinkedStatus() != null); 
-                    return map;
-                })
-                .collect(Collectors.toList());
-
-        Map<String, Object> data = new HashMap<>();
-        data.put("columns", mappedColumns);
-        
-        return ResponseEntity.ok(ApiResponse.success(data));
+        return ResponseEntity.ok(ApiResponse.success(Map.of("columns", mapToDtoList(columns))));
     }
 
     @PostMapping
@@ -57,12 +44,13 @@ public class KanbanController {
             @RequestBody CreateColumnRequest request
     ) {
         Long accountId = resolveAccountId(principal, request.getAccountId());
-        // Handle alias from frontend (label -> name)
         String name = request.getLabel() != null ? request.getLabel() : request.getName();
         String gmailLabelId = request.getGmailLabel() != null ? request.getGmailLabel() : request.getGmailLabelId();
         
-        KanbanColumn col = kanbanService.createColumn(accountId, name, gmailLabelId);
-        return ResponseEntity.ok(ApiResponse.success(Map.of("column", col)));
+        // Return updated list after creation to ensure sync
+        kanbanService.createColumn(accountId, name, gmailLabelId, request.getColor());
+        List<KanbanColumn> updated = kanbanService.getColumns(accountId);
+        return ResponseEntity.ok(ApiResponse.success(Map.of("columns", mapToDtoList(updated))));
     }
 
     @PutMapping("/{id}")
@@ -71,18 +59,26 @@ public class KanbanController {
             @PathVariable Long id, 
             @RequestBody UpdateColumnRequest request
     ) {
-        // Handle alias from frontend (label -> name)
         String name = request.getLabel() != null ? request.getLabel() : request.getName();
         String gmailLabelId = request.getGmailLabel() != null ? request.getGmailLabel() : request.getGmailLabelId();
         
-        KanbanColumn col = kanbanService.updateColumn(id, name, request.getPosition(), gmailLabelId);
-        return ResponseEntity.ok(ApiResponse.success(Map.of("column", col)));
+        KanbanColumn col = kanbanService.updateColumn(id, name, request.getPosition(), gmailLabelId, request.getColor());
+        // For update, we can return the updated list or just the column.
+        // Returning the list is safer for sorting synchronization.
+        Long accountId = col.getAccount().getId();
+        List<KanbanColumn> updated = kanbanService.getColumns(accountId);
+        return ResponseEntity.ok(ApiResponse.success(Map.of("columns", mapToDtoList(updated))));
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<ApiResponse<Void>> deleteColumn(@PathVariable Long id) {
-        kanbanService.deleteColumn(id);
-        return ResponseEntity.ok(ApiResponse.success("Column deleted"));
+    public ResponseEntity<ApiResponse<Map<String, Object>>> deleteColumn(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long id,
+            @RequestParam(value = "accountId", required = false) Long accountId
+    ) {
+        Long finalAccountId = resolveAccountId(principal, accountId);
+        List<KanbanColumn> updated = kanbanService.deleteColumn(id, finalAccountId);
+        return ResponseEntity.ok(ApiResponse.success(Map.of("columns", mapToDtoList(updated))));
     }
 
     @PostMapping("/swap")
@@ -92,7 +88,7 @@ public class KanbanController {
     ) {
         Long accountId = resolveAccountId(principal, request.getAccountId());
         List<KanbanColumn> columns = kanbanService.swapColumns(accountId, request.getColumnId1(), request.getColumnId2());
-        return ResponseEntity.ok(ApiResponse.success(Map.of("columns", columns)));
+        return ResponseEntity.ok(ApiResponse.success(Map.of("columns", mapToDtoList(columns))));
     }
 
     @PostMapping("/reorder")
@@ -106,7 +102,25 @@ public class KanbanController {
             return ResponseEntity.badRequest().body(ApiResponse.error("List of IDs is required"));
         }
         List<KanbanColumn> columns = kanbanService.reorderColumns(accountId, ids);
-        return ResponseEntity.ok(ApiResponse.success(Map.of("columns", columns)));
+        return ResponseEntity.ok(ApiResponse.success(Map.of("columns", mapToDtoList(columns))));
+    }
+
+    private List<Map<String, Object>> mapToDtoList(List<KanbanColumn> columns) {
+        return columns.stream()
+                .map(col -> {
+                    Map<String, Object> map = new HashMap<>();
+                    map.put("id", col.getId().toString());
+                    // Key fallback: if linkedStatus is null (new user-created columns), use ID as key
+                    map.put("key", col.getLinkedStatus() != null ? col.getLinkedStatus() : col.getId().toString());
+                    map.put("label", col.getName());
+                    map.put("order", col.getPosition());
+                    map.put("gmailLabel", col.getGmailLabelId());
+                    map.put("color", col.getColor() != null ? col.getColor() : "#f1f5f9"); 
+                    // isDefault only for true system statuses
+                    map.put("isDefault", col.getLinkedStatus() != null && SYSTEM_DEFAULT_STATUSES.contains(col.getLinkedStatus())); 
+                    return map;
+                })
+                .collect(Collectors.toList());
     }
 
     private Long resolveAccountId(UserPrincipal principal, Long requestedAccountId) {
@@ -123,16 +137,18 @@ public class KanbanController {
         private String name;
         private String label; // Alias from frontend
         private String gmailLabelId;
-        private String gmailLabel; // Alias from frontend
+        private String gmailLabel; 
+        private String color;
     }
 
     @Data
     public static class UpdateColumnRequest {
         private String name;
-        private String label; // Alias from frontend
+        private String label; 
         private Integer position;
         private String gmailLabelId;
-        private String gmailLabel; // Alias from frontend
+        private String gmailLabel; 
+        private String color;
     }
 
     @Data

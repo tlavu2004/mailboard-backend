@@ -378,6 +378,6 @@ public class EmailSyncService {
 
         // Create new column
         log.info("Creating new Kanban column for label: '{}'", labelName);
-        return kanbanService.createColumn(accountId, labelName, labelName);
+        return kanbanService.createColumn(accountId, labelName, labelName, "#f1f5f9");
     }
 }
