@@ -9,6 +9,7 @@ import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import com.awad.emailclientai.modules.email.service.EmailSyncService;
+import com.awad.emailclientai.modules.email.service.GmailLabelService;
 import com.awad.emailclientai.modules.kanban.entity.KanbanColumn;
 import com.awad.emailclientai.modules.kanban.service.KanbanService;
 import com.awad.emailclientai.modules.user.security.UserPrincipal;
@@ -44,6 +45,7 @@ public class LegacyDashboardController {
     private final ImapService imapService;
     private final EmailSyncService emailSyncService;
     private final KanbanService kanbanService;
+    private final GmailLabelService gmailLabelService;
 
     @GetMapping("/check")
     public ResponseEntity<String> check() {
@@ -398,13 +400,29 @@ public class LegacyDashboardController {
     public ResponseEntity<ApiResponse<Map<String, Object>>> getGmailLabels(
             @AuthenticationPrincipal UserPrincipal principal
     ) {
-        List<Map<String, String>> labels = new ArrayList<>();
-        labels.add(Map.of("id", "INBOX", "name", "Inbox", "type", "system"));
-        labels.add(Map.of("id", "SENT", "name", "Sent", "type", "system"));
-        labels.add(Map.of("id", "DRAFTS", "name", "Drafts", "type", "system"));
+        EmailAccount account = getPrimaryAccount(principal);
+        List<Map<String, String>> labels = gmailLabelService.getLabels(account);
         
         Map<String, Object> data = new HashMap<>();
         data.put("labels", labels);
+        return ResponseEntity.ok(ApiResponse.success(data));
+    }
+
+    @PostMapping("/gmail/labels")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> createGmailLabel(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestBody Map<String, String> request
+    ) {
+        String labelName = request.get("name");
+        if (labelName == null || labelName.isBlank()) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("Label name is required"));
+        }
+
+        EmailAccount account = getPrimaryAccount(principal);
+        Map<String, String> created = gmailLabelService.createLabel(account, labelName);
+        
+        Map<String, Object> data = new HashMap<>();
+        data.put("label", created);
         return ResponseEntity.ok(ApiResponse.success(data));
     }
 
