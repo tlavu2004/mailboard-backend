@@ -38,6 +38,9 @@ public class KanbanColumn {
     @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private EmailAccount account;
 
+    @Column(name = "color")
+    private String color;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;

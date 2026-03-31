@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 @Entity
 @Table(name = "emails")
@@ -21,6 +22,9 @@ public class EmailEntity {
 
     @Column(unique = true, nullable = false)
     private String messageId; // Unique Message-ID header
+
+    private String threadId; // Gmail Thread ID (hex)
+    private String gmailMessageId; // Gmail Message ID (hex)
 
     private Long uid; // IMAP UID
 
@@ -39,16 +43,24 @@ public class EmailEntity {
 
     private LocalDateTime receivedDate;
 
-    private LocalDateTime snoozedUntil;
+    private OffsetDateTime snoozedUntil;
 
     @Column(columnDefinition = "TEXT")
     private String summary;
+
+    @Enumerated(EnumType.STRING)
+    private SummarySource summarySource;
 
     @Builder.Default
     private boolean isRead = false;
 
     @Builder.Default
+    private boolean isStarred = false;
+
+    @Builder.Default
     private boolean hasAttachments = false;
+
+    private Double kanbanOrder;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "account_id")

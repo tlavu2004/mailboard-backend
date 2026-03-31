@@ -17,7 +17,7 @@ public class EmailStatsService {
         LocalDateTime since = calculateSinceDate(period);
 
         return StatisticsResponseDto.builder()
-                .statusStats(emailRepository.countByStatusForAccount(accountId))
+                .statusStats(emailRepository.countByStatusForAccount(accountId, since))
                 .emailTrend(emailRepository.getEmailTrend(accountId, since).stream()
                         .map(row -> new EmailTrendPointDto((String) row[0], ((Number) row[1]).longValue()))
                         .toList())
@@ -27,9 +27,9 @@ public class EmailStatsService {
                 .dailyActivity(emailRepository.getDailyActivity(accountId, since).stream()
                         .map(row -> new DailyActivityDto(((Number) row[0]).intValue(), ((Number) row[1]).intValue(), ((Number) row[2]).longValue()))
                         .toList())
-                .totalEmails(emailRepository.countByAccountId(accountId))
-                .unreadCount(emailRepository.countUnreadByAccountId(accountId))
-                .starredCount(emailRepository.countStarredByAccountId(accountId))
+                .totalEmails(emailRepository.countByAccountId(accountId, since))
+                .unreadCount(emailRepository.countUnreadByAccountId(accountId, since))
+                .starredCount(emailRepository.countStarredByAccountId(accountId, since))
                 .period(period)
                 .build();
     }

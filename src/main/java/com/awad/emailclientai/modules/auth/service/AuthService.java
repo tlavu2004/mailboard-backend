@@ -5,6 +5,7 @@ import com.awad.emailclientai.modules.auth.dto.request.LoginRequest;
 import com.awad.emailclientai.modules.auth.dto.request.RefreshTokenRequest;
 import com.awad.emailclientai.modules.auth.dto.request.RegisterRequest;
 import com.awad.emailclientai.modules.auth.dto.response.AuthResponse;
+import com.awad.emailclientai.modules.auth.dto.response.UserResponse;
 import com.awad.emailclientai.modules.email.dto.request.ConnectEmailAccountRequestDto;
 import com.awad.emailclientai.modules.email.entity.EmailAuthType;
 import com.awad.emailclientai.modules.email.entity.EmailProvider;
@@ -71,24 +72,37 @@ public class AuthService {
 
     @Transactional
     public AuthResponse googleLogin(GoogleLoginRequest request) {
-        log.debug("Google login attempt");
+        log.debug("Google login attempt. Code present: {}, IdToken present: {}",
+                request.getCode() != null, request.getIdToken() != null);
 
-        User user = googleAuthService.authenticateGoogleUser(request.getIdToken());
-        log.info("Google user logged in successfully: {}. AccessToken present: {}, RefreshToken present: {}", 
-                user.getEmail(), request.getAccessToken() != null, request.getRefreshToken() != null);
+        User user;
+        String accessToken = request.getAccessToken();
+        String refreshToken = request.getRefreshToken();
+
+        if (request.getCode() != null && !request.getCode().isBlank()) {
+            GoogleAuthService.GoogleTokenData tokenData = googleAuthService.authenticateUserInfoWithCode(request.getCode());
+            user = tokenData.user();
+            accessToken = tokenData.accessToken();
+            refreshToken = tokenData.refreshToken();
+        } else {
+            user = googleAuthService.authenticateGoogleUser(request.getIdToken());
+        }
+
+        log.info("Google user logged in successfully: {}. AccessToken present: {}, RefreshToken present: {}",
+                user.getEmail(), accessToken != null, refreshToken != null);
 
         // Automatic account linking if tokens are provided
-        if (request.getAccessToken() != null && !request.getAccessToken().isBlank()) {
+        if (accessToken != null && !accessToken.isBlank()) {
             log.info("Auto-linking email account for: {}", user.getEmail());
             ConnectEmailAccountRequestDto connectRequest = ConnectEmailAccountRequestDto.builder()
                     .emailAddress(user.getEmail())
                     .displayName(user.getName())
                     .provider(EmailProvider.GMAIL)
                     .authType(EmailAuthType.OAUTH2)
-                    .password(request.getAccessToken())
-                    .refreshToken(request.getRefreshToken())
+                    .password(accessToken)
+                    .refreshToken(refreshToken)
                     .build();
-                    
+
             emailAccountLinkHandler.linkAccount(user.getId(), connectRequest);
         }
 
@@ -100,7 +114,7 @@ public class AuthService {
         log.debug("Refresh token request");
 
         User user = refreshTokenService.rotateRefreshToken(request.getRefreshToken());
-        log.info("Access token refreshed for user: {}", user.getEmail());
+        log.info("Access token refreshed for user: {}", user != null ? user.getEmail() : "unknown");
 
         return generateAuthResponse(user);
     }
@@ -108,11 +122,15 @@ public class AuthService {
     @Transactional
     public void logout(String refreshToken) {
         log.debug("Logout request");
-        // Verify token exists before deleting to avoid idempotent 200 OK on duplicate logout
         refreshTokenService.findByToken(refreshToken);
-        
         refreshTokenService.deleteByToken(refreshToken);
         log.info("User logged out successfully");
+    }
+
+    public UserResponse getCurrentUser(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found: " + email));
+        return UserResponse.from(user);
     }
 
     private AuthResponse generateAuthResponse(User user) {
@@ -127,6 +145,7 @@ public class AuthService {
                 .refreshToken(refreshToken)
                 .tokenType("Bearer")
                 .expiresIn(jwtProperties.getAccessTokenExpiration() / 1000)
+                .user(UserResponse.from(user))
                 .build();
     }
 }

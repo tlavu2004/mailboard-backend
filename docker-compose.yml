@@ -8,12 +8,17 @@ services:
       SPRING_DATASOURCE_URL: ${DB_URL}
       SPRING_DATASOURCE_USERNAME: ${DB_USERNAME}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      CORS_ALLOWED_ORIGIN_1: ${CORS_ALLOWED_ORIGIN_1}
+      CORS_ALLOWED_ORIGIN_2: ${CORS_ALLOWED_ORIGIN_2}
+      CORS_ALLOWED_ORIGIN_3: ${CORS_ALLOWED_ORIGIN_3}
     # volumes:
     #   - ./logs:/app/logs
     env_file:
       - .env
     depends_on:
       - postgresql
+    networks:
+      - mailboard-network
 
   ngrok:
     image: ngrok/ngrok:latest
@@ -27,18 +32,27 @@ services:
       - app
     env_file:
       - .env
+    networks:
+      - mailboard-network
 
   postgresql:
-      image: pgvector/pgvector:pg17
-      container_name: mailboard-db
-      environment:
-        POSTGRES_USER: ${DB_USERNAME:-postgres}
-        POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-        POSTGRES_DB: mailboard
-      ports:
-        - "5432:5432"
-      volumes:
-        - postgres_data:/var/lib/postgresql/data
+    image: pgvector/pgvector:pg17
+    container_name: mailboard-db
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: mailboard
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - mailboard-network
 
 volumes:
   postgres_data:
+
+networks:
+  mailboard-network:
+    driver: bridge
+    name: mailboard-unified-network

@@ -11,5 +11,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class SuggestionDto {
     private String text;
+    private String type; // 'sender' | 'subject' | 'keyword'
     private double relevanceScore;
 }

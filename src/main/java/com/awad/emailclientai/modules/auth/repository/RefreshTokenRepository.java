@@ -14,10 +14,13 @@ import jakarta.persistence.LockModeType;
 @Repository
 public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long> {
 
+    @Query("SELECT rt FROM RefreshToken rt JOIN FETCH rt.user WHERE rt.token = :token")
+    Optional<RefreshToken> findByTokenWithUser(String token);
+
     Optional<RefreshToken> findByToken(String token);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT rt FROM RefreshToken rt WHERE rt.token = :token")
+    @Query("SELECT rt FROM RefreshToken rt JOIN FETCH rt.user WHERE rt.token = :token")
     Optional<RefreshToken> findByTokenWithLock(String token);
 
     @Modifying

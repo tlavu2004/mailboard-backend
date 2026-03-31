@@ -5,16 +5,19 @@ import com.awad.emailclientai.modules.auth.dto.request.LoginRequest;
 import com.awad.emailclientai.modules.auth.dto.request.RefreshTokenRequest;
 import com.awad.emailclientai.modules.auth.dto.request.RegisterRequest;
 import com.awad.emailclientai.modules.auth.dto.response.AuthResponse;
+import com.awad.emailclientai.modules.auth.dto.response.UserResponse;
 import com.awad.emailclientai.modules.auth.service.AuthService;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/v1/auth")
+@RequestMapping({"/api/v1/auth", "/api/auth"})
 @RequiredArgsConstructor
 @Slf4j
 public class AuthController {
@@ -25,6 +28,18 @@ public class AuthController {
     public ResponseEntity<String> ping() {
         log.info("Ping request received");
         return ResponseEntity.ok("pong");
+    }
+
+    @GetMapping("/me")
+    public ResponseEntity<ApiResponse<UserResponse>> getCurrentUser(
+            @AuthenticationPrincipal UserDetails userDetails) {
+        if (userDetails == null) {
+            log.warn("GET /me called without authentication");
+            return ResponseEntity.status(401).build();
+        }
+        log.debug("GET /me for user: {}", userDetails.getUsername());
+        UserResponse user = authService.getCurrentUser(userDetails.getUsername());
+        return ResponseEntity.ok(ApiResponse.success(user));
     }
 
     @PostMapping("/register")

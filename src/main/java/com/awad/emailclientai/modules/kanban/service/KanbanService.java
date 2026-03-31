@@ -23,10 +23,10 @@ public class KanbanService {
     // Default columns that must always exist for every account
     private static final List<String[]> DEFAULT_COLUMNS = List.of(
         new String[]{"Inbox", "INBOX"},
-        new String[]{"To Do", "TODO"},
-        new String[]{"In Progress", "IN_PROGRESS"},
-        new String[]{"Done", "DONE"},
-        new String[]{"Snoozed", "SNOOZED"}
+        new String[]{"To Do", "TODO", "#f1f5f9"},
+        new String[]{"In Progress", "IN_PROGRESS", "#f1f5f9"},
+        new String[]{"Done", "DONE", "#f1f5f9"},
+        new String[]{"Snoozed", "SNOOZED", "#f1f5f9"}
     );
 
     // Set of default statuses that cannot be modified or deleted
@@ -76,6 +76,7 @@ public class KanbanService {
                     .linkedStatus(def[1])
                     .gmailLabelId(def[1].equals("INBOX") ? "INBOX" : null)
                     .position(maxPos)
+                    .color(def.length > 2 ? def[2] : "#f1f5f9")
                     .account(account)
                     .build());
         }
@@ -87,7 +88,7 @@ public class KanbanService {
     }
 
     @Transactional
-    public KanbanColumn createColumn(Long accountId, String name, String gmailLabelId) {
+    public KanbanColumn createColumn(Long accountId, String name, String gmailLabelId, String color) {
         // ... existing logic ...
         EmailAccount account = emailAccountRepository.findById(accountId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_ACCOUNT_NOT_FOUND));
@@ -101,17 +102,17 @@ public class KanbanService {
 
         KanbanColumn column = KanbanColumn.builder()
                 .name(name)
-                .linkedStatus(name.toUpperCase().replace(" ", "_")) // Default linked status for now
                 .gmailLabelId(gmailLabelId)
                 .account(account)
                 .position(maxPos + 1)
+                .color(color != null ? color : "#f1f5f9")
                 .build();
         
         return kanbanColumnRepository.save(column);
     }
 
     @Transactional
-    public KanbanColumn updateColumn(Long id, String name, Integer position, String gmailLabelId) {
+    public KanbanColumn updateColumn(Long id, String name, Integer position, String gmailLabelId, String color) {
         KanbanColumn column = kanbanColumnRepository.findById(id)
                 .orElseThrow(() -> new BusinessException(ErrorCode.KANBAN_COLUMN_NOT_FOUND));
 
@@ -131,12 +132,16 @@ public class KanbanService {
         if (gmailLabelId != null) {
             column.setGmailLabelId(gmailLabelId);
         }
+
+        if (color != null) {
+            column.setColor(color);
+        }
         
         return kanbanColumnRepository.save(column);
     }
 
     @Transactional
-    public void deleteColumn(Long id) {
+    public List<KanbanColumn> deleteColumn(Long id, Long accountId) {
         KanbanColumn column = kanbanColumnRepository.findById(id)
                 .orElseThrow(() -> new BusinessException(ErrorCode.KANBAN_COLUMN_NOT_FOUND));
 
@@ -145,6 +150,7 @@ public class KanbanService {
             throw new BusinessException(ErrorCode.KANBAN_CANNOT_DELETE_DEFAULT, "Cannot delete default column: " + column.getName());
         }
         kanbanColumnRepository.deleteById(id);
+        return kanbanColumnRepository.findAllByAccountIdOrderByPositionAsc(accountId);
     }
 
     @Transactional
@@ -172,6 +178,24 @@ public class KanbanService {
 
         kanbanColumnRepository.save(col1);
         kanbanColumnRepository.save(col2);
+        return kanbanColumnRepository.findAllByAccountIdOrderByPositionAsc(accountId);
+    }
+
+    @Transactional
+    public List<KanbanColumn> reorderColumns(Long accountId, List<Long> columnIds) {
+        List<KanbanColumn> columns = kanbanColumnRepository.findAllByAccountIdOrderByPositionAsc(accountId);
+        
+        Map<Long, KanbanColumn> columnMap = columns.stream()
+                .collect(Collectors.toMap(KanbanColumn::getId, c -> c));
+
+        for (int i = 0; i < columnIds.size(); i++) {
+            Long id = columnIds.get(i);
+            KanbanColumn col = columnMap.get(id);
+            if (col != null) {
+                col.setPosition(i);
+                kanbanColumnRepository.save(col);
+            }
+        }
 
         return kanbanColumnRepository.findAllByAccountIdOrderByPositionAsc(accountId);
     }

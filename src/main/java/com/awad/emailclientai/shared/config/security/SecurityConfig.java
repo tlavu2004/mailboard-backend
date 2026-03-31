@@ -53,8 +53,16 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Public endpoints (authentication)
                         .requestMatchers(
-                                "/api/v1/auth/**",
+                                "/api/v1/auth/register",
+                                "/api/v1/auth/login",
+                                "/api/v1/auth/google",
+                                "/api/v1/auth/refresh",
+                                "/api/auth/register",
+                                "/api/auth/login",
+                                "/api/auth/google",
+                                "/api/auth/refresh",
                                 "/api/v1/public/**",
+                                "/api/public/**",
                                 "/ws/**",
                                 "/error",
                                 "/health",
@@ -62,6 +70,12 @@ public class SecurityConfig {
                                 "/swagger-ui/**",
                                 "/swagger-ui.html"
                         ).permitAll()
+
+                        // Bridge endpoints for legacy frontend (drifted paths)
+                        .requestMatchers(
+                                "/api/v1/mailboxes",
+                                "/api/v1/search/generate-embeddings"
+                        ).authenticated()
 
                         // All other endpoints require authentication
                         .anyRequest().authenticated()

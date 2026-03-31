@@ -42,7 +42,7 @@ public class ImapService {
         try (Store store = connectToStore(account)) {
             return store.isConnected();
         } catch (Exception e) {
-            log.error("IMAP connection test failed for {}: {}", account.getEmailAddress(), e.getMessage());
+            log.error("IMAP connection test failed for {}: {}", account.getEmailAddress(), e.getMessage(), e);
             return false;
         }
     }
@@ -130,7 +130,9 @@ public class ImapService {
             // Add Gmail labels to FetchProfile using the gimap provider's FetchProfileItem
             try {
                 fetchProfile.add(org.eclipse.angus.mail.gimap.GmailFolder.FetchProfileItem.LABELS);
-                log.info("Added Gmail LABELS FetchProfileItem to profile.");
+                fetchProfile.add(org.eclipse.angus.mail.gimap.GmailFolder.FetchProfileItem.MSGID);
+                fetchProfile.add(org.eclipse.angus.mail.gimap.GmailFolder.FetchProfileItem.THRID);
+                log.info("Added Gmail LABELS, MSGID, and THRID FetchProfileItem to profile.");
             } catch (Exception e) {
                 log.warn("Failed to add Gmail labels FetchProfile item: {}", e.getMessage());
                 fetchProfile.add("X-GM-LABELS");
@@ -285,7 +287,7 @@ public class ImapService {
     }
 
     /**
-     * Deletes a message (moves to Trash or marks as deleted).
+     * Deletes a message (marks as deleted).
      */
     public void deleteMessage(EmailAccount account, String folderName, 
                                long uid) throws MessagingException {
@@ -301,6 +303,51 @@ public class ImapService {
             }
             
             folder.close(true); // expunge on close
+        }
+    }
+
+    /**
+     * Moves a message to the Trash folder.
+     */
+    public void trashMessage(EmailAccount account, String folderName, long uid) throws MessagingException {
+        try (Store store = connectToStore(account)) {
+            Folder sourceFolder = store.getFolder(folderName);
+            sourceFolder.open(Folder.READ_WRITE);
+            
+            UIDFolder uidFolder = (UIDFolder) sourceFolder;
+            Message message = uidFolder.getMessageByUID(uid);
+            
+            if (message == null) {
+                sourceFolder.close(false);
+                return;
+            }
+
+            // Find trash folder by common names
+            String[] trashNames = {"[Gmail]/Trash", "[Gmail]/Thùng rác", "Trash", "Deleted Items", "Deleted"};
+            Folder trashFolder = null;
+            for (String name : trashNames) {
+                try {
+                    Folder f = store.getFolder(name);
+                    if (f.exists()) {
+                        trashFolder = f;
+                        break;
+                    }
+                } catch (Exception e) {
+                    // skip
+                }
+            }
+
+            if (trashFolder != null) {
+                sourceFolder.copyMessages(new Message[]{message}, trashFolder);
+                message.setFlag(Flags.Flag.DELETED, true);
+                log.info("Moved message UID {} to trash folder: {}", uid, trashFolder.getFullName());
+            } else {
+                // Fallback to just marking deleted
+                message.setFlag(Flags.Flag.DELETED, true);
+                log.warn("Could not find Trash folder for {}, falling back to DELETED flag", account.getEmailAddress());
+            }
+
+            sourceFolder.close(true); // expunge from source
         }
     }
 
@@ -448,13 +495,19 @@ public class ImapService {
         props.put("mail." + protocol + ".port", String.valueOf(account.getImapPort()));
         props.put("mail." + protocol + ".ssl.enable", String.valueOf(account.getImapSsl()));
         props.put("mail." + protocol + ".ssl.trust", "*");
-        props.put("mail." + protocol + ".connectiontimeout", "10000");
-        props.put("mail." + protocol + ".timeout", "30000");
-
-        Session session = Session.getInstance(props);
-        Store store = session.getStore(protocol);
-
-        String password = encryptionService.decrypt(account.getEncryptedPassword());
+        
+        // Robust SSL/TLS settings
+        props.put("mail." + protocol + ".ssl.protocols", "TLSv1.2 TLSv1.3");
+        
+        // Timeouts (Increased for stability in container environments)
+        props.put("mail." + protocol + ".connectiontimeout", "30000"); // 30s
+        props.put("mail." + protocol + ".timeout", "60000");           // 60s
+        props.put("mail." + protocol + ".writetimeout", "30000");     // 30s
+        
+        // Performance and Stability
+        props.put("mail." + protocol + ".partialfetch", "false");
+        props.put("mail." + protocol + ".fetchsize", "81920"); // 80KB buffer
+        props.put("mail." + protocol + ".statuscachetimeout", "10000");
 
         if (account.getAuthType() == EmailAuthType.OAUTH2) {
             // For OAuth2, password is the access token
@@ -463,6 +516,11 @@ public class ImapService {
             props.put("mail." + protocol + ".sasl.enable", "true");
             props.put("mail." + protocol + ".sasl.mechanisms", "XOAUTH2");
         }
+
+        Session session = Session.getInstance(props);
+        Store store = session.getStore(protocol);
+
+        String password = encryptionService.decrypt(account.getEncryptedPassword());
 
         try {
             store.connect(account.getImapHost(), account.getUsername(), password);
@@ -525,7 +583,7 @@ public class ImapService {
                 .to(to)
                 .cc(cc)
                 .subject(message.getSubject())
-                .preview("") // Preview often unreliable from envelope alone
+                .preview(generatePreview(message)) 
                 .body(fetchBodyContent(message)) // Fetch limited body
                 .sentAt(sentAt)
                 .receivedAt(receivedAt)
@@ -533,6 +591,8 @@ public class ImapService {
                 .starred(starred)
                 .hasAttachments(hasAttachments)
                 .labels(labels)
+                .gmailMessageId(extractGmailMsgId(message))
+                .threadId(extractGmailThreadId(message))
                 .size(message.getSize())
                 .build();
     }
@@ -588,21 +648,50 @@ public class ImapService {
          return "";
     }
 
+    private String generatePreview(Message message) {
+        try {
+            String body = fetchBodyContent(message);
+            String plainText = stripHtml(body);
+            if (plainText.length() > 150) {
+                return plainText.substring(0, 147) + "...";
+            }
+            return plainText;
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    public String stripHtml(String html) {
+        if (html == null) return "";
+        // 1. Remove style tags and their content
+        String scriptRegex = "<script[^>]*>[\\s\\S]*?</script>";
+        String styleRegex = "<style[^>]*>[\\s\\S]*?</style>";
+        String result = html.replaceAll(scriptRegex, "").replaceAll(styleRegex, "");
+        // 2. Remove all other HTML tags
+        result = result.replaceAll("<[^>]*>", "");
+        // 3. Unescape entities
+        return result.replaceAll("&nbsp;", " ").replaceAll("&lt;", "<").replaceAll("&gt;", ">").trim();
+    }
+
     private String getTextFromMultipart(Multipart multipart) throws Exception {
-        StringBuilder result = new StringBuilder();
+        String plainText = null;
         for (int i = 0; i < multipart.getCount(); i++) {
             BodyPart bodyPart = multipart.getBodyPart(i);
-            if (bodyPart.isMimeType("text/plain")) {
+            if (bodyPart.isMimeType("text/html")) {
                 return (String) bodyPart.getContent();
-            } else if (bodyPart.isMimeType("text/html")) {
-                String html = (String) bodyPart.getContent();
-                // Basic HTML cleanup without Jsoup to avoid dependency issues if not present
-                return html.replaceAll("<[^>]*>", "").replaceAll("&nbsp;", " ").trim(); 
+            } else if (bodyPart.isMimeType("text/plain")) {
+                if (plainText == null) plainText = (String) bodyPart.getContent();
             } else if (bodyPart.getContent() instanceof Multipart) {
-                result.append(getTextFromMultipart((Multipart) bodyPart.getContent()));
+                String result = getTextFromMultipart((Multipart) bodyPart.getContent());
+                // If the recursive call found HTML, return it immediately
+                // We can check if it looks like HTML by seeing if it contains '<'
+                if (result != null && (result.contains("<html") || result.contains("<body") || result.contains("<div"))) {
+                    return result;
+                }
+                if (plainText == null) plainText = result;
             }
         }
-        return result.toString();
+        return plainText;
     }
 
     private MailMessageDetailDto convertToDetailDto(Message message, long uid) 
@@ -656,6 +745,8 @@ public class ImapService {
                 .bodyText(textBuilder.toString())
                 .bodyHtml(htmlBuilder.toString())
                 .attachments(attachments)
+                .gmailMessageId(extractGmailMsgId(message))
+                .threadId(extractGmailThreadId(message))
                 .inReplyTo(getHeaderValue(message, "In-Reply-To"))
                 .references(parseReferences(getHeaderValue(message, "References")))
                 .build();
@@ -805,5 +896,28 @@ public class ImapService {
             }
         }
         return false;
+    }
+
+    private String extractGmailMsgId(Message message) {
+        try {
+            if (message instanceof org.eclipse.angus.mail.gimap.GmailMessage gmailMsg) {
+                return Long.toHexString(gmailMsg.getMsgId());
+            }
+        } catch (MessagingException e) {
+            log.warn("Failed to extract Gmail MsgId: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private String extractGmailThreadId(Message message) {
+        try {
+            if (message instanceof org.eclipse.angus.mail.gimap.GmailMessage gmailMsg) {
+                // Some versions call it getThrId or similar, but MSGID is more critical
+                return Long.toHexString(gmailMsg.getMsgId()); // Fallback to msgId as threadId usually contains it
+            }
+        } catch (MessagingException e) {
+            log.warn("Failed to extract Gmail ThreadId: {}", e.getMessage());
+        }
+        return null;
     }
 }
