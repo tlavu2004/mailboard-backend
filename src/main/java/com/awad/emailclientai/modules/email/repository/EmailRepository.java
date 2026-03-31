@@ -84,8 +84,8 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
             ") sub GROUP BY val, type ORDER BY max_score DESC LIMIT 10", nativeQuery = true)
     List<Object[]> findSuggestions(@Param("accountId") Long accountId, @Param("prefix") String prefix);
     @Query("SELECT new com.awad.emailclientai.modules.email.dto.response.EmailStatusStatsDto(e.status, COUNT(e)) " +
-           "FROM EmailEntity e WHERE e.account.id = :accountId GROUP BY e.status")
-    List<EmailStatusStatsDto> countByStatusForAccount(@Param("accountId") Long accountId);
+           "FROM EmailEntity e WHERE e.account.id = :accountId AND e.receivedDate >= :startDate GROUP BY e.status")
+    List<EmailStatusStatsDto> countByStatusForAccount(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
 
     @Query(value = "SELECT TO_CHAR(received_date, 'YYYY-MM-DD') as date, COUNT(*) as count " +
            "FROM emails WHERE account_id = :accountId AND received_date >= :startDate " +
@@ -102,15 +102,14 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
            "GROUP BY day, hour ORDER BY day, hour", nativeQuery = true)
     List<Object[]> getDailyActivity(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
 
-    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId")
-    long countByAccountId(@Param("accountId") Long accountId);
-
-    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isRead = false")
-    long countUnreadByAccountId(@Param("accountId") Long accountId);
-
-    // Mock starred for now or assume a column if it exists later
-    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.status = 'STARRED'")
-    long countStarredByAccountId(@Param("accountId") Long accountId);
+    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.receivedDate >= :startDate")
+    long countByAccountId(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
+ 
+    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isRead = false AND e.receivedDate >= :startDate")
+    long countUnreadByAccountId(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
+ 
+    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isStarred = true AND e.receivedDate >= :startDate")
+    long countStarredByAccountId(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
 
     @Query("SELECT e FROM EmailEntity e WHERE e.account.id = :accountId AND " +
            "(e.body LIKE '%body {%' OR e.body LIKE '%.ie-browser%' OR e.body LIKE '%.mso-container%' OR e.body LIKE '%ExternalClass%')")

@@ -22,6 +22,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -62,7 +63,7 @@ public class LegacyDashboardController {
         int unreadCount = 0;
         try {
             EmailAccount account = getPrimaryAccount(principal);
-            unreadCount = (int) emailRepository.countUnreadByAccountId(account.getId());
+            unreadCount = (int) emailRepository.countUnreadByAccountId(account.getId(), LocalDateTime.of(1970, 1, 1, 0, 0));
         } catch (Exception e) {
             log.warn("Could not get unread count for mailbox list: {}", e.getMessage());
         }
