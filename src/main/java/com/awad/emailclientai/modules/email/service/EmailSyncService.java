@@ -36,6 +36,7 @@ public class EmailSyncService {
     private final EmbeddingService embeddingService;
     private final KanbanColumnRepository kanbanColumnRepository;
     private final KanbanService kanbanService;
+    private final NotificationWebSocketHandler notificationWebSocketHandler;
 
     /** Gmail system labels to ignore when determining custom labels */
     private static final Set<String> SYSTEM_LABELS = Set.of(
@@ -289,11 +290,28 @@ public class EmailSyncService {
         OffsetDateTime now = OffsetDateTime.now();
         List<EmailEntity> snoozedEmails = emailRepository.findBySnoozedUntilBeforeAndStatus(now, EmailStatus.SNOOZED);
 
+        if (snoozedEmails.isEmpty()) {
+            return;
+        }
+
+        java.util.Set<Long> affectedAccountIds = new java.util.HashSet<>();
+
         for (EmailEntity email : snoozedEmails) {
             log.info("Waking up email ID: {}", email.getId());
             email.setStatus(EmailStatus.INBOX);
             email.setSnoozedUntil(null);
             emailRepository.save(email);
+            
+            if (email.getAccount() != null) {
+                affectedAccountIds.add(email.getAccount().getId());
+            }
+        }
+
+        // Notify frontend for each affected account
+        for (Long accountId : affectedAccountIds) {
+            String payload = "{\"type\": \"NEW_EMAILS\", \"message\": \"Email(s) returned from snooze\"}";
+            notificationWebSocketHandler.sendNotification(accountId, payload);
+            log.info("Sent wake-up notification for account ID: {}", accountId);
         }
     }
 
