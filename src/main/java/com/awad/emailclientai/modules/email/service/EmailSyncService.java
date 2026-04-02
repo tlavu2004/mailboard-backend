@@ -309,8 +309,7 @@ public class EmailSyncService {
 
         // Notify frontend for each affected account
         for (Long accountId : affectedAccountIds) {
-            String payload = "{\"type\": \"NEW_EMAILS\", \"message\": \"Email(s) returned from snooze\"}";
-            notificationWebSocketHandler.sendNotification(accountId, payload);
+            notificationWebSocketHandler.sendNotification(accountId, "NEW_EMAILS", "Email(s) returned from snooze");
             log.info("Sent wake-up notification for account ID: {}", accountId);
         }
     }

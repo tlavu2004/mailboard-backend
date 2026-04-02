@@ -1,5 +1,7 @@
 package com.awad.emailclientai.modules.email.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -8,6 +10,7 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -16,6 +19,8 @@ import java.util.concurrent.CopyOnWriteArraySet;
 @Slf4j
 @Component
 public class NotificationWebSocketHandler extends TextWebSocketHandler {
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     // Map accountId -> Set of WebSocket sessions
     private final Map<Long, Set<WebSocketSession>> accountSessions = new ConcurrentHashMap<>();
@@ -51,20 +56,35 @@ public class NotificationWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    public void sendNotification(Long accountId, String payload) {
+    public void sendNotification(Long accountId, String type, String messageText) {
         Set<WebSocketSession> sessions = accountSessions.get(accountId);
         if (sessions != null) {
-            TextMessage message = new TextMessage(payload);
-            sessions.forEach(session -> {
-                try {
-                    if (session.isOpen()) {
-                        session.sendMessage(message);
+            Map<String, String> payload = new HashMap<>();
+            payload.put("type", type);
+            payload.put("message", messageText);
+
+            try {
+                String jsonPayload = objectMapper.writeValueAsString(payload);
+                TextMessage message = new TextMessage(jsonPayload);
+                
+                sessions.forEach(session -> {
+                    try {
+                        if (session.isOpen()) {
+                            session.sendMessage(message);
+                        }
+                    } catch (IOException e) {
+                        log.error("Error sending WebSocket message to account: {}", accountId, e);
                     }
-                } catch (IOException e) {
-                    log.error("Error sending WebSocket message to account: {}", accountId, e);
-                }
-            });
+                });
+            } catch (JsonProcessingException e) {
+                log.error("Error serializing WebSocket payload for account: {}", accountId, e);
+            }
         }
+    }
+
+    public void sendNotification(Long accountId, String payload) {
+        // Fallback for raw payload if needed, but wrapped in JSON for FE compatibility
+        sendNotification(accountId, "INFO", payload);
     }
 
     private Long getAccountId(WebSocketSession session) {
