@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.springframework.dao.DataIntegrityViolationException;
 
 @Service
 @RequiredArgsConstructor
@@ -265,10 +266,13 @@ public class EmailSyncService {
                         .kanbanOrder((double) msg.getReceivedAt().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
                         .build();
 
-                // Generate embedding for new email
-                generateAndSetEmbedding(entity, msg.getSubject(), msg.getBody());
-
-                emailRepository.save(entity);
+                try {
+                    emailRepository.save(entity);
+                    // Generate embedding after entity is persisted (has ID)
+                    generateAndSetEmbedding(entity, msg.getSubject(), msg.getBody());
+                } catch (DataIntegrityViolationException e) {
+                    log.warn("Duplicate email detected during sync (messageId: {}), skipping.", msg.getMessageId());
+                }
             }
         } catch (jakarta.mail.MessagingException e) {
             log.error("Failed to fetch messages for account: " + account.getEmailAddress(), e);
@@ -295,6 +299,11 @@ public class EmailSyncService {
 
     private void generateAndSetEmbedding(EmailEntity entity, String subject, String body) {
         try {
+            if (entity.getId() == null) {
+                log.warn("Cannot generate embedding for unsaved entity (messageId: {})", entity.getMessageId());
+                return;
+            }
+
             String cleanBody = imapService.stripHtml(body);
             String textToEmbed = (subject != null ? subject : "") + " " + (cleanBody != null ? cleanBody : "");
             if (textToEmbed.length() > 8000) {
@@ -312,10 +321,6 @@ public class EmailSyncService {
             String embeddingString = "[" + embeddingList.stream()
                     .map(String::valueOf)
                     .collect(Collectors.joining(",")) + "]";
-
-            if (entity.getId() == null) {
-                emailRepository.save(entity);
-            }
 
             int dimension = embeddingList.size();
             if (dimension == 768) {
