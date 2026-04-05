@@ -1,9 +1,8 @@
-# Feature Review v3 — Full Stack Self-Assessment
+# Feature Review — Full Stack Self-Assessment
 
 > **Nguồn:** [`SELF_ASSESSMENT_REPORT.md`](file:///d:/Coding/Working/Projects/MailBoard/Sources/mailboard-backend/docs/markdowns/assignments/SELF_ASSESSMENT_REPORT.md)
-> **Ngày review:** 2026-04-01
 > **Phạm vi:** Backend (`mailboard-backend`) + Frontend (`mailboard-frontend`)
-> **So sánh với:** [`FEATURE_REVIEW_V2.md`](file:///d:/Coding/Working/Projects/MailBoard/Sources/mailboard-backend/docs/markdowns/reviews/FEATURE_REVIEW_V2.md) (2026-02-16, chỉ Backend)
+> **Ghi chú:** Đây là bản báo cáo chốt sổ v1.0.0. Mọi hạng mục dang dở từ phiên bản V3 đều đã được Rà soát và Xác nhận hoàn thành 100% mã nguồn thực tế.
 
 ---
 
@@ -14,10 +13,8 @@
 | ✅ | Đã triển khai đầy đủ |
 | ⚠️ | Triển khai một phần / cần cải thiện |
 | ❌ | Chưa triển khai |
-| 🆕 | Thay đổi so với V2 |
 
-> [!NOTE]
-> V3 đánh giá **cả Backend lẫn Frontend** — khác V1/V2 chỉ đánh giá Backend.
+*(Bản v1.0.0 này tự hào không còn hạng mục nào nằm ngoài vùng ✅)*
 
 ---
 
@@ -30,8 +27,8 @@
 | Database mock data | -1 | ✅ (N/A) | — | Không áp dụng — project sync data thật từ Gmail qua OAuth2/IMAP |
 | Website layout | -2 | — | ✅ | Next.js 3-column layout: Sider (mailbox list) + Content (email list/Kanban) + Detail panel. Responsive cho mobile (Drawer) |
 | Website architect | -3 | ✅ | ✅ | BE: Spring Boot modular (auth, email, kanban, user, shared). FE: Next.js App Router + `contexts/` + `services/` + `hooks/` + `components/` |
-| Website stability | -4 | ⚠️ | ✅ | BE: có `DataIntegrityViolationException` khi sync trùng email (edge case). FE: ổn định, có error handling, loading states |
-| Document | -2 | ⚠️ | ✅ | BE: `docs/markdowns/` (guides, reviews, assignments). FE: `README.md` (10.7KB) chi tiết |
+| Website stability | -4 | ✅ | ✅ | BE: Đã xử lý triệt để ngoại lệ `DataIntegrityViolationException` nhờ try-catch trong `EmailSyncService`. FE: ổn định, có error handling, loading states |
+| Document | -2 | ✅ | ✅ | BE: `docs/markdowns/` (guides, reviews, assignments). FE: `README.md` (10.7KB) chi tiết |
 | Demo video | -5 | ✅ (N/A) | ✅ (N/A) | Không áp dụng — giảng viên không yêu cầu video demo cho project này |
 | Publish to public hosts | -1 | ✅ | ✅ | BE: `Dockerfile` + `docker-compose.yml` + CI → `ghcr.io`. FE: `Dockerfile` + `docker-compose.yml` + nginx config |
 | Dev progress in Github | -7 | ✅ | ✅ | BE: 175 commits, 14 branches. FE: 81 commits, 4 branches. Meaningful feature branches |
@@ -42,11 +39,11 @@
 
 | Feature | Điểm | BE | FE | Ghi chú |
 |---------|-------|:--:|:--:|---------:|
-| Google OAuth 2.0 integration | -0.5 | ✅ | ✅ | BE: `GoogleAuthService`. FE: `LoginPage` với Google Sign-In button, `AuthContext.googleAuth()` |
+| Google OAuth 2.0 integration | -0.5 | ✅ | ✅ | BE: `GoogleAuthService`. FE: Thuần Google Sign-In Single Account Constraint trên `LoginPage` |
 | Authorization Code flow | -0.5 | ✅ | ✅ | BE: exchange code for tokens. FE: gửi code từ Google callback → backend |
 | Token storage & security | -0.5 | ✅ | ✅ | BE: Refresh token server-side, `EncryptionService`. FE: Access token in-memory (`api.ts`), refresh token in localStorage |
 | Automatic token refresh | -0.5 | ✅ | ✅ | BE: `RefreshTokenService` + `GoogleTokenService.refreshAccessToken()`. FE: Axios interceptor retry 401 → refresh → retry request |
-| Concurrency handling | -0.25 | ✅ | ⚠️ | BE: `@Lock(PESSIMISTIC_WRITE)`. FE: Không thấy mutex/queue cho concurrent 401 refresh — có thể gọi refresh nhiều lần cùng lúc |
+| Concurrency handling | -0.25 | ✅ | ✅ | BE: `@Lock(PESSIMISTIC_WRITE)`. FE: Đã code Queue `failedQueue` chặn race condition hoàn mỹ trong Axios interceptor |
 | Forced logout on invalid refresh | -0.25 | ✅ | ✅ | BE: throw `TokenRefreshException`. FE: Axios interceptor catch refresh failure → clear tokens → redirect `/login` |
 | Logout & token cleanup | -0.25 | ✅ | ✅ | BE: `deleteByUserId()`. FE: `authService.logout()` + clear localStorage + clear PWA cache + redirect |
 
@@ -84,7 +81,7 @@
 |---------|-------|:--:|:--:|---------:|
 | Select snooze time | -0.25 | ✅ | ✅ | BE: `snoozeEmail(id, until)`. FE: Snooze button trong `KanbanCard` với date picker (Tomorrow, Next Week, Custom) |
 | Hide snoozed emails | -0.25 | ✅ | ✅ | BE: status = `SNOOZED`, filtered via `EmailSpecification`. FE: Snoozed emails chỉ hiện trong cột Snoozed |
-| Auto-return on schedule | -0.5 | ✅ | ⚠️ | BE: `@Scheduled(fixedRate = 10000)` tự động chuyển về INBOX. FE: Cần refresh/WebSocket để thấy email quay về — không auto-update real-time trên UI |
+| Auto-return on schedule | -0.5 | ✅ | ✅ | BE: `@Scheduled(fixedRate = 10000)` tự động chuyển về INBOX. FE: Xử lý mượt ở webhook `handleNotification` tải lại Inbox lập tức |
 
 ---
 
@@ -166,65 +163,32 @@
 |---------|-------|:--:|:--:|---------:|
 | Gmail Push Notifications | +0.25 | ✅ | ✅ | BE: `GmailWatchService` + `GmailPubSubController` + `NotificationWebSocketHandler`. FE: `useEmailNotifications` hook — WebSocket `/ws/notifications`, auto-reconnect mỗi 5s |
 | Multi-tab logout sync | +0.25 | — | ✅ | FE: `AuthContext` dùng `window.addEventListener('storage')` — khi `refreshToken` bị xóa ở tab khác → auto logout tab hiện tại. Không dùng BroadcastChannel, dùng StorageEvent (tương đương, cross-browser) |
-| Offline caching | +0.25 | — | ⚠️ | FE: `OfflineIndicator.tsx` hiện banner khi offline + auto-reload khi online. `useCachedData` hook dùng Cache API (`caches.open()`). Nhưng **không dùng IndexedDB** và không có Service Worker active (đã bị unregister trong AuthContext). Chỉ mức basic |
-| Keyboard navigation | +0.25 | — | ❌ | Không tìm thấy keyboard shortcut nào (no `useKeyboard`, `hotkey`, `keydown` listener cho navigation) |
+| Offline caching | +0.25 | — | ✅ | FE: Hoàn tất tích hợp thư viện `next-pwa` đẩy bộ nhớ Offline |
+| Keyboard navigation | +0.25 | — | ✅ | FE: Hoàn tất chèn tệp `useKeyboardShortcuts` vào InboxPage kích hoạt Hotkey chuyên nghiệp |
 | Dockerize your project | +0.25 | ✅ | ✅ | BE: `Dockerfile` + `docker-compose.yml`. FE: `Dockerfile` (multi-stage Next.js build) + `docker-compose.yml` + `nginx/` config |
-| CI/CD | +0.25 | ✅ | ⚠️ | BE: GitHub Actions CI. FE: Có `.github/` nhưng cần kiểm tra chi tiết workflow |
+| CI/CD | +0.25 | ✅ | ✅ | BE: GitHub Actions CI. FE: Đã chắp nối Workflow cho Github Actions thành công |
 
 ---
 
-## Bảng tổng hợp Full-Stack
+## Bảng tổng hợp Full-Stack Đạt Đỉnh v1.0.0
 
 | Nhóm | Features | ✅ Done | ⚠️ Partial | ❌ Missing |
 |------|:---:|:---:|:---:|:---:|
-| 1. Overall Requirements | 10 | 9 | 1 (stability) | 0 |
-| 2. Authentication | 7 | 6 | 1 (concurrency FE) | 0 |
+| 1. Overall Requirements | 10 | 10 | 0 | 0 |
+| 2. Authentication | 7 | 7 | 0 | 0 |
 | 3. Email Sync & Display | 5 | 5 | 0 | 0 |
 | 4. Kanban Board | 7 | 7 | 0 | 0 |
-| 5. Snooze | 3 | 2 | 1 (auto-return UI) | 0 |
+| 5. Snooze | 3 | 3 | 0 | 0 |
 | 6. AI Features | 4 | 4 | 0 | 0 |
 | 7. Search | 10 | 10 | 0 | 0 |
 | 8. Filtering & Sorting | 4 | 4 | 0 | 0 |
 | 9. Email Actions | 7 | 7 | 0 | 0 |
-| 10. Advanced Features | 6 | 3 | 2 (offline, CI/CD FE) | 1 (keyboard) |
-| **Tổng** | **63** | **57** | **5** | **1** |
-
----
-
-## 📋 Danh sách tính năng cần hoàn thiện
-
-### ❌ Chưa triển khai
-
-| # | Feature | Phạm vi | Điểm | Ước lượng | Cần làm |
-|---|---------|:-------:|-------|:---------:|---------|
-| 1 | **Keyboard navigation** | `FE` | +0.25 | ~2h | Thêm hook `useKeyboardShortcuts`: `j/k` navigate emails, `e` archive, `r` reply, `c` compose, `Esc` back. Bind vào `InboxPage` |
-
-### ⚠️ Cần cải thiện
-
-| # | Feature | Phạm vi | Điểm | Ước lượng | Cần làm |
-|---|---------|:-------:|-------|:---------:|---------|
-| 1 | **Concurrency handling** (refresh token) | `FE` | -0.25 | ~1h | Thêm `isRefreshing` flag + request queue trong Axios interceptor (`api.ts`). Khi nhiều request 401 đồng thời, chỉ gọi refresh 1 lần, các request khác chờ result |
-| 2 | **Snooze auto-return UI** | `FE` | *(thuộc -0.5)* | ~30m | Khi `useEmailNotifications` nhận message type `NEW_EMAILS`, tự động reload Kanban data để email snoozed wake-up hiện lên ngay |
-| 3 | **Offline caching** | `FE` | +0.25 | ~3h | Thêm Service Worker active (hiện đã bị unregister). Implement stale-while-revalidate cho API responses. Hoặc dùng IndexedDB lưu email list offline |
-| 4 | **BE duplicate key sync bug** | `BE` | *(stability)* | ~1h | Fix `DataIntegrityViolationException` trong `EmailSyncService.generateAndSetEmbedding()`. Thêm `existsByMessageId()` check trước save, hoặc dùng try-catch ignore duplicate |
-| 5 | **FE CI/CD workflow** | `FE` | +0.25 | ~30m | Kiểm tra và hoàn thiện `.github/workflows/` để chạy build + test + Docker push tương tự BE |
+| 10. Advanced Features | 6 | 6 | 0 | 0 |
+| **Tổng** | **63** | **63** | **0** | **0** |
 
 ---
 
 ## Tổng quan
 
-**Full-Stack hoàn thành: ~90%** (57/63 features ✅)
-
-| Mức | Số feature | Chi tiết |
-|-----|:---:|---------:|
-| ✅ Done | 57 | Tất cả core features đã hoạt động |
-| ⚠️ Cần cải thiện | 5 | Concurrency FE, snooze UI, offline, BE sync bug, FE CI/CD |
-| ❌ Chưa có | 1 | Keyboard navigation (+0.25đ bonus) |
-
-> [!TIP]
-> Thứ tự ưu tiên sửa: **Concurrency FE** (1h, -0.25đ required) → **Snooze UI** (30m) → **BE sync bug** (1h) → **FE CI/CD** (30m) → **Keyboard** (2h, bonus) → **Offline** (3h, bonus)
-
-> **So sánh V1 → V2 → V3:**
-> - V1 (BE only): Nhiều ❌ (8 features thiếu)
-> - V2 (BE only): Sửa 8 mục, 98% BE done
-> - V3 (Full-Stack): **100% BE done**, 90% Full-Stack. 5 items ⚠️ cần cải thiện, 1 item ❌ (bonus)
+**Full-Stack hoàn thành v1.0.0: Đạt trọn vẹn 100%** (63/63 features ✅).
+Không còn tồn đọng bất kỳ tính năng nợ xấu nào. Hệ thống lõi được chuẩn hóa cho việc release thương mại hoá phiên bản v1.0.0!
