@@ -4,15 +4,16 @@ import com.awad.emailclientai.modules.email.dto.request.SendEmailRequestDto;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
 import com.awad.emailclientai.modules.email.entity.EmailAuthType;
 import com.awad.emailclientai.shared.service.EncryptionService;
+import jakarta.activation.DataHandler;
 import jakarta.mail.*;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeBodyPart;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.MimeMultipart;
+import jakarta.mail.util.ByteArrayDataSource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -54,16 +55,17 @@ public class SmtpService {
             }
         });
         
-        // Enable debug logging in development
-        session.setDebug(log.isDebugEnabled());
+        // Always enable debug logging for SMTP to troubleshoot connection/auth issues
+        session.setDebug(true);
         
         MimeMessage message = createMimeMessage(session, account, request);
         
         try {
             Transport.send(message);
-        } catch (AuthenticationFailedException e) {
+        } catch (MessagingException e) {
             if (retryOnAuthFailure && account.getAuthType() == EmailAuthType.OAUTH2) {
-                log.info("SMTP authentication failed for {}, attempting token refresh...", account.getEmailAddress());
+                log.info("SMTP sending failed for {}, attempting token refresh and retry... Error: {}", 
+                        account.getEmailAddress(), e.getMessage());
                 String newAccessToken = googleTokenService.refreshAccessToken(account);
                 if (newAccessToken != null) {
                     return sendEmailInternal(account, request, false);
@@ -87,12 +89,12 @@ public class SmtpService {
      * @return The sent MimeMessage (for IMAP APPEND to Sent folder)
      */
     public MimeMessage sendEmailWithAttachments(EmailAccount account, SendEmailRequestDto request, 
-                                           MultipartFile[] attachments) throws MessagingException, IOException {
+                                           java.util.List<MultipartFile> attachments) throws MessagingException, IOException {
         return sendEmailWithAttachmentsInternal(account, request, attachments, true);
     }
 
     private MimeMessage sendEmailWithAttachmentsInternal(EmailAccount account, SendEmailRequestDto request, 
-                                           MultipartFile[] attachments, boolean retryOnAuthFailure) throws MessagingException, IOException {
+                                           java.util.List<MultipartFile> attachments, boolean retryOnAuthFailure) throws MessagingException, IOException {
         Properties props = createSmtpProperties(account);
         
         String password = encryptionService.decrypt(account.getEncryptedPassword());
@@ -104,15 +106,16 @@ public class SmtpService {
             }
         });
         
-        session.setDebug(log.isDebugEnabled());
+        session.setDebug(true);
         
         MimeMessage message = createMimeMessageWithAttachments(session, account, request, attachments);
         
         try {
             Transport.send(message);
-        } catch (AuthenticationFailedException e) {
+        } catch (MessagingException e) {
             if (retryOnAuthFailure && account.getAuthType() == EmailAuthType.OAUTH2) {
-                log.info("SMTP (attachments) authentication failed for {}, attempting token refresh...", account.getEmailAddress());
+                log.info("SMTP (attachments) sending failed for {}, attempting token refresh and retry... Error: {}", 
+                        account.getEmailAddress(), e.getMessage());
                 String newAccessToken = googleTokenService.refreshAccessToken(account);
                 if (newAccessToken != null) {
                     return sendEmailWithAttachmentsInternal(account, request, attachments, false);
@@ -122,7 +125,7 @@ public class SmtpService {
         }
         
         log.info("Email with {} attachments sent from {} to {}", 
-                attachments != null ? attachments.length : 0,
+                attachments != null ? attachments.size() : 0,
                 account.getEmailAddress(), request.getTo());
         
         return message;
@@ -271,7 +274,7 @@ public class SmtpService {
 
     private MimeMessage createMimeMessageWithAttachments(Session session, EmailAccount account,
                                                          SendEmailRequestDto request, 
-                                                         MultipartFile[] attachments) throws MessagingException, IOException {
+                                                         java.util.List<MultipartFile> attachments) throws MessagingException, IOException {
         MimeMessage message = new MimeMessage(session);
         
         // From
@@ -345,8 +348,12 @@ public class SmtpService {
                 if (file != null && !file.isEmpty()) {
                     MimeBodyPart attachmentPart = new MimeBodyPart();
                     attachmentPart.setFileName(file.getOriginalFilename());
-                    attachmentPart.setContent(file.getBytes(), file.getContentType());
+                    
+                    String contentType = file.getContentType() != null ? file.getContentType() : "application/octet-stream";
+                    ByteArrayDataSource dataSource = new ByteArrayDataSource(file.getBytes(), contentType);
+                    attachmentPart.setDataHandler(new DataHandler(dataSource));
                     attachmentPart.setHeader("Content-Transfer-Encoding", "base64");
+                    
                     mixedMultipart.addBodyPart(attachmentPart);
                 }
             }

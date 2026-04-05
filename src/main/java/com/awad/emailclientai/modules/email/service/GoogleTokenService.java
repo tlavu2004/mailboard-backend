@@ -4,9 +4,9 @@ import com.awad.emailclientai.modules.email.entity.EmailAccount;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.shared.config.properties.GoogleOAuthProperties;
 import com.awad.emailclientai.shared.service.EncryptionService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
@@ -14,14 +14,26 @@ import org.springframework.web.client.RestTemplate;
 import java.util.Map;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class GoogleTokenService {
 
     private final EmailAccountRepository accountRepository;
     private final EncryptionService encryptionService;
     private final GoogleOAuthProperties googleOAuthProperties;
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
+
+    public GoogleTokenService(EmailAccountRepository accountRepository, 
+                             EncryptionService encryptionService, 
+                             GoogleOAuthProperties googleOAuthProperties) {
+        this.accountRepository = accountRepository;
+        this.encryptionService = encryptionService;
+        this.googleOAuthProperties = googleOAuthProperties;
+        
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000); // 5 seconds
+        factory.setReadTimeout(5000);    // 5 seconds
+        this.restTemplate = new RestTemplate(factory);
+    }
 
     @Transactional
     public String refreshAccessToken(EmailAccount account) {
