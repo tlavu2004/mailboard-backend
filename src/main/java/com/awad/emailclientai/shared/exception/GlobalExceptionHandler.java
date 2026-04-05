@@ -186,6 +186,41 @@ public class GlobalExceptionHandler {
                 .body(response);
     }
 
+    @ExceptionHandler(jakarta.mail.AuthenticationFailedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMailAuthException(
+            jakarta.mail.AuthenticationFailedException ex,
+            HttpServletRequest request
+    ) {
+        log.warn("Mail SMTP authentication failed: {} - Path: {}",
+                ex.getMessage(), request.getRequestURI());
+
+        ApiResponse<Void> response = ApiResponse.error(
+                ErrorCode.AUTHENTICATION_REQUIRED,
+                "Email account session expired or access revoked. Please re-link your account."
+        );
+
+        return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
+                .body(response);
+    }
+
+    @ExceptionHandler(jakarta.mail.MessagingException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMessagingException(
+            jakarta.mail.MessagingException ex,
+            HttpServletRequest request
+    ) {
+        log.error("SMTP/Mail infrastructure failure: {} - Path: {}",
+                ex.getMessage(), request.getRequestURI());
+
+        ApiResponse<Void> response = ApiResponse.error(
+                "Mail service unavailable: " + ex.getMessage()
+        );
+
+        return ResponseEntity
+                .status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(response);
+    }
+
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ApiResponse<Void>> handleAccessDeniedException(
             AccessDeniedException ex,

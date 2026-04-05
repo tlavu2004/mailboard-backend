@@ -187,7 +187,7 @@ public class EmailAccountController {
             @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable Long accountId,
             @RequestParam("email") String emailJson,
-            @RequestPart(value = "attachments", required = false) MultipartFile[] attachments) 
+            @RequestPart(value = "attachments", required = false) java.util.List<MultipartFile> attachments) 
             throws MessagingException, IOException {
         
         // Parse JSON string to DTO
@@ -195,7 +195,7 @@ public class EmailAccountController {
         SendEmailRequestDto request = objectMapper.readValue(emailJson, SendEmailRequestDto.class);
         
         String messageId;
-        if (attachments != null && attachments.length > 0) {
+        if (attachments != null && !attachments.isEmpty()) {
             messageId = emailAccountService.sendEmailWithAttachments(
                     principal.getId(), accountId, request, attachments);
         } else {

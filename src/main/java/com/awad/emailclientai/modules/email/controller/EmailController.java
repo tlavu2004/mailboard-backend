@@ -8,7 +8,14 @@ import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import com.awad.emailclientai.modules.email.service.EmailSyncService;
 import com.awad.emailclientai.modules.email.service.ImapService;
 import com.awad.emailclientai.modules.kanban.repository.KanbanColumnRepository;
+import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
+import com.awad.emailclientai.modules.email.service.EmailAccountService;
+import com.awad.emailclientai.modules.email.dto.request.SendEmailRequestDto;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
+import org.springframework.web.multipart.MultipartFile;
+import com.awad.emailclientai.modules.email.entity.EmailAccount;
+import jakarta.mail.MessagingException;
+import java.io.IOException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -17,13 +24,17 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import com.awad.emailclientai.modules.user.security.UserPrincipal;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -36,6 +47,8 @@ public class EmailController {
     private final EmailRepository emailRepository;
     private final ImapService imapService;
     private final KanbanColumnRepository kanbanColumnRepository;
+    private final EmailAccountRepository emailAccountRepository;
+    private final EmailAccountService emailAccountService;
     private final EmailSyncService emailSyncService;
     private final com.awad.emailclientai.modules.email.service.AiService aiService;
 
@@ -73,6 +86,103 @@ public class EmailController {
         
         emailSyncService.repairEmailsForUser(principal.getId());
         return ResponseEntity.ok(ApiResponse.success("Repair process completed"));
+    }
+
+    @PostMapping(value = "/send", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Bridge: Send Email (JSON)", description = "Handles JSON email sending from frontend.")
+    public ResponseEntity<ApiResponse<String>> sendEmailBridgeJson(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestBody Map<String, Object> jsonBody
+    ) throws MessagingException {
+        log.info("Bridge Send Email (JSON): Received request from user {}", principal.getId());
+
+        EmailAccount account = getPrimaryAccount(principal);
+        log.info("Bridge Send Email (JSON): Using account {}", account.getEmailAddress());
+        SendEmailRequestDto request = mapJsonToDto(jsonBody);
+
+        log.info("Bridge Send Email (JSON): Calling emailAccountService.sendEmail...");
+        String messageId = emailAccountService.sendEmail(principal.getId(), account.getId(), request);
+        log.info("Bridge Send Email (JSON): Success, messageId={}", messageId);
+        return ResponseEntity.ok(ApiResponse.success("Email sent successfully", messageId));
+    }
+
+    @PostMapping(value = "/send", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(summary = "Bridge: Send Email (Multipart)", description = "Handles multipart email sending from frontend.")
+    public ResponseEntity<ApiResponse<String>> sendEmailBridgeMultipart(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(value = "attachments", required = false) List<MultipartFile> attachments,
+            @RequestParam(value = "to", required = false) String toString,
+            @RequestParam(value = "cc", required = false) String ccString,
+            @RequestParam(value = "bcc", required = false) String bccString,
+            @RequestParam(value = "subject", required = false) String subject,
+            @RequestParam(value = "body", required = false) String body,
+            @RequestParam(value = "threadId", required = false) String threadId
+    ) throws MessagingException, IOException {
+        log.info("Bridge Send Email (Multipart): Received request from user {}", principal.getId());
+
+        EmailAccount account = getPrimaryAccount(principal);
+        log.info("Bridge Send Email (Multipart): Using account {}", account.getEmailAddress());
+        ObjectMapper mapper = new ObjectMapper();
+        SendEmailRequestDto request = new SendEmailRequestDto();
+
+        if (toString != null) {
+            request.setTo(parseEmailList(toString, mapper));
+        }
+        if (ccString != null) {
+            request.setCc(parseEmailList(ccString, mapper));
+        }
+        if (bccString != null) {
+            request.setBcc(parseEmailList(bccString, mapper));
+        }
+        request.setSubject(subject);
+        request.setBodyText(body);
+        request.setInReplyTo(threadId);
+
+        String messageId;
+        log.info("Bridge Send Email (Multipart): Calling emailAccountService...");
+        if (attachments != null && !attachments.isEmpty()) {
+            log.info("Bridge Send Email (Multipart): Sending with {} attachments", attachments.size());
+            messageId = emailAccountService.sendEmailWithAttachments(principal.getId(), account.getId(), request, attachments);
+        } else {
+            messageId = emailAccountService.sendEmail(principal.getId(), account.getId(), request);
+        }
+        log.info("Bridge Send Email (Multipart): Success, messageId={}", messageId);
+
+        return ResponseEntity.ok(ApiResponse.success("Email sent successfully", messageId));
+    }
+
+    private EmailAccount getPrimaryAccount(UserPrincipal principal) {
+        return emailAccountRepository.findByUserIdAndActiveTrue(principal.getId())
+                .stream().findFirst()
+                .orElseThrow(() -> new RuntimeException("No active email account linked. Please link your Gmail first."));
+    }
+
+    private List<String> parseEmailList(String json, ObjectMapper mapper) {
+        try {
+            if (json.startsWith("[")) {
+                return mapper.readValue(json, new TypeReference<List<String>>() {});
+            } else {
+                return List.of(json);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to parse email list: {}", json);
+            return List.of(json);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private SendEmailRequestDto mapJsonToDto(Map<String, Object> jsonBody) {
+        SendEmailRequestDto request = new SendEmailRequestDto();
+        if (jsonBody != null) {
+            request.setTo((List<String>) jsonBody.get("to"));
+            request.setCc((List<String>) jsonBody.get("cc"));
+            request.setBcc((List<String>) jsonBody.get("bcc"));
+            request.setSubject((String) jsonBody.get("subject"));
+            // Map FE 'body' to BE 'bodyText'
+            request.setBodyText((String) jsonBody.get("body"));
+            request.setInReplyTo((String) jsonBody.get("threadId"));
+        }
+        return request;
     }
 
     @PostMapping("/{id}/refresh")

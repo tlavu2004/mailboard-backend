@@ -184,7 +184,7 @@ public class EmailAccountService {
      */
     public String sendEmailWithAttachments(Long userId, Long accountId, 
                                            SendEmailRequestDto request,
-                                           MultipartFile[] attachments) throws MessagingException, IOException {
+                                           java.util.List<MultipartFile> attachments) throws MessagingException, IOException {
         EmailAccount account = getAccountForUser(userId, accountId);
         jakarta.mail.internet.MimeMessage message = smtpService.sendEmailWithAttachments(account, request, attachments);
         
