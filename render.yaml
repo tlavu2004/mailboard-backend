@@ -1,0 +1,58 @@
+# MailBoard Backend — Render Blueprint (IaC)
+
+services:
+  - type: web
+    name: mailboard-backend
+    runtime: docker
+    repo: https://github.com/tlavu2004/mailboard-backend
+    region: singapore
+    plan: free # Hoặc đổi lên plan tùy ý
+    branch: main
+    dockerfilePath: ./Dockerfile
+    envVars:
+      # Kích hoạt profile Prod trên Spring Boot
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+
+      # Link tới Nhóm biến môi trường (Environment Group) cho các khóa bí mật
+      - fromGroup: mailboard-secrets 
+
+      # Các giá trị mặc định cơ sở
+      - key: SERVER_PORT
+        value: "10000"
+      
+      # Cors URLs
+      - key: CORS_ALLOWED_ORIGIN_1
+        value: "https://mailboard-frontend.vercel.app" # URL Vercel thật sau khi deploy
+      - key: CORS_ALLOWED_ORIGIN_2
+        value: "http://localhost:3000"
+
+      # Auth Routing (Quan trọng: Trỏ đúng địa chỉ máy chủ Render Backend)
+      - key: GOOGLE_REDIRECT_URI
+        value: "https://mailboard-backend.onrender.com/login/oauth2/code/google"
+
+      # JWT Settings (Render tự tạo mã bí mật ngẫu nhiên)
+      - key: JWT_ACCESS_EXPIRATION
+        value: "900000"
+      - key: JWT_REFRESH_EXPIRATION
+        value: "604800000"
+      - key: JWT_SECRET
+        generateValue: true
+
+      # Encryption (Mã hóa Tokens)
+      - key: ENCRYPTION_AES_KEY
+        generateValue: true
+
+      # DATABASE (Sill có thể ghi đè trong Group)
+      - key: DB_URL
+        value: "" # Khai báo trong Dashboard
+      - key: DB_USERNAME
+        value: "" # Khai báo trong Dashboard
+      - key: DB_PASSWORD
+        value: "" # Khai báo trong Dashboard
+
+      # Gemini API & Google PubSub
+      - key: GEMINI_API_KEY
+        value: "" # Khai báo trong Dashboard
+      - key: GMAIL_PUBSUB_TOPIC
+        value: "projects/mailboard/topics/gmail-notifications"
