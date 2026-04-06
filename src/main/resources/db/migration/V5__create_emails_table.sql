@@ -5,16 +5,21 @@ CREATE TABLE IF NOT EXISTS emails (
     id BIGSERIAL PRIMARY KEY,
     account_id BIGINT NOT NULL,
     message_id VARCHAR(255) NOT NULL UNIQUE,
+    gmail_message_id VARCHAR(255),
+    thread_id VARCHAR(255),
     uid BIGINT,
     subject VARCHAR(255),
     sender VARCHAR(255),
     snippet VARCHAR(500),
     body TEXT,
     status VARCHAR(50) DEFAULT 'INBOX',
+    kanban_order DOUBLE PRECISION,
     received_date TIMESTAMP,
-    snoozed_until TIMESTAMP,
+    snoozed_until TIMESTAMP WITH TIME ZONE,
     summary TEXT,
+    summary_source VARCHAR(50),
     is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    is_starred BOOLEAN NOT NULL DEFAULT FALSE,
     has_attachments BOOLEAN NOT NULL DEFAULT FALSE,
     
     -- Semantic Search Embeddings
@@ -32,6 +37,8 @@ CREATE TABLE IF NOT EXISTS emails (
 CREATE INDEX idx_emails_account_id ON emails(account_id);
 CREATE INDEX idx_emails_status ON emails(status);
 CREATE INDEX idx_emails_snoozed ON emails(snoozed_until);
+CREATE INDEX idx_emails_is_starred ON emails(is_starred);
+CREATE INDEX idx_emails_kanban_order ON emails(kanban_order DESC);
 
 -- Semantic Search Indexes (HNSW)
 CREATE INDEX idx_emails_embedding_768_hnsw ON emails USING hnsw (embedding_768 vector_cosine_ops);
