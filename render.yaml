@@ -6,18 +6,18 @@ services:
     runtime: docker
     repo: https://github.com/tlavu2004/mailboard-backend
     region: singapore
-    plan: free # Hoặc đổi lên plan tùy ý
+    plan: free
     branch: main
     dockerfilePath: ./Dockerfile
     envVars:
-      # Kích hoạt profile Prod trên Spring Boot
+      # Spring Profile
       - key: SPRING_PROFILES_ACTIVE
         value: prod
 
-      # Link tới Nhóm biến môi trường (Environment Group) cho các khóa bí mật
+      # Link to Environment Group for secrets
       - fromGroup: mailboard-secrets 
 
-      # Các giá trị mặc định cơ sở
+      # Default values
       - key: SERVER_PORT
         value: "10000"
       
@@ -31,7 +31,7 @@ services:
       - key: GOOGLE_REDIRECT_URI
         value: "https://mailboard-backend.onrender.com/login/oauth2/code/google"
 
-      # JWT Settings (Render tự tạo mã bí mật ngẫu nhiên)
+      # JWT Settings
       - key: JWT_ACCESS_EXPIRATION
         value: "900000"
       - key: JWT_REFRESH_EXPIRATION
@@ -39,20 +39,20 @@ services:
       - key: JWT_SECRET
         generateValue: true
 
-      # Encryption (Mã hóa Tokens)
+      # Encryption
       - key: ENCRYPTION_AES_KEY
         generateValue: true
 
-      # DATABASE (Sill có thể ghi đè trong Group)
+      # DATABASE
       - key: DB_URL
-        value: "" # Khai báo trong Dashboard
+        value: ""
       - key: DB_USERNAME
-        value: "" # Khai báo trong Dashboard
+        value: ""
       - key: DB_PASSWORD
-        value: "" # Khai báo trong Dashboard
+        value: ""
 
       # Gemini API & Google PubSub
       - key: GEMINI_API_KEY
-        value: "" # Khai báo trong Dashboard
+        value: ""
       - key: GMAIL_PUBSUB_TOPIC
         value: "projects/mailboard/topics/gmail-notifications"
