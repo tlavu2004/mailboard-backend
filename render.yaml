@@ -43,5 +43,6 @@ services:
       - key: ENCRYPTION_AES_KEY
         generateValue: true
 
+      # Gmail Push Notifications
       - key: GMAIL_PUBSUB_TOPIC
         value: "projects/mailboard/topics/gmail-notifications"
