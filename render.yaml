@@ -1,0 +1,58 @@
+# MailBoard Backend — Render Blueprint (IaC)
+
+services:
+  - type: web
+    name: mailboard-backend
+    runtime: docker
+    repo: https://github.com/tlavu2004/mailboard-backend
+    region: singapore
+    plan: free
+    branch: main
+    dockerfilePath: ./Dockerfile
+    envVars:
+      # Spring Profile
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+
+      # Link to Environment Group for secrets
+      - fromGroup: mailboard-secrets 
+
+      # Default values
+      - key: SERVER_PORT
+        value: "10000"
+      
+      # Cors URLs
+      - key: CORS_ALLOWED_ORIGIN_1
+        value: "https://mailboard-frontend.vercel.app" # URL Vercel thật sau khi deploy
+      - key: CORS_ALLOWED_ORIGIN_2
+        value: "http://localhost:3000"
+
+      # Auth Routing (Quan trọng: Trỏ đúng địa chỉ máy chủ Render Backend)
+      - key: GOOGLE_REDIRECT_URI
+        value: "https://mailboard-backend.onrender.com/login/oauth2/code/google"
+
+      # JWT Settings
+      - key: JWT_ACCESS_EXPIRATION
+        value: "900000"
+      - key: JWT_REFRESH_EXPIRATION
+        value: "604800000"
+      - key: JWT_SECRET
+        generateValue: true
+
+      # Encryption
+      - key: ENCRYPTION_AES_KEY
+        generateValue: true
+
+      # DATABASE
+      - key: DB_URL
+        value: ""
+      - key: DB_USERNAME
+        value: ""
+      - key: DB_PASSWORD
+        value: ""
+
+      # Gemini API & Google PubSub
+      - key: GEMINI_API_KEY
+        value: ""
+      - key: GMAIL_PUBSUB_TOPIC
+        value: "projects/mailboard/topics/gmail-notifications"
