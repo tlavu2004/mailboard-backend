@@ -43,16 +43,5 @@ services:
       - key: ENCRYPTION_AES_KEY
         generateValue: true
 
-      # DATABASE
-      - key: DB_URL
-        value: ""
-      - key: DB_USERNAME
-        value: ""
-      - key: DB_PASSWORD
-        value: ""
-
-      # Gemini API & Google PubSub
-      - key: GEMINI_API_KEY
-        value: ""
       - key: GMAIL_PUBSUB_TOPIC
         value: "projects/mailboard/topics/gmail-notifications"
