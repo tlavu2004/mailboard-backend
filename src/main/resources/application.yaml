@@ -67,7 +67,7 @@ gmail:
 
 ---
 
-# Development Profile (Local)
+# Development Profile
 spring:
   config:
     activate:
@@ -114,29 +114,28 @@ logging:
 
 ---
 
-# Production Profile (Render)
+# Production Profile
 spring:
   config:
     activate:
       on-profile: prod
   datasource:
-    # Ở prod, các biến này bắt buộc phải được truyền vào, không có fallback
     url: ${DB_URL}
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
-      maximum-pool-size: 15
+      maximum-pool-size: 20
       minimum-idle: 5
-      idle-timeout: 30000
+      idle-timeout: 600000
       connection-timeout: 30000
+      max-lifetime: 1800000
   jpa:
     hibernate:
       ddl-auto: validate
     show-sql: false
     properties:
       hibernate:
-        format_sql: false
         dialect: org.hibernate.dialect.PostgreSQLDialect
         jdbc:
           time_zone: UTC
@@ -151,6 +150,7 @@ spring:
 logging:
   level:
     com.awad.emailclientai: INFO
+    org.springframework.security: INFO
     org.springframework.web: INFO
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
