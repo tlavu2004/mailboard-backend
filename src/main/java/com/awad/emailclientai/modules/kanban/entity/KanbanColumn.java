@@ -10,7 +10,10 @@ import org.hibernate.annotations.UpdateTimestamp;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "kanban_columns")
+@Table(name = "kanban_columns", uniqueConstraints = {
+    @UniqueConstraint(columnNames = {"account_id", "linked_status"}),
+    @UniqueConstraint(columnNames = {"account_id", "gmail_label_id"})
+})
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

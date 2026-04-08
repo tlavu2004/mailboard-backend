@@ -254,7 +254,13 @@ public enum ErrorCode {
      * KANBAN_003: Cannot delete default column
      * Triggered when: User tries to delete a default column
      */
-    KANBAN_CANNOT_DELETE_DEFAULT("KANBAN_003", "Cannot delete a default column", HttpStatus.FORBIDDEN);
+    KANBAN_CANNOT_DELETE_DEFAULT("KANBAN_003", "Cannot delete a default column", HttpStatus.FORBIDDEN),
+
+    /**
+     * KANBAN_004: Duplicate kanban column
+     * Triggered when: A column with the same label/status already exists
+     */
+    KANBAN_DUPLICATE_COLUMN("KANBAN_004", "This kanban column already exists for this account", HttpStatus.CONFLICT);
 
     // ============= ENUM FIELDS =============
 

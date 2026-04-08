@@ -7,6 +7,7 @@ import com.awad.emailclientai.modules.kanban.repository.KanbanColumnRepository;
 import com.awad.emailclientai.shared.exception.BusinessException;
 import com.awad.emailclientai.shared.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,6 +16,7 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class KanbanService {
     
     private final KanbanColumnRepository kanbanColumnRepository;
@@ -68,20 +70,29 @@ public class KanbanService {
                 .max()
                 .orElse(-1);
 
-        List<KanbanColumn> newColumns = new ArrayList<>();
         for (String[] def : missing) {
+            // Final safety check before creating
+            if (kanbanColumnRepository.findByAccountIdAndLinkedStatus(accountId, def[1]).isPresent()) {
+                continue;
+            }
+
             maxPos++;
-            newColumns.add(KanbanColumn.builder()
+            KanbanColumn newCol = KanbanColumn.builder()
                     .name(def[0])
                     .linkedStatus(def[1])
                     .gmailLabelId(def[1].equals("INBOX") ? "INBOX" : null)
                     .position(maxPos)
                     .color(def.length > 2 ? def[2] : "#f1f5f9")
                     .account(account)
-                    .build());
+                    .build();
+            
+            try {
+                kanbanColumnRepository.save(newCol);
+            } catch (Exception e) {
+                // If another thread created it first, just log and continue
+                log.info("Default column {} already created by another process", def[1]);
+            }
         }
-
-        kanbanColumnRepository.saveAll(newColumns);
 
         // Return full sorted list
         return kanbanColumnRepository.findAllByAccountIdOrderByPositionAsc(accountId);
@@ -89,7 +100,11 @@ public class KanbanService {
 
     @Transactional
     public KanbanColumn createColumn(Long accountId, String name, String gmailLabelId, String color) {
-        // ... existing logic ...
+        // Prevent creating duplicate columns for the same label
+        if (gmailLabelId != null && kanbanColumnRepository.findByAccountIdAndGmailLabelIdIgnoreCase(accountId, gmailLabelId).isPresent()) {
+            return kanbanColumnRepository.findByAccountIdAndGmailLabelIdIgnoreCase(accountId, gmailLabelId).get();
+        }
+
         EmailAccount account = emailAccountRepository.findById(accountId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_ACCOUNT_NOT_FOUND));
         
@@ -108,7 +123,13 @@ public class KanbanService {
                 .color(color != null ? color : "#f1f5f9")
                 .build();
         
-        return kanbanColumnRepository.save(column);
+        try {
+            return kanbanColumnRepository.save(column);
+        } catch (Exception e) {
+            // Fallback for race condition
+            return kanbanColumnRepository.findByAccountIdAndGmailLabelIdIgnoreCase(accountId, gmailLabelId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.KANBAN_DUPLICATE_COLUMN));
+        }
     }
 
     @Transactional
