@@ -27,9 +27,9 @@ services:
       - key: CORS_ALLOWED_ORIGIN_2
         value: "http://localhost:3000"
 
-      # Auth Routing (Quan trọng: Trỏ đúng địa chỉ máy chủ Render Backend)
+      # Auth Routing
       - key: GOOGLE_REDIRECT_URI
-        value: "https://mailboard-backend.onrender.com/login/oauth2/code/google"
+        value: "https://tlavu-mailboard.vercel.app/auth/callback"
 
       # JWT Settings
       - key: JWT_ACCESS_EXPIRATION
