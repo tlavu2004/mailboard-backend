@@ -14,7 +14,10 @@ CREATE TABLE IF NOT EXISTS kanban_columns (
     CONSTRAINT fk_kanban_columns_account 
         FOREIGN KEY (account_id) 
         REFERENCES email_accounts(id) 
-        ON DELETE CASCADE
+        ON DELETE CASCADE,
+
+    CONSTRAINT uq_kanban_columns_account_linked_status UNIQUE (account_id, linked_status),
+    CONSTRAINT uq_kanban_columns_account_gmail_label UNIQUE (account_id, gmail_label_id)
 );
 
 CREATE INDEX idx_kanban_columns_account_id ON kanban_columns(account_id);
