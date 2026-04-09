@@ -97,6 +97,9 @@ gemini:
 gmail:
   pubsub:
     topic: ${GMAIL_PUBSUB_TOPIC:projects/email-client-ai-oauth/topics/gmail-notifications}
+  embedding:
+    local:
+      enabled: ${APP_EMBEDDING_LOCAL_ENABLED:true}
 
 logging:
   pattern:
@@ -128,3 +131,7 @@ logging:
     com.awad.emailclientai: INFO
     org.springframework.security: INFO
     org.springframework.web: INFO
+app:
+  embedding:
+    local:
+      enabled: false

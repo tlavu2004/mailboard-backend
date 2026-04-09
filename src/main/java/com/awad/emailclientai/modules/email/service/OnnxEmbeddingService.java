@@ -8,6 +8,7 @@ import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
@@ -15,6 +16,7 @@ import java.nio.LongBuffer;
 import java.util.*;
 
 @Service
+@ConditionalOnProperty(name = "app.embedding.local.enabled", havingValue = "true", matchIfMissing = true)
 public class OnnxEmbeddingService implements EmbeddingService {
 
     private static final Logger logger = LoggerFactory.getLogger(OnnxEmbeddingService.class);

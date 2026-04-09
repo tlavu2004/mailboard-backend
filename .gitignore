@@ -37,7 +37,7 @@ build/
 .env.prod
 
 # AI Models (Local)
-# *.onnx (Removed to allow Git tracking for Render deployment)
+*.onnx
 
 # Logs
 **/logs/
