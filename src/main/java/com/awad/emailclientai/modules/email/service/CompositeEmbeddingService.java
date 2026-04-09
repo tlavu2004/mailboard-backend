@@ -32,22 +32,33 @@ public class CompositeEmbeddingService implements EmbeddingService {
             return geminiService.generateEmbedding(text);
         } catch (Exception e) {
             logger.warn("Gemini API failed, attempting local fallback: {}", e.getMessage());
-            try {
-                return onnxService.generateEmbedding(text);
-            } catch (Exception ex) {
-                logger.error("Both Gemini and Local embedding services failed", ex);
-                throw new RuntimeException("Embedding generation failed completely");
+
+            // Only attempt ONNX fallback if the model was successfully loaded
+            if (onnxService.isAvailable()) {
+                try {
+                    return onnxService.generateEmbedding(text);
+                } catch (Exception ex) {
+                    logger.error("Both Gemini and Local ONNX embedding services failed", ex);
+                    throw new RuntimeException("Embedding generation failed completely");
+                }
             }
+
+            logger.error("Gemini API failed and local ONNX model is not available. No fallback.");
+            throw new RuntimeException("Embedding generation failed - Gemini API error and ONNX model not loaded");
         }
     }
+
     @Override
     public int getPreferredDimension() {
         try {
-            // Check if Gemini is working
             return geminiService.getPreferredDimension();
         } catch (Exception e) {
-            // Fallback to ONNX dimension
-            return onnxService.getPreferredDimension();
+            if (onnxService.isAvailable()) {
+                return onnxService.getPreferredDimension();
+            }
+            // Default to Gemini's dimension (768) when neither service reports
+            return 768;
         }
     }
+
 }
