@@ -29,12 +29,26 @@ public class OnnxEmbeddingService implements EmbeddingService {
             env = OrtEnvironment.getEnvironment();
 
             // Load ONNX model
-            byte[] modelBytes = new ClassPathResource("models/all-MiniLM-L6-v2.onnx").getContentAsByteArray();
+            ClassPathResource modelResource = new ClassPathResource("models/all-MiniLM-L6-v2.onnx");
+            if (!modelResource.exists()) {
+                logger.warn("ONNX model file not found in classpath: models/all-MiniLM-L6-v2.onnx. Local fallback will be disabled.");
+                available = false;
+                return;
+            }
+
+            byte[] modelBytes = modelResource.getContentAsByteArray();
             session = env.createSession(modelBytes, new OrtSession.SessionOptions());
             logger.info("Local ONNX model loaded successfully.");
 
             // Load HuggingFace tokenizer
-            InputStream tokenizerStream = new ClassPathResource("models/tokenizer.json").getInputStream();
+            ClassPathResource tokenizerResource = new ClassPathResource("models/tokenizer.json");
+            if (!tokenizerResource.exists()) {
+                logger.warn("Tokenizer file not found in classpath: models/tokenizer.json. Local fallback will be disabled.");
+                available = false;
+                return;
+            }
+
+            InputStream tokenizerStream = tokenizerResource.getInputStream();
             tokenizer = HuggingFaceTokenizer.newInstance(tokenizerStream, Map.of(
                 "maxLength", "256",
                 "padding", "true",
@@ -44,7 +58,7 @@ public class OnnxEmbeddingService implements EmbeddingService {
             available = true;
 
         } catch (Exception e) {
-            logger.warn("Failed to load local ONNX model or tokenizer. Local fallback will not work.", e);
+            logger.error("Unexpected error loading local ONNX model or tokenizer: {}", e.getMessage(), e);
             available = false;
         }
     }
