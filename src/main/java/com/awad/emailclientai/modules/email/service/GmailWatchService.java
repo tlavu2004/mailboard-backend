@@ -52,6 +52,7 @@ public class GmailWatchService {
 
         try {
             Gmail gmail = getGmailService(account);
+            log.info("Registering Gmail watch for {} using topic: {}", account.getEmailAddress(), topicName);
             WatchRequest request = new WatchRequest()
                     .setTopicName(topicName)
                     .setLabelIds(List.of("INBOX"));
