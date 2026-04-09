@@ -188,10 +188,19 @@ public class SmtpService {
             props.put("mail.smtp.socketFactory.class", "javax.net.ssl.SSLSocketFactory");
         }
         
-        props.put("mail.smtp.ssl.trust", account.getSmtpHost());
-        props.put("mail.smtp.connectiontimeout", "15000");
-        props.put("mail.smtp.timeout", "45000");
-        props.put("mail.smtp.writetimeout", "20000");
+        props.put("mail.smtp.ssl.trust", "*");
+        props.put("mail.smtp.connectiontimeout", "30000");
+        props.put("mail.smtp.timeout", "60000");
+        props.put("mail.smtp.writetimeout", "30000");
+        
+        // Explicitly set SSL protocols to avoid handshake issues on some Java environments
+        props.put("mail.smtp.ssl.protocols", "TLSv1.2 TLSv1.3");
+        
+        // If it's port 587, ensure STARTTLS is indeed active and handled correctly
+        if (account.getSmtpPort() == 587) {
+            props.put("mail.smtp.starttls.enable", "true");
+            props.put("mail.smtp.starttls.required", "true");
+        }
         
         // OAuth2 configuration
         if (account.getAuthType() == EmailAuthType.OAUTH2) {
