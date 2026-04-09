@@ -23,7 +23,7 @@ services:
       
       # Cors URLs
       - key: CORS_ALLOWED_ORIGIN_1
-        value: "https://mailboard-frontend.vercel.app" # URL Vercel thật sau khi deploy
+        value: "https://tlavu-mailboard.vercel.app"
       - key: CORS_ALLOWED_ORIGIN_2
         value: "http://localhost:3000"
 
