@@ -18,7 +18,7 @@ spring:
   jpa:
     hibernate:
       ddl-auto: ${JPA_DDL:update}
-    show-sql: ${JPA_SHOW_SQL:true}
+    show-sql: ${JPA_SHOW_SQL:false}
     properties:
       hibernate:
         format_sql: true
@@ -114,7 +114,7 @@ logging:
     com.awad.emailclientai: DEBUG
     org.springframework.security: DEBUG
     org.springframework.web: DEBUG
-    org.hibernate.SQL: DEBUG
+    org.hibernate.SQL: INFO
 
 ---
 
