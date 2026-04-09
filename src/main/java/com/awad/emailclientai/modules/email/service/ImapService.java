@@ -1,6 +1,7 @@
 package com.awad.emailclientai.modules.email.service;
 
 import com.awad.emailclientai.modules.email.dto.response.AttachmentResourceDto;
+import org.springframework.scheduling.annotation.Async;
 import com.awad.emailclientai.modules.email.dto.response.MailFolderDto;
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDetailDto;
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDto;
@@ -412,6 +413,7 @@ public class ImapService {
      * @param account The email account
      * @param message The MimeMessage that was sent
      */
+    @Async
     public void appendToSentFolder(EmailAccount account, jakarta.mail.internet.MimeMessage message) 
             throws MessagingException {
         try (Store store = connectToStore(account)) {
