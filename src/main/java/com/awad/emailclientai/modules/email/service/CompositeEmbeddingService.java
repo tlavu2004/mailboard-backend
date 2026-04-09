@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @Primary
@@ -15,9 +16,9 @@ public class CompositeEmbeddingService implements EmbeddingService {
     private static final Logger logger = LoggerFactory.getLogger(CompositeEmbeddingService.class);
     
     private final GeminiEmbeddingService geminiService;
-    private final OnnxEmbeddingService onnxService;
+    private final Optional<OnnxEmbeddingService> onnxService;
 
-    public CompositeEmbeddingService(GeminiEmbeddingService geminiService, OnnxEmbeddingService onnxService) {
+    public CompositeEmbeddingService(GeminiEmbeddingService geminiService, Optional<OnnxEmbeddingService> onnxService) {
         this.geminiService = geminiService;
         this.onnxService = onnxService;
     }
@@ -33,17 +34,17 @@ public class CompositeEmbeddingService implements EmbeddingService {
         } catch (Exception e) {
             logger.warn("Gemini API failed, attempting local fallback: {}", e.getMessage());
 
-            // Only attempt ONNX fallback if the model was successfully loaded
-            if (onnxService.isAvailable()) {
+            // Only attempt ONNX fallback if the service is present and the model was successfully loaded
+            if (onnxService.isPresent() && onnxService.get().isAvailable()) {
                 try {
-                    return onnxService.generateEmbedding(text);
+                    return onnxService.get().generateEmbedding(text);
                 } catch (Exception ex) {
                     logger.error("Both Gemini and Local ONNX embedding services failed", ex);
                     throw new RuntimeException("Embedding generation failed completely");
                 }
             }
 
-            logger.error("Gemini API failed and local ONNX model is not available. No fallback.");
+            logger.error("Gemini API failed and local ONNX model is either disabled or not available. No fallback.");
             throw new RuntimeException("Embedding generation failed - Gemini API error and ONNX model not loaded");
         }
     }
@@ -53,8 +54,8 @@ public class CompositeEmbeddingService implements EmbeddingService {
         try {
             return geminiService.getPreferredDimension();
         } catch (Exception e) {
-            if (onnxService.isAvailable()) {
-                return onnxService.getPreferredDimension();
+            if (onnxService.isPresent() && onnxService.get().isAvailable()) {
+                return onnxService.get().getPreferredDimension();
             }
             // Default to Gemini's dimension (768) when neither service reports
             return 768;
