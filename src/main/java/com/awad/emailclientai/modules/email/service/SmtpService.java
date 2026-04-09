@@ -181,11 +181,14 @@ public class SmtpService {
             props.put("mail.smtp.starttls.required", "true");
         }
         
-        // SSL settings for port 465
-        if (account.getSmtpPort() == 465) {
+        // Robust SSL/TLS settings for Gmail and other providers
+        // We use port 465 (SSL) as it's more reliable in cloud environments like Render
+        if (account.getSmtpPort() == 465 || (account.getSmtpPort() == 587 && account.getSmtpHost().contains("gmail.com"))) {
+            props.put("mail.smtp.port", "465"); // Force 465 for Gmail if on 587
             props.put("mail.smtp.ssl.enable", "true");
             props.put("mail.smtp.socketFactory.port", "465");
             props.put("mail.smtp.socketFactory.class", "javax.net.ssl.SSLSocketFactory");
+            props.put("mail.smtp.socketFactory.fallback", "false");
         }
         
         props.put("mail.smtp.ssl.trust", "*");
