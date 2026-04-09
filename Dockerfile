@@ -9,12 +9,9 @@ COPY src ./src
 # Package the application (skip tests to speed up the build in CI)
 RUN mvn clean package -DskipTests
 
-# Stage 2: Create the runtime image
-FROM amazoncorretto:21-alpine
+# Stage 2: Create the runtime image (non-Alpine for ONNX Runtime glibc compatibility)
+FROM amazoncorretto:21
 WORKDIR /app
-
-# Install native libraries required by ONNX Runtime
-RUN apk add --no-cache libstdc++ libgcc
 
 # Copy the generated fat (executable) JAR file
 COPY --from=builder /app/target/*.jar app.jar
