@@ -96,7 +96,7 @@ gemini:
 
 gmail:
   pubsub:
-    topic: ${GMAIL_PUBSUB_TOPIC:projects/mailboard/topics/gmail-notifications}
+    topic: ${GMAIL_PUBSUB_TOPIC:projects/email-client-ai-oauth/topics/gmail-notifications}
 
 logging:
   pattern:
