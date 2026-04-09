@@ -72,7 +72,7 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
            "ORDER BY distance LIMIT 10", nativeQuery = true)
     List<Object[]> findSimilarEmails384WithDistance(@Param("accountId") Long accountId, @Param("embedding") String embedding, @Param("threshold") double threshold);
 
-    @Query("SELECT e FROM EmailEntity e WHERE e.account.id = :accountId AND (e.embedding384 IS NULL AND e.embedding768 IS NULL) AND e.body IS NOT NULL")
+    @Query("SELECT e FROM EmailEntity e WHERE e.account.id = :accountId AND (e.embedding384 IS NULL OR e.embedding768 IS NULL) AND e.body IS NOT NULL")
     List<EmailEntity> findEmailsMissingEmbeddings(@Param("accountId") Long accountId, org.springframework.data.domain.Pageable pageable);
 
     @Query(value = "SELECT val, type, MAX(score) as max_score FROM (" +
