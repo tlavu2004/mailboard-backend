@@ -13,6 +13,9 @@ RUN mvn clean package -DskipTests
 FROM amazoncorretto:21-alpine
 WORKDIR /app
 
+# Install native libraries required by ONNX Runtime
+RUN apk add --no-cache libstdc++ libgcc
+
 # Copy the generated fat (executable) JAR file
 COPY --from=builder /app/target/*.jar app.jar
 
