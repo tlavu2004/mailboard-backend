@@ -9,8 +9,8 @@ COPY src ./src
 # Package the application (skip tests to speed up the build in CI)
 RUN mvn clean package -DskipTests
 
-# Stage 2: Create the runtime image (non-Alpine for ONNX Runtime glibc compatibility)
-FROM amazoncorretto:21
+# Stage 2: Create the runtime image (AL2023 for ONNX Runtime glibc 2.27+ compatibility)
+FROM amazoncorretto:21-al2023-headless
 WORKDIR /app
 
 # Copy the generated fat (executable) JAR file
