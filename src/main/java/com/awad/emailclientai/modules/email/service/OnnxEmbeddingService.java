@@ -21,6 +21,7 @@ public class OnnxEmbeddingService implements EmbeddingService {
     private OrtEnvironment env;
     private OrtSession session;
     private HuggingFaceTokenizer tokenizer;
+    private boolean available = false;
 
     @PostConstruct
     public void init() {
@@ -40,9 +41,11 @@ public class OnnxEmbeddingService implements EmbeddingService {
                 "truncation", "true"
             ));
             logger.info("HuggingFace tokenizer loaded successfully.");
+            available = true;
 
         } catch (Exception e) {
             logger.warn("Failed to load local ONNX model or tokenizer. Local fallback will not work.", e);
+            available = false;
         }
     }
 
@@ -130,6 +133,13 @@ public class OnnxEmbeddingService implements EmbeddingService {
         }
 
         return sumEmbedding;
+    }
+
+    /**
+     * Check if the ONNX model and tokenizer are loaded and ready.
+     */
+    public boolean isAvailable() {
+        return available;
     }
 
     @Override
