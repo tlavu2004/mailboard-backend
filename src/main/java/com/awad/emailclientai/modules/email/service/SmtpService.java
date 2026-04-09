@@ -55,8 +55,8 @@ public class SmtpService {
             }
         });
         
-        // Always enable debug logging for SMTP to troubleshoot connection/auth issues
-        session.setDebug(true);
+        // Debug logging disabled for production performance
+        session.setDebug(false);
         
         MimeMessage message = createMimeMessage(session, account, request);
         
@@ -106,7 +106,7 @@ public class SmtpService {
             }
         });
         
-        session.setDebug(true);
+        session.setDebug(false);
         
         MimeMessage message = createMimeMessageWithAttachments(session, account, request, attachments);
         
@@ -189,8 +189,9 @@ public class SmtpService {
         }
         
         props.put("mail.smtp.ssl.trust", account.getSmtpHost());
-        props.put("mail.smtp.connectiontimeout", "10000");
-        props.put("mail.smtp.timeout", "30000");
+        props.put("mail.smtp.connectiontimeout", "15000");
+        props.put("mail.smtp.timeout", "45000");
+        props.put("mail.smtp.writetimeout", "20000");
         
         // OAuth2 configuration
         if (account.getAuthType() == EmailAuthType.OAUTH2) {
