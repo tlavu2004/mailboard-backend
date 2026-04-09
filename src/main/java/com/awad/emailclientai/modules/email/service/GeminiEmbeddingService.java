@@ -17,9 +17,12 @@ public class GeminiEmbeddingService implements EmbeddingService {
     private final RestClient restClient;
     
     @Value("${gemini.api-key}")
-    private String apiKey;
+    private String apiKeysConfig;
 
-    @Value("${gemini.embedding-model:gemini-embedding-001}")
+    private String[] apiKeys;
+    private int currentKeyIndex = 0;
+
+    @Value("${gemini.embedding-model:text-embedding-004}")
     private String model;
 
     public GeminiEmbeddingService(RestClient.Builder restClientBuilder) {
@@ -28,11 +31,24 @@ public class GeminiEmbeddingService implements EmbeddingService {
 
     @PostConstruct
     public void init() {
-        String maskedKey = (apiKey != null && apiKey.length() > 4) 
-            ? "..." + apiKey.substring(apiKey.length() - 4) 
-            : "NULL/SHORT";
-        logger.info("GeminiEmbeddingService initialized with API Key: {}", maskedKey);
+        if (apiKeysConfig != null && !apiKeysConfig.isEmpty()) {
+            apiKeys = apiKeysConfig.split(",");
+            for (int i = 0; i < apiKeys.length; i++) {
+                apiKeys[i] = apiKeys[i].trim();
+            }
+        } else {
+            apiKeys = new String[0];
+        }
+
+        logger.info("GeminiEmbeddingService initialized with {} API Keys.", apiKeys.length);
         logger.info("Gemini Model: {}", model);
+    }
+
+    private String getNextApiKey() {
+        if (apiKeys.length == 0) return null;
+        String key = apiKeys[currentKeyIndex];
+        currentKeyIndex = (currentKeyIndex + 1) % apiKeys.length;
+        return key;
     }
 
     @Override
@@ -66,23 +82,40 @@ public class GeminiEmbeddingService implements EmbeddingService {
         logger.debug("Generating embedding via Gemini for text length: {}", text.length());
         
         String url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":embedContent";
+        String currentKey = getNextApiKey();
 
-        // text-embedding-004 supports outputDimensionality
-        // DB is now 768 (V5.1), so we request 768.
-        Map<String, Object> requestBody = Map.of(
-            "content", Map.of(
-                "parts", List.of(Map.of("text", text))
-            ),
-            "outputDimensionality", 768
+        if (currentKey == null) {
+            throw new RuntimeException("No Gemini API keys configured");
+        }
+
+        // DB expects 768 dimensions (V5.1).
+        // text-embedding-004 supports explicit outputDimensionality.
+        // gemini-embedding-001 does NOT support it and defaults to 768 anyway.
+        Map<String, Object> contentMap = Map.of(
+            "parts", List.of(Map.of("text", text))
         );
+
+        Map<String, Object> requestBody;
+        if ("text-embedding-004".equals(model)) {
+            requestBody = Map.of(
+                "content", contentMap,
+                "outputDimensionality", 768
+            );
+        } else {
+            requestBody = Map.of(
+                "content", contentMap
+            );
+        }
 
         @SuppressWarnings("unchecked")
         Map<String, Object> response = restClient.post()
                 .uri(url)
-                .header("x-goog-api-key", apiKey)
+                .header("x-goog-api-key", currentKey)
                 .body(requestBody)
                 .retrieve()
                 .body(Map.class);
+        
+        // ... rest of validation logic ...
 
         if (response != null && response.containsKey("embedding")) {
             @SuppressWarnings("unchecked")
@@ -103,7 +136,7 @@ public class GeminiEmbeddingService implements EmbeddingService {
 
     @Override
     public int getPreferredDimension() {
-        if (apiKey == null || apiKey.isEmpty() || apiKey.equals("dummy-api-key")) {
+        if (apiKeys.length == 0) {
             throw new RuntimeException("Gemini API key is not configured");
         }
         return 768;
