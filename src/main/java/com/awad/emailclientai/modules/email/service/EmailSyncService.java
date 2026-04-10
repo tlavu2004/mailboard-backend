@@ -201,9 +201,13 @@ public class EmailSyncService {
                                          (preferredDim == 384 && existing.getEmbedding384() != null);
 
                     if (!hasPreferred && existing.getBody() != null && !existing.getBody().isEmpty()) {
-                        generateAndSetEmbedding(existing, existing.getSubject(), existing.getBody());
-                        if (existing.getEmbedding768() != null || existing.getEmbedding384() != null) {
-                            changed = true;
+                        // Skip embeddings for unimportant folders
+                        String status = existing.getStatus();
+                        if (status != null && !status.equalsIgnoreCase("TRASH") && !status.equalsIgnoreCase("SPAM")) {
+                            generateAndSetEmbedding(existing, existing.getSubject(), existing.getSnippet());
+                            if (existing.getEmbedding768() != null || existing.getEmbedding384() != null) {
+                                changed = true;
+                            }
                         }
                     }
 
@@ -270,7 +274,10 @@ public class EmailSyncService {
                 try {
                     emailRepository.save(entity);
                     // Generate embedding after entity is persisted (has ID)
-                    generateAndSetEmbedding(entity, msg.getSubject(), msg.getBody());
+                    // Skip for TRASH and SPAM
+                    if (!"TRASH".equalsIgnoreCase(targetStatus) && !"SPAM".equalsIgnoreCase(targetStatus)) {
+                        generateAndSetEmbedding(entity, msg.getSubject(), msg.getPreview());
+                    }
                 } catch (DataIntegrityViolationException e) {
                     log.warn("Duplicate email detected during sync (messageId: {}), skipping.", msg.getMessageId());
                 }
@@ -321,8 +328,9 @@ public class EmailSyncService {
                 return;
             }
 
-            String cleanBody = imapService.stripHtml(body);
-            String textToEmbed = (subject != null ? subject : "") + " " + (cleanBody != null ? cleanBody : "");
+            // We now embed Subject + Snippet (Pre-cleaned 150 chars) instead of full body
+            // This drastically reduces API quota usage and is sufficient for semantic search.
+            String textToEmbed = (subject != null ? subject : "") + " " + (body != null ? body : "");
             if (textToEmbed.length() > 8000) {
                 textToEmbed = textToEmbed.substring(0, 8000);
             }

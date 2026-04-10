@@ -444,9 +444,15 @@ public class LegacyDashboardController {
         
         for (EmailEntity entity : missing) {
             try {
+                // To avoid 429 Too Many Requests from Gemini Free Tier (15 RPM)
+                Thread.sleep(4000); 
+                
                 // This method strips HTML internally and handles storage
                 emailSyncService.refreshEmail(entity.getId());
                 processed++;
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
             } catch (Exception e) {
                 log.error("Failed to generate embedding for email {}: {}", entity.getId(), e.getMessage());
                 failed++;
