@@ -126,12 +126,34 @@ public class GeminiEmbeddingService implements EmbeddingService {
                 List<Float> values = rawValues.stream()
                     .map(Number::floatValue)
                     .collect(java.util.stream.Collectors.toList());
+                
+                // Handle Matryoshka embeddings (e.g., text-embedding-004 returns 3072 by default)
+                // We truncate to 768 to fit our DB and maintain high search quality.
+                if (values.size() == 3072) {
+                    logger.debug("Truncating 3072-dim embedding to 768-dim (Matryoshka)");
+                    values = values.subList(0, 768);
+                    normalize(values);
+                }
+
                 logger.debug("Generated embedding with size: {}", values.size());
                 return values;
             }
         }
 
         throw new RuntimeException("Empty or invalid response from Gemini API");
+    }
+
+    private void normalize(List<Float> vector) {
+        double sumSquares = 0;
+        for (float v : vector) {
+            sumSquares += v * v;
+        }
+        float magnitude = (float) Math.sqrt(sumSquares);
+        if (magnitude > 1e-6) {
+            for (int i = 0; i < vector.size(); i++) {
+                vector.set(i, vector.get(i) / magnitude);
+            }
+        }
     }
 
     @Override
