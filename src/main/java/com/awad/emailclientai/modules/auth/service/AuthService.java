@@ -121,10 +121,14 @@ public class AuthService {
 
     @Transactional
     public void logout(String refreshToken) {
-        log.debug("Logout request");
-        refreshTokenService.findByToken(refreshToken);
-        refreshTokenService.deleteByToken(refreshToken);
-        log.info("User logged out successfully");
+        log.debug("Logout request for token starting with: {}", 
+            (refreshToken != null && refreshToken.length() > 10) ? refreshToken.substring(0, 10) : "short-token");
+        try {
+            refreshTokenService.deleteByToken(refreshToken);
+            log.info("User logged out successfully (token deleted)");
+        } catch (Exception e) {
+            log.warn("Logout attempt: token could not be deleted or not found. Continuing logout.");
+        }
     }
 
     public UserResponse getCurrentUser(String email) {
