@@ -534,7 +534,7 @@ public class LegacyDashboardController {
             m.put("isStarred", entity.isStarred());
             m.put("hasAttachments", entity.isHasAttachments());
             
-            String dateStr = entity.getReceivedDate() != null ? entity.getReceivedDate().toString() : "2024-01-01T00:00:00Z";
+            String dateStr = entity.getReceivedDate() != null ? entity.getReceivedDate().toString() + "Z" : "2024-01-01T00:00:00Z";
             m.put("receivedAt", dateStr);
             m.put("createdAt", dateStr);
             m.put("summary", entity.getSummary());
@@ -569,7 +569,7 @@ public class LegacyDashboardController {
                     encodedEmail, URLEncoder.encode(email.getMessageId(), StandardCharsets.UTF_8));
         
         card.put("gmail_url", gmailUrl);
-        card.put("received_at", email.getReceivedDate() != null ? email.getReceivedDate().toString() : "");
+        card.put("received_at", email.getReceivedDate() != null ? email.getReceivedDate().toString() + "Z" : "");
         card.put("is_read", email.isRead());
         card.put("is_starred", email.isStarred());
         card.put("has_attachments", email.isHasAttachments());
