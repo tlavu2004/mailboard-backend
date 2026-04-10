@@ -236,7 +236,7 @@ public class LegacyDashboardController {
     }
 
     @PostMapping("/kanban/move")
-    public ResponseEntity<ApiResponse<Void>> moveCard(
+    public ResponseEntity<ApiResponse<Map<String, Object>>> moveCard(
             @AuthenticationPrincipal UserPrincipal principal,
             @RequestBody Map<String, Object> request
     ) {
@@ -253,8 +253,9 @@ public class LegacyDashboardController {
         }
         
         emailRepository.save(email);
+        EmailAccount account = getPrimaryAccount(principal);
         
-        return ResponseEntity.ok(ApiResponse.success("Card moved"));
+        return ResponseEntity.ok(ApiResponse.success(mapToKanbanCard(email, account)));
     }
 
     @PostMapping("/kanban/summarize")
@@ -272,7 +273,7 @@ public class LegacyDashboardController {
     }
     
     @PostMapping("/kanban/snooze")
-    public ResponseEntity<ApiResponse<Void>> snoozeCard(
+    public ResponseEntity<ApiResponse<Map<String, Object>>> snoozeCard(
             @AuthenticationPrincipal UserPrincipal principal,
             @RequestBody Map<String, String> request
     ) {
@@ -287,8 +288,9 @@ public class LegacyDashboardController {
         email.setSnoozedUntil(OffsetDateTime.parse(untilStr));
         
         emailRepository.save(email);
+        EmailAccount account = getPrimaryAccount(principal);
         
-        return ResponseEntity.ok(ApiResponse.success("Email snoozed"));
+        return ResponseEntity.ok(ApiResponse.success(mapToKanbanCard(email, account)));
     }
 
     @GetMapping("/kanban/meta")
@@ -314,7 +316,7 @@ public class LegacyDashboardController {
     }
 
     @PostMapping("/emails/{id}/modify")
-    public ResponseEntity<ApiResponse<Void>> modifyEmail(
+    public ResponseEntity<ApiResponse<Map<String, Object>>> modifyEmail(
             @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable String id,
             @RequestBody Map<String, List<String>> request
@@ -381,7 +383,8 @@ public class LegacyDashboardController {
             }
         }
         
-        return ResponseEntity.ok(ApiResponse.success("Modify completed"));
+        EmailAccount account = getPrimaryAccount(principal);
+        return ResponseEntity.ok(ApiResponse.success(mapToFrontendEmail(email, account)));
     }
 
     @GetMapping("/emails/{id}")
