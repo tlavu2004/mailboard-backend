@@ -10,6 +10,9 @@ import com.awad.emailclientai.modules.email.service.ImapService;
 import com.awad.emailclientai.modules.kanban.repository.KanbanColumnRepository;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.service.EmailAccountService;
+import com.awad.emailclientai.modules.email.service.EmailService;
+import com.awad.emailclientai.shared.exception.BusinessException;
+import com.awad.emailclientai.shared.exception.ErrorCode;
 import com.awad.emailclientai.modules.email.dto.request.SendEmailRequestDto;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import org.springframework.web.multipart.MultipartFile;
@@ -51,13 +54,12 @@ public class EmailController {
     private final EmailAccountService emailAccountService;
     private final EmailSyncService emailSyncService;
     private final com.awad.emailclientai.modules.email.service.AiService aiService;
+    private final EmailService emailService;
 
     @PostMapping("/{id}/summarize")
     @Operation(summary = "Generate AI Email Summary", description = "Generates a summary using AI or local fallback.")
     public ResponseEntity<ApiResponse<String>> summarizeEmail(@PathVariable Long id) {
         String summary = aiService.summarizeEmail(id);
-        // "Summary generated" is the message, summary is the data.
-        // This avoids collision with ApiResponse.success(String message)
         return ResponseEntity.ok(ApiResponse.success("Summary generated", summary));
     }
 
@@ -97,12 +99,9 @@ public class EmailController {
         log.info("Bridge Send Email (JSON): Received request from user {}", principal.getId());
 
         EmailAccount account = getPrimaryAccount(principal);
-        log.info("Bridge Send Email (JSON): Using account {}", account.getEmailAddress());
         SendEmailRequestDto request = mapJsonToDto(jsonBody);
 
-        log.info("Bridge Send Email (JSON): Calling emailAccountService.sendEmail...");
         String messageId = emailAccountService.sendEmail(principal.getId(), account.getId(), request);
-        log.info("Bridge Send Email (JSON): Success, messageId={}", messageId);
         return ResponseEntity.ok(ApiResponse.success("Email sent successfully", messageId));
     }
 
@@ -121,7 +120,6 @@ public class EmailController {
         log.info("Bridge Send Email (Multipart): Received request from user {}", principal.getId());
 
         EmailAccount account = getPrimaryAccount(principal);
-        log.info("Bridge Send Email (Multipart): Using account {}", account.getEmailAddress());
         ObjectMapper mapper = new ObjectMapper();
         SendEmailRequestDto request = new SendEmailRequestDto();
 
@@ -139,14 +137,11 @@ public class EmailController {
         request.setInReplyTo(threadId);
 
         String messageId;
-        log.info("Bridge Send Email (Multipart): Calling emailAccountService...");
         if (attachments != null && !attachments.isEmpty()) {
-            log.info("Bridge Send Email (Multipart): Sending with {} attachments", attachments.size());
             messageId = emailAccountService.sendEmailWithAttachments(principal.getId(), account.getId(), request, attachments);
         } else {
             messageId = emailAccountService.sendEmail(principal.getId(), account.getId(), request);
         }
-        log.info("Bridge Send Email (Multipart): Success, messageId={}", messageId);
 
         return ResponseEntity.ok(ApiResponse.success("Email sent successfully", messageId));
     }
@@ -178,7 +173,6 @@ public class EmailController {
             request.setCc((List<String>) jsonBody.get("cc"));
             request.setBcc((List<String>) jsonBody.get("bcc"));
             request.setSubject((String) jsonBody.get("subject"));
-            // Map FE 'body' to BE 'bodyText'
             request.setBodyText((String) jsonBody.get("body"));
             request.setInReplyTo((String) jsonBody.get("threadId"));
         }
@@ -192,6 +186,27 @@ public class EmailController {
         return ResponseEntity.ok(ApiResponse.success("Email refreshed successfully"));
     }
 
+    @GetMapping("/{id}")
+    @Operation(summary = "Get Full Email Detail", description = "Retrieve full email content including processed body and attachments.")
+    public ResponseEntity<ApiResponse<EmailEntityDto>> getEmailDetail(@PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.success(emailService.getEmailDetail(id)));
+    }
+
+    @GetMapping("/{id}/attachments/{atId}/inline")
+    @Operation(summary = "Get Inline Attachment Proxy", description = "Stream an inline attachment/image for display in email body.")
+    public ResponseEntity<org.springframework.core.io.Resource> getInlineAttachment(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long id,
+            @PathVariable Long atId) throws MessagingException, IOException {
+        
+        var resource = emailService.getInlineAttachment(id, atId);
+        String contentType = emailService.getAttachmentContentType(atId);
+        
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(contentType))
+                .body(resource);
+    }
+
     @GetMapping("/search")
     @Operation(summary = "Fuzzy Search Emails with Relevance Ranking", description = "Fuzzy search by subject or sender with relevance ranking.")
     public ResponseEntity<ApiResponse<List<SearchResultDto>>> searchEmails(
@@ -201,6 +216,7 @@ public class EmailController {
         List<Object[]> rows = emailRepository.searchEmailsWithScore(accountId, q);
         List<SearchResultDto> results = rows.stream()
                 .map(row -> {
+                    // Manual mapping for search results since they return Object[] from native query
                     EmailEntityDto emailDto = EmailEntityDto.builder()
                             .id(((Number) row[0]).longValue())
                             .messageId((String) row[1])
@@ -246,7 +262,6 @@ public class EmailController {
             @RequestParam(required = false) Boolean hasAttachments,
             @RequestParam(defaultValue = "receivedDate,desc") String sort) {
         
-        // Parse sort parameter (simple implementation: "field,direction")
         String[] sortParts = sort.split(",");
         String sortField = sortParts[0];
         org.springframework.data.domain.Sort.Direction direction = org.springframework.data.domain.Sort.Direction.DESC;
@@ -259,9 +274,8 @@ public class EmailController {
                 com.awad.emailclientai.modules.email.repository.EmailSpecification.filterEmails(accountId, status, unread, hasAttachments);
 
         List<EmailEntity> entities = emailRepository.findAll(spec, sortObj);
-
         List<EmailEntityDto> dtos = entities.stream()
-                .map(this::mapToDto)
+                .map(emailService::mapToDto)
                 .collect(Collectors.toList());
 
         return ResponseEntity.ok(ApiResponse.success(dtos));
@@ -274,12 +288,11 @@ public class EmailController {
             @RequestParam String status) {
         
         EmailEntity email = emailRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Email not found"));
+                .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_NOT_FOUND));
         
         String oldStatus = email.getStatus();
         email.setStatus(status);
         
-        // If moving out of snoozed, clear the date
         if (!EmailStatus.SNOOZED.equals(status)) {
             email.setSnoozedUntil(null);
         }
@@ -287,7 +300,6 @@ public class EmailController {
         EmailEntity saved = emailRepository.save(email);
 
         try {
-            // Look up old label to remove
             String oldLabelId = null;
             if (oldStatus != null) {
                 oldLabelId = kanbanColumnRepository
@@ -297,7 +309,6 @@ public class EmailController {
                         .orElse(null);
             }
 
-            // Look up new label to add
             String finalOldLabelId = oldLabelId;
             kanbanColumnRepository.findByAccountIdAndLinkedStatus(email.getAccount().getId(), status)
                 .ifPresent(column -> {
@@ -314,7 +325,7 @@ public class EmailController {
             log.warn("Failed to find kanban column mapping: {}", e.getMessage());
         }
 
-        return ResponseEntity.ok(ApiResponse.success(mapToDto(saved)));
+        return ResponseEntity.ok(ApiResponse.success(emailService.mapToDto(saved)));
     }
 
     @PutMapping("/{id}/snooze")
@@ -324,39 +335,21 @@ public class EmailController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime until) {
         
         EmailEntity email = emailRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Email not found"));
+                .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_NOT_FOUND));
         
         email.setStatus(EmailStatus.SNOOZED);
         email.setSnoozedUntil(until);
         
         EmailEntity saved = emailRepository.save(email);
-        return ResponseEntity.ok(ApiResponse.success(mapToDto(saved)));
+        return ResponseEntity.ok(ApiResponse.success(emailService.mapToDto(saved)));
     }
 
-    private EmailEntityDto mapToDto(EmailEntity entity) {
-        return EmailEntityDto.builder()
-                .id(entity.getId())
-                .messageId(entity.getMessageId())
-                .uid(entity.getUid())
-                .subject(entity.getSubject())
-                .sender(entity.getSender())
-                .snippet(entity.getSnippet())
-                .body(entity.getBody())
-                .status(entity.getStatus())
-                .receivedDate(entity.getReceivedDate())
-                .snoozedUntil(entity.getSnoozedUntil())
-                .summary(entity.getSummary())
-                .summarySource(entity.getSummarySource() != null ? entity.getSummarySource().name() : null)
-                .isRead(entity.isRead())
-                .hasAttachments(entity.isHasAttachments())
-                .accountEmail(entity.getAccount().getEmailAddress())
-                .gmailLink(entity.getGmailMessageId() != null ? 
-                        String.format("https://mail.google.com/mail/u/%s/#inbox/%s", 
-                            URLEncoder.encode(entity.getAccount().getEmailAddress(), StandardCharsets.UTF_8),
-                            entity.getGmailMessageId()) :
-                        String.format("https://mail.google.com/mail/u/%s/#search/rfc822msgid:%s", 
-                            URLEncoder.encode(entity.getAccount().getEmailAddress(), StandardCharsets.UTF_8),
-                            URLEncoder.encode(entity.getMessageId(), StandardCharsets.UTF_8)))
-                .build();
+    @GetMapping("/suggest")
+    @Operation(summary = "AI Suggest Search Query", description = "Suggest search query based on current input and user context.")
+    public ResponseEntity<ApiResponse<String>> suggestSearch(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam String input) {
+        String suggestion = aiService.suggestSearchQuery(input, principal.getId());
+        return ResponseEntity.ok(ApiResponse.success("Suggestion generated", suggestion));
     }
 }

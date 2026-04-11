@@ -387,18 +387,6 @@ public class LegacyDashboardController {
         return ResponseEntity.ok(ApiResponse.success(mapToFrontendEmail(email, account)));
     }
 
-    @GetMapping("/emails/{id}")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> getEmailDetail(
-            @AuthenticationPrincipal UserPrincipal principal,
-            @PathVariable String id
-    ) {
-        Long emailId = Long.parseLong(id);
-        EmailEntity email = emailRepository.findById(emailId)
-                .orElseThrow(() -> new RuntimeException("Email not found"));
-        
-        EmailAccount account = getPrimaryAccount(principal);
-        return ResponseEntity.ok(ApiResponse.success(mapToFrontendEmail(email, account)));
-    }
 
     @GetMapping("/gmail/labels")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getGmailLabels(

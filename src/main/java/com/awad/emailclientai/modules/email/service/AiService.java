@@ -278,11 +278,24 @@ public class AiService {
             outLen += c.text.length();
         }
 
-        String finalRes = result.toString();
-        if (finalRes.length() > maxChars) {
-            finalRes = finalRes.substring(0, maxChars) + "...";
+        String res = result.toString();
+        if (res.length() > maxChars) {
+            res = res.substring(0, maxChars) + "...";
         }
-        return finalRes.trim();
+        return res.trim();
+    }
+
+    public String suggestSearchQuery(String input, Long userId) {
+        if (geminiApiKey == null || geminiApiKey.isEmpty()) {
+            return "from: " + input;
+        }
+
+        String prompt = "Give a 3-5 word email search query for: " + input + ". Respond with ONLY the query.";
+        try {
+            return callGeminiApi(prompt);
+        } catch (Exception e) {
+            return "from: " + input;
+        }
     }
 
     private static class SentenceScore {

@@ -6,6 +6,8 @@ import lombok.*;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "emails")
@@ -72,4 +74,7 @@ public class EmailEntity {
 
     @Column(name = "embedding_384", columnDefinition = "vector", insertable = false, updatable = false)
     private String embedding384;
+    @OneToMany(mappedBy = "email", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<EmailAttachment> attachments = new ArrayList<>();
 }

@@ -98,4 +98,22 @@ public class MailMessageDto {
      * Size of the message in bytes.
      */
     private int size;
+
+    /**
+     * List of attachments (metadata only).
+     */
+    private List<AttachmentMetadataDto> attachments;
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class AttachmentMetadataDto {
+        private String id;
+        private String filename;
+        private String contentType;
+        private long size;
+        private String contentId;
+        private boolean inline;
+    }
 }

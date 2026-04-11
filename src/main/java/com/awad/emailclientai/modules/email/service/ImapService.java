@@ -577,6 +577,19 @@ public class ImapService {
         // Fetch Gmail labels using raw IMAP FETCH X-GM-LABELS command
         List<String> labels = fetchGmailLabels(message, folder);
 
+        String body = fetchBodyContent(message);
+        String preview = generatePreview(message);
+
+        // Collect attachment metadata
+        List<MailMessageDto.AttachmentMetadataDto> attachments = new ArrayList<>();
+        try {
+            if (message.getContent() instanceof Multipart) {
+                collectAttachmentMetadata((Multipart) message.getContent(), attachments, new int[]{0});
+            }
+        } catch (Exception e) {
+            log.warn("Failed to extract attachment metadata for UID {}: {}", uid, e.getMessage());
+        }
+
         return MailMessageDto.builder()
                 .uid(uid)
                 .messageId(getHeaderValue(message, "Message-ID"))
@@ -585,13 +598,14 @@ public class ImapService {
                 .to(to)
                 .cc(cc)
                 .subject(message.getSubject())
-                .preview(generatePreview(message)) 
-                .body(fetchBodyContent(message)) // Fetch limited body
+                .preview(preview) 
+                .body(body) // Fetch limited body
                 .sentAt(sentAt)
                 .receivedAt(receivedAt)
                 .read(read)
                 .starred(starred)
-                .hasAttachments(hasAttachments)
+                .hasAttachments(hasAttachments || !attachments.isEmpty())
+                .attachments(attachments)
                 .labels(labels)
                 .gmailMessageId(extractGmailMsgId(message))
                 .threadId(extractGmailThreadId(message))
@@ -803,12 +817,11 @@ public class ImapService {
     private String getContentId(BodyPart bodyPart) throws MessagingException {
         String[] headers = bodyPart.getHeader("Content-ID");
         if (headers != null && headers.length > 0) {
-            String cid = headers[0];
+            String cid = headers[0].trim();
             // Remove angle brackets
-            if (cid.startsWith("<") && cid.endsWith(">")) {
-                return cid.substring(1, cid.length() - 1);
-            }
-            return cid;
+            if (cid.startsWith("<")) cid = cid.substring(1);
+            if (cid.endsWith(">")) cid = cid.substring(0, cid.length() - 1);
+            return cid.trim();
         }
         return null;
     }
@@ -898,6 +911,31 @@ public class ImapService {
             }
         }
         return false;
+    }
+
+    private void collectAttachmentMetadata(Multipart multipart, 
+                                           List<MailMessageDto.AttachmentMetadataDto> attachments,
+                                           int[] index) throws MessagingException, IOException {
+        for (int i = 0; i < multipart.getCount(); i++) {
+            BodyPart bodyPart = multipart.getBodyPart(i);
+            String disposition = bodyPart.getDisposition();
+            
+            if (Part.ATTACHMENT.equalsIgnoreCase(disposition) || 
+                Part.INLINE.equalsIgnoreCase(disposition) ||
+                bodyPart.getFileName() != null) {
+                
+                attachments.add(MailMessageDto.AttachmentMetadataDto.builder()
+                        .id(String.valueOf(index[0]++))
+                        .filename(bodyPart.getFileName() != null ? bodyPart.getFileName() : "attachment-" + index[0])
+                        .contentType(bodyPart.getContentType())
+                        .size(bodyPart.getSize())
+                        .contentId(getContentId(bodyPart))
+                        .inline(Part.INLINE.equalsIgnoreCase(disposition))
+                        .build());
+            } else if (bodyPart.getContent() instanceof Multipart) {
+                collectAttachmentMetadata((Multipart) bodyPart.getContent(), attachments, index);
+            }
+        }
     }
 
     private String extractGmailMsgId(Message message) {

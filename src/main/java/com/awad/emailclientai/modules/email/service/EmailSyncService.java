@@ -248,6 +248,14 @@ public class EmailSyncService {
                         changed = true;
                     }
 
+                    // Update attachments if missing or changed
+                    if (msg.getAttachments() != null && !msg.getAttachments().isEmpty()) {
+                        if (existing.getAttachments() == null || existing.getAttachments().isEmpty()) {
+                            existing.setAttachments(mapAttachments(msg.getAttachments(), existing));
+                            changed = true;
+                        }
+                    }
+
                     if (changed) {
                         emailRepository.save(existing);
                     }
@@ -270,6 +278,11 @@ public class EmailSyncService {
                         .account(account)
                         .kanbanOrder((double) msg.getReceivedAt().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
                         .build();
+
+                // Map and set attachments
+                if (msg.getAttachments() != null && !msg.getAttachments().isEmpty()) {
+                    entity.setAttachments(mapAttachments(msg.getAttachments(), entity));
+                }
 
                 try {
                     emailRepository.save(entity);
@@ -409,5 +422,19 @@ public class EmailSyncService {
         // Create new column
         log.info("Creating new Kanban column for label: '{}'", labelName);
         return kanbanService.createColumn(accountId, labelName, labelName, "#f1f5f9");
+    }
+
+    private List<com.awad.emailclientai.modules.email.entity.EmailAttachment> mapAttachments(
+            List<MailMessageDto.AttachmentMetadataDto> dtos, EmailEntity email) {
+        return dtos.stream().map(dto -> com.awad.emailclientai.modules.email.entity.EmailAttachment.builder()
+                .email(email)
+                .filename(dto.getFilename())
+                .contentType(dto.getContentType())
+                .size(dto.getSize())
+                .serverAttachmentId(dto.getId())
+                .contentId(dto.getContentId())
+                .inline(dto.isInline())
+                .build())
+                .collect(Collectors.toList());
     }
 }

@@ -6,6 +6,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.List;
 
 @Data
 @Builder
@@ -30,4 +31,18 @@ public class EmailEntityDto {
     private boolean hasAttachments;
     private String gmailLink;
     private String accountEmail;
+    private List<AttachmentDto> attachments;
+
+    @Data
+    @Builder
+    public static class AttachmentDto {
+        private String id;
+        private String filename;
+        private long size;
+        private String contentType;
+        private String serverAttachmentId;
+        private String contentId;
+        private boolean inline;
+        private String url;
+    }
 }
