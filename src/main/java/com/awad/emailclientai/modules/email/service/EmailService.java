@@ -79,9 +79,8 @@ public class EmailService {
                         .contentId(at.getContentId())
                         .inline(at.isInline())
                         .url(at.isInline() ? 
-                                String.format("/api/v1/emails/%d/attachments/%d/inline", entity.getId(), at.getId()) :
-                                String.format("/api/v1/email-accounts/%d/folders/INBOX/messages/%d/attachments/%s", 
-                                        entity.getAccount().getId(), entity.getUid(), at.getServerAttachmentId()))
+                                String.format("emails/%d/attachments/%d/inline", entity.getId(), at.getId()) :
+                                String.format("emails/%d/attachments/%d/download", entity.getId(), at.getId()))
                         .build())
                 .collect(Collectors.toList());
 

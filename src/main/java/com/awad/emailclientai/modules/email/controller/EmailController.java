@@ -45,6 +45,7 @@ public class EmailController {
     private final EmailAccountService emailAccountService;
     private final EmailSyncService emailSyncService;
     private final com.awad.emailclientai.modules.email.service.AiService aiService;
+    private final com.awad.emailclientai.modules.email.repository.EmailAttachmentRepository attachmentRepository;
     private final EmailService emailService;
     private final ObjectMapper objectMapper;
 
@@ -54,6 +55,7 @@ public class EmailController {
             EmailAccountService emailAccountService,
             EmailSyncService emailSyncService,
             com.awad.emailclientai.modules.email.service.AiService aiService,
+            com.awad.emailclientai.modules.email.repository.EmailAttachmentRepository attachmentRepository,
             EmailService emailService,
             ObjectMapper objectMapper) {
         this.emailRepository = emailRepository;
@@ -61,6 +63,7 @@ public class EmailController {
         this.emailAccountService = emailAccountService;
         this.emailSyncService = emailSyncService;
         this.aiService = aiService;
+        this.attachmentRepository = attachmentRepository;
         this.emailService = emailService;
         this.objectMapper = objectMapper;
     }
@@ -202,9 +205,24 @@ public class EmailController {
         return ResponseEntity.ok(ApiResponse.success(emailService.getEmailDetail(id)));
     }
 
+    @GetMapping("/{id}/attachments/{atId}/download")
+    public ResponseEntity<org.springframework.core.io.Resource> downloadAttachment(
+            @PathVariable Long id,
+            @PathVariable Long atId) throws MessagingException, IOException {
+        var resource = emailService.getInlineAttachment(id, atId);
+        String contentType = emailService.getAttachmentContentType(atId);
+        String filename = attachmentRepository.findById(atId)
+                .map(com.awad.emailclientai.modules.email.entity.EmailAttachment::getFilename)
+                .orElse("attachment");
+        
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(contentType))
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .body(resource);
+    }
+
     @GetMapping("/{id}/attachments/{atId}/inline")
     public ResponseEntity<org.springframework.core.io.Resource> getInlineAttachment(
-            @AuthenticationPrincipal com.awad.emailclientai.modules.user.security.UserPrincipal principal,
             @PathVariable Long id,
             @PathVariable Long atId) throws MessagingException, IOException {
         var resource = emailService.getInlineAttachment(id, atId);
