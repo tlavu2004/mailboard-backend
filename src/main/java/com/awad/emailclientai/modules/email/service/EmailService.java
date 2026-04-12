@@ -197,14 +197,18 @@ public class EmailService {
                 }
             }
         }
-        // 3. Inject Height Bridge Script for Secure Auto-Resize (V10.15)
+        // 3. Inject Height Bridge Script for Secure Auto-Resize (V10.20 - Balanced Shield)
         String bridgeScript = "<script>" +
             "function sendHeight() {" +
-            "  window.parent.postMessage({ type: 'MB_RESIZE', height: document.body.scrollHeight }, '*');" +
+            "  document.body.style.margin = '0';" +
+            "  document.body.style.overflowY = 'hidden';" + // Force expand vertically
+            "  document.body.style.overflowX = 'auto';" +  // Allow horizontal scroll
+            "  document.documentElement.style.overflowX = 'auto';" +
+            "  var height = Math.max(document.body.offsetHeight, document.body.scrollHeight);" +
+            "  window.parent.postMessage({ type: 'MB_RESIZE', height: height }, '*');" +
             "}" +
             "window.onload = sendHeight;" +
             "window.onresize = sendHeight;" +
-            "// Periodic check for dynamic content (images loading late)" +
             "setInterval(sendHeight, 1000);" +
             "</script>";
         
