@@ -47,6 +47,7 @@ public class LegacyDashboardController {
     private final EmailSyncService emailSyncService;
     private final KanbanService kanbanService;
     private final GmailLabelService gmailLabelService;
+    private final com.awad.emailclientai.modules.email.service.EmailService emailService;
 
     @GetMapping("/check")
     public ResponseEntity<String> check() {
@@ -517,7 +518,11 @@ public class LegacyDashboardController {
             
             m.put("subject", entity.getSubject() != null ? entity.getSubject() : "(No Subject)");
             m.put("preview", entity.getSnippet() != null ? entity.getSnippet() : "");
-            m.put("body", entity.getBody() != null ? entity.getBody() : "");
+            
+            // Process body via EmailService to ensure sanitization and CID resolution
+            String processedBody = emailService.processEmailBody(entity.getBody(), entity.getId(), entity.getAttachments());
+            m.put("body", processedBody != null ? processedBody : "");
+            
             m.put("isRead", entity.isRead());
             m.put("isStarred", entity.isStarred());
             m.put("hasAttachments", entity.isHasAttachments());

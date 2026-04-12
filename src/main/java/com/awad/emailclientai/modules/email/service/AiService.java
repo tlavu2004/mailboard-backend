@@ -205,13 +205,19 @@ public class AiService {
      * Fallback Algorithm
      */
     public String extractiveSummary(String text, int topSentences, int maxChars) {
-        text = text.trim();
-        if (text.isEmpty()) {
+        if (text == null) return "";
+        
+        // Strip HTML tags before summarization to avoid tags in summary and prevent script execution
+        String cleanText = text.replaceAll("<[^>]*>", " ");
+        cleanText = cleanText.replaceAll("&nbsp;", " ");
+        cleanText = cleanText.replaceAll("\\s+", " ").trim();
+        
+        if (cleanText.isEmpty()) {
             return "";
         }
 
         // Split into sentences (Simplified regex)
-        String[] matchesArr = text.split("(?<=[.!?])\\s+");
+        String[] matchesArr = cleanText.split("(?<=[.!?])\\s+");
         List<String> matches = Arrays.asList(matchesArr);
 
         if (matches.isEmpty()) {

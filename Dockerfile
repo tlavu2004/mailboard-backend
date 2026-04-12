@@ -7,6 +7,7 @@ COPY pom.xml .
 COPY src ./src
 
 # Package the application (skip tests to speed up the build in CI)
+# Cache bust: v10-nuclear-last-stand-fix-2024-04-13
 RUN mvn clean package -DskipTests
 
 # Stage 2: Create the runtime image (AL2023 for ONNX Runtime glibc 2.27+ compatibility)

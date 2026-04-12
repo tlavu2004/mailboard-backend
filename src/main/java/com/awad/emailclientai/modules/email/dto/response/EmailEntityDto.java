@@ -1,8 +1,7 @@
 package com.awad.emailclientai.modules.email.dto.response;
 
 
-import lombok.Builder;
-import lombok.Data;
+import lombok.*;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -10,6 +9,8 @@ import java.util.List;
 
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class EmailEntityDto {
     private Long id;
     private String messageId;
@@ -35,6 +36,8 @@ public class EmailEntityDto {
 
     @Data
     @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class AttachmentDto {
         private String id;
         private String filename;

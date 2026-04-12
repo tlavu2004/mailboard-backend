@@ -1,7 +1,6 @@
 package com.awad.emailclientai.modules.email.dto.response;
 
-import lombok.Builder;
-import lombok.Data;
+import lombok.*;
 
 /**
  * DTO for search results with relevance score.
@@ -9,6 +8,8 @@ import lombok.Data;
  */
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class SearchResultDto {
     private EmailEntityDto email;
     private double relevanceScore;

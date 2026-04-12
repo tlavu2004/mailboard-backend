@@ -735,7 +735,7 @@ public class ImapService {
         StringBuilder textBuilder = new StringBuilder();
         StringBuilder htmlBuilder = new StringBuilder();
         processContentRecursive(message.getContent(), message.getContentType(), 
-                textBuilder, htmlBuilder, attachments, new int[]{0});
+                textBuilder, htmlBuilder, attachments, new int[]{0}, null);
 
         LocalDateTime sentAt = message.getSentDate() != null 
                 ? message.getSentDate().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime()
@@ -771,40 +771,58 @@ public class ImapService {
     private void processContentRecursive(Object content, String contentType,
                                           StringBuilder textBuilder, StringBuilder htmlBuilder,
                                           List<MailMessageDetailDto.AttachmentDto> attachments,
-                                          int[] attachmentIndex) throws MessagingException, IOException {
+                                          int[] attachmentIndex, BodyPart bodyPart) throws MessagingException, IOException {
+        
+        String disposition = bodyPart != null ? bodyPart.getDisposition() : null;
+        String contentId = bodyPart != null ? getContentId(bodyPart) : null;
+        String fileName = bodyPart != null ? bodyPart.getFileName() : null;
+
+        log.info("[IMAP-XRAY-V10] Inspecting Part: Type={}, Disp={}, ID={}, File={}", 
+                contentType != null ? contentType.split(";")[0] : "null", disposition, contentId, fileName);
+        
+        // 1. Identify if this part should be treated as an attachment/inline resource
+        boolean isAttachment = Part.ATTACHMENT.equalsIgnoreCase(disposition) || fileName != null;
+        boolean isInline = contentId != null || Part.INLINE.equalsIgnoreCase(disposition);
+
+        // EXTRA CHECK: If it has any identifier but isn't the body, treat as attachment
+        if (contentId != null || (fileName != null && !isBodyPart(contentType))) {
+            isInline = true;
+        }
+
+        if (isAttachment || (isInline && !(content instanceof Multipart))) {
+            log.info("[IMAP-XRAY-HIT-V10] Capturing as attachment: {}, CID: {}, Type: {}", 
+                    fileName != null ? fileName : "inline-" + contentId, contentId, contentType);
+            // Treat as attachment
+            attachments.add(MailMessageDetailDto.AttachmentDto.builder()
+                    .id(String.valueOf(attachmentIndex[0]++))
+                    .filename(fileName != null ? fileName : (isInline ? "inline-" + contentId : "attachment-" + attachmentIndex[0]))
+                    .contentType(contentType)
+                    .size(bodyPart != null ? bodyPart.getSize() : 0)
+                    .inline(isInline)
+                    .contentId(contentId)
+                    .build());
+            return; // Don't process as text/html if it's an attachment
+        }
+
+        // 2. Process content based on type
         if (content instanceof String) {
+            String body = (String) content;
             if (contentType != null && contentType.toLowerCase().contains("text/html")) {
-                htmlBuilder.append((String) content);
+                htmlBuilder.append(body);
             } else {
-                textBuilder.append((String) content);
+                textBuilder.append(body);
             }
         } else if (content instanceof Multipart) {
             Multipart multipart = (Multipart) content;
             for (int i = 0; i < multipart.getCount(); i++) {
-                BodyPart bodyPart = multipart.getBodyPart(i);
-                String disposition = bodyPart.getDisposition();
-                
-                if (Part.ATTACHMENT.equalsIgnoreCase(disposition) || 
-                    (bodyPart.getFileName() != null && disposition != null)) {
-                    // It's an attachment
-                    attachments.add(MailMessageDetailDto.AttachmentDto.builder()
-                            .id(String.valueOf(attachmentIndex[0]++))
-                            .filename(bodyPart.getFileName())
-                            .contentType(bodyPart.getContentType())
-                            .size(bodyPart.getSize())
-                            .inline(Part.INLINE.equalsIgnoreCase(disposition))
-                            .contentId(getContentId(bodyPart))
-                            .build());
-                } else {
-                    // Process nested content
-                    processContentRecursive(bodyPart.getContent(), bodyPart.getContentType(),
-                            textBuilder, htmlBuilder, attachments, attachmentIndex);
-                }
+                BodyPart childPart = multipart.getBodyPart(i);
+                processContentRecursive(childPart.getContent(), childPart.getContentType(),
+                        textBuilder, htmlBuilder, attachments, attachmentIndex, childPart);
             }
         } else if (content instanceof MimeBodyPart) {
             MimeBodyPart mbp = (MimeBodyPart) content;
             processContentRecursive(mbp.getContent(), mbp.getContentType(),
-                    textBuilder, htmlBuilder, attachments, attachmentIndex);
+                    textBuilder, htmlBuilder, attachments, attachmentIndex, mbp);
         }
     }
 
@@ -815,13 +833,16 @@ public class ImapService {
     }
 
     private String getContentId(BodyPart bodyPart) throws MessagingException {
+        // Try Content-ID and Content-Id
         String[] headers = bodyPart.getHeader("Content-ID");
+        if (headers == null || headers.length == 0) {
+            headers = bodyPart.getHeader("Content-Id");
+        }
+        
         if (headers != null && headers.length > 0) {
             String cid = headers[0].trim();
-            // Remove angle brackets
-            if (cid.startsWith("<")) cid = cid.substring(1);
-            if (cid.endsWith(">")) cid = cid.substring(0, cid.length() - 1);
-            return cid.trim();
+            // Remove angle brackets if present
+            return cid.replaceAll("[<>]", "").trim();
         }
         return null;
     }
@@ -959,5 +980,11 @@ public class ImapService {
             log.warn("Failed to extract Gmail ThreadId: {}", e.getMessage());
         }
         return null;
+    }
+
+    private boolean isBodyPart(String contentType) {
+        if (contentType == null) return false;
+        String type = contentType.toLowerCase();
+        return type.contains("text/plain") || type.contains("text/html");
     }
 }

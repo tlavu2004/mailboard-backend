@@ -1,5 +1,6 @@
 package com.awad.emailclientai.modules.email.service;
 
+import com.awad.emailclientai.modules.email.dto.response.MailMessageDetailDto;
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDto;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
@@ -140,9 +141,23 @@ public class EmailSyncService {
                 entity.setBody(newBody);
                 String plainText = imapService.stripHtml(newBody);
                 entity.setSnippet(plainText.length() > 150 ? plainText.substring(0, 147) + "..." : plainText);
+                
+                // CRITICAL: Clear summary so it gets re-generated with new clean logic
+                entity.setSummary(null);
+                entity.setSummarySource(null);
+                
+                // CRITICAL: Clear and re-sync attachments to catch missing inline images (CIDs)
+                if (detail.getAttachments() != null) {
+                    if (detail.getAttachments().isEmpty() && entity.isHasAttachments()) {
+                        log.warn("[V9-SYNC-WARNING] Email ID: {} hasAttachments=true but IMAP detail returned 0 attachments!", emailId);
+                    }
+                    entity.getAttachments().clear();
+                    entity.getAttachments().addAll(mapDetailAttachments(detail.getAttachments(), entity));
+                }
+                
                 generateAndSetEmbedding(entity, entity.getSubject(), newBody);
                 emailRepository.save(entity);
-                log.info("Successfully refreshed email ID: {}", emailId);
+                log.info("Successfully refreshed email ID: {} and cleared stale summary.", emailId);
             }
         } catch (Exception e) {
             log.error("Failed to refresh email ID: {}. Error: {}", emailId, e.getMessage());
@@ -251,7 +266,8 @@ public class EmailSyncService {
                     // Update attachments if missing or changed
                     if (msg.getAttachments() != null && !msg.getAttachments().isEmpty()) {
                         if (existing.getAttachments() == null || existing.getAttachments().isEmpty()) {
-                            existing.setAttachments(mapAttachments(msg.getAttachments(), existing));
+                            existing.getAttachments().clear();
+                            existing.getAttachments().addAll(mapAttachments(msg.getAttachments(), existing));
                             changed = true;
                         }
                     }
@@ -281,7 +297,8 @@ public class EmailSyncService {
 
                 // Map and set attachments
                 if (msg.getAttachments() != null && !msg.getAttachments().isEmpty()) {
-                    entity.setAttachments(mapAttachments(msg.getAttachments(), entity));
+                    entity.getAttachments().clear();
+                    entity.getAttachments().addAll(mapAttachments(msg.getAttachments(), entity));
                 }
 
                 try {
@@ -426,6 +443,23 @@ public class EmailSyncService {
 
     private List<com.awad.emailclientai.modules.email.entity.EmailAttachment> mapAttachments(
             List<MailMessageDto.AttachmentMetadataDto> dtos, EmailEntity email) {
+        return dtos.stream().map(dto -> com.awad.emailclientai.modules.email.entity.EmailAttachment.builder()
+                .email(email)
+                .filename(dto.getFilename())
+                .contentType(dto.getContentType())
+                .size(dto.getSize())
+                .serverAttachmentId(dto.getId())
+                .contentId(dto.getContentId())
+                .inline(dto.isInline())
+                .build())
+                .collect(Collectors.toList());
+    }
+
+    private List<com.awad.emailclientai.modules.email.entity.EmailAttachment> mapDetailAttachments(
+            List<MailMessageDetailDto.AttachmentDto> dtos, EmailEntity email) {
+        log.info("[V8-ATTACH-SYNC] Mapping {} attachments for email ID: {}", dtos.size(), email.getId());
+        dtos.forEach(dto -> log.info("  - CID: {}, File: {}, Inline: {}", dto.getContentId(), dto.getFilename(), dto.isInline()));
+        
         return dtos.stream().map(dto -> com.awad.emailclientai.modules.email.entity.EmailAttachment.builder()
                 .email(email)
                 .filename(dto.getFilename())
