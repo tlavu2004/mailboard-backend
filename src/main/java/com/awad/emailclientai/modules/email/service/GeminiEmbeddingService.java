@@ -88,7 +88,7 @@ public class GeminiEmbeddingService implements EmbeddingService {
             throw new RuntimeException("No Gemini API keys configured");
         }
 
-        // DB expects 768 dimensions (V5.1).
+        // DB expects 768 dimensions.
         // text-embedding-004 supports explicit outputDimensionality.
         // gemini-embedding-001 does NOT support it and defaults to 768 anyway.
         Map<String, Object> contentMap = Map.of(

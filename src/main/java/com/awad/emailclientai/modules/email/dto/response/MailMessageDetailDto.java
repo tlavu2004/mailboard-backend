@@ -14,7 +14,7 @@ import java.util.List;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder
+@Builder(toBuilder = true)
 public class MailMessageDetailDto {
     
     private long uid;
@@ -69,5 +69,6 @@ public class MailMessageDetailDto {
         private long size;
         private boolean inline;
         private String contentId; // For inline images
+        private String externalUrl;
     }
 }

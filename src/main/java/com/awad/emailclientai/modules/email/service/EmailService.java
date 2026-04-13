@@ -78,14 +78,18 @@ public class EmailService {
                         .serverAttachmentId(at.getServerAttachmentId())
                         .contentId(at.getContentId())
                         .inline(at.isInline())
-                        .url(at.isInline() ? 
+                        .externalUrl(at.getExternalUrl())
+                        .url(at.getExternalUrl() != null ? at.getExternalUrl() : (at.isInline() ? 
                                 String.format("emails/%d/attachments/%d/inline", entity.getId(), at.getId()) :
-                                String.format("emails/%d/attachments/%d/download", entity.getId(), at.getId()))
+                                String.format("emails/%d/attachments/%d/download", entity.getId(), at.getId())))
                         .build())
                 .collect(Collectors.toList());
 
         // Transform body for all emails (Sanitization, Meta-fix, CID resolution)
         body = processEmailBody(body, entity.getId(), entity.getAttachments());
+
+        // V10.32: Dynamic Discovery Fallback for existing emails
+        imapService.scanForCloudLinksEntityDto(body, attachments, new int[]{attachments.size()});
 
         return EmailEntityDto.builder()
                 .id(entity.getId())
@@ -193,11 +197,11 @@ public class EmailService {
                 
                 if (count > 0) {
                     resolvedHtml = cidMatcher.replaceAll(proxyUrl);
-                    log.info("[Rendering] Successfully replaced {} matches for CID: {} in Email ID: {}", count, cid, emailId);
+                    log.info("Successfully replaced {} matches for CID: {} in Email ID: {}", count, cid, emailId);
                 }
             }
         }
-        // 3. Inject Height Bridge Script for Secure Auto-Resize (V10.20 - Balanced Shield)
+        // Bridge Script for Secure Auto-Resize
         String bridgeScript = "<script>" +
             "function sendHeight() {" +
             "  document.body.style.margin = '0';" +

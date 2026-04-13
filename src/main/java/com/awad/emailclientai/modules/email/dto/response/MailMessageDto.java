@@ -14,7 +14,7 @@ import java.util.List;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder
+@Builder(toBuilder = true)
 public class MailMessageDto {
     
     /**
@@ -115,5 +115,6 @@ public class MailMessageDto {
         private long size;
         private String contentId;
         private boolean inline;
+        private String externalUrl;
     }
 }

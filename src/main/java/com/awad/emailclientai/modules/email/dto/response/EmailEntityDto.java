@@ -47,5 +47,6 @@ public class EmailEntityDto {
         private String contentId;
         private boolean inline;
         private String url;
+        private String externalUrl;
     }
 }

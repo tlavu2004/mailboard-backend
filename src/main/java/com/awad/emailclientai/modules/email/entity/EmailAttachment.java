@@ -36,6 +36,8 @@ public class EmailAttachment {
      * Content-ID used for inline images (e.g., <img src="cid:abc">)
      */
     private String contentId;
+    
+    private String externalUrl;
 
     @Builder.Default
     private boolean inline = false;

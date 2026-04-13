@@ -5,6 +5,7 @@ import org.springframework.scheduling.annotation.Async;
 import com.awad.emailclientai.modules.email.dto.response.MailFolderDto;
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDetailDto;
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDto;
+import com.awad.emailclientai.modules.email.dto.response.EmailEntityDto;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
 import com.awad.emailclientai.modules.email.entity.EmailAuthType;
 import com.awad.emailclientai.modules.email.entity.EmailProvider;
@@ -407,7 +408,7 @@ public class ImapService {
         for (int i = 0; i < multipart.getCount(); i++) {
             BodyPart bodyPart = multipart.getBodyPart(i);
             
-            // OPTIMIZATION: Check if it's an attachment BEFORE loading content (V10.28)
+            // OPTIMIZATION: Check if it's an attachment BEFORE loading content
             if (isActualAttachment(bodyPart)) {
                 if (currentIndex[0] == targetIndex) {
                     return bodyPart;
@@ -436,7 +437,7 @@ public class ImapService {
             return true;
         }
 
-        // 2. Has a filename -> Almost certainly a user file, even if it has a CID (V10.29)
+        // 2. Has a filename -> Almost certainly a user file, even if it has a CID
         if (fileName != null && !fileName.trim().isEmpty()) {
             // Check if it's just a tiny tracking pixel or tiny icon (optional safety)
             // But usually, if it has a filename, the user expects to see it.
@@ -636,7 +637,7 @@ public class ImapService {
             log.warn("Failed to extract attachment metadata for UID {}: {}", uid, e.getMessage());
         }
 
-        return MailMessageDto.builder()
+        MailMessageDto dto = MailMessageDto.builder()
                 .uid(uid)
                 .messageId(getHeaderValue(message, "Message-ID"))
                 .from(from)
@@ -645,7 +646,7 @@ public class ImapService {
                 .cc(cc)
                 .subject(message.getSubject())
                 .preview(preview) 
-                .body(body) // Fetch limited body
+                .body(body) 
                 .sentAt(sentAt)
                 .receivedAt(receivedAt)
                 .read(read)
@@ -656,6 +657,14 @@ public class ImapService {
                 .gmailMessageId(extractGmailMsgId(message))
                 .threadId(extractGmailThreadId(message))
                 .size(message.getSize())
+                .build();
+
+        // Scan for Cloud Links in list view to ensure 'hasAttachments' icon appears
+        scanForCloudLinksMetadata(dto.getBody(), attachments, new int[]{attachments.size()});
+
+        return dto.toBuilder()
+                .attachments(attachments)
+                .hasAttachments(hasAttachments || !attachments.isEmpty())
                 .build();
     }
 
@@ -790,7 +799,7 @@ public class ImapService {
                 ? message.getReceivedDate().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime()
                 : sentAt;
 
-        return MailMessageDetailDto.builder()
+        MailMessageDetailDto detail = MailMessageDetailDto.builder()
                 .uid(uid)
                 .messageId(getHeaderValue(message, "Message-ID"))
                 .from(from)
@@ -806,6 +815,14 @@ public class ImapService {
                 .starred(flags.contains(Flags.Flag.FLAGGED))
                 .bodyText(textBuilder.toString())
                 .bodyHtml(htmlBuilder.toString())
+                .attachments(attachments)
+                .build();
+        
+        // Scan for Cloud Links and add to detail
+        scanForCloudLinks(detail.getBodyHtml() != null ? detail.getBodyHtml() : detail.getBodyText(), 
+                attachments, new int[]{attachments.size()});
+        
+        return detail.toBuilder()
                 .attachments(attachments)
                 .gmailMessageId(extractGmailMsgId(message))
                 .threadId(extractGmailThreadId(message))
@@ -826,7 +843,7 @@ public class ImapService {
         log.info("[IMAP-XRAY-V10] Inspecting Part: Type={}, Disp={}, ID={}, File={}", 
                 contentType != null ? contentType.split(";")[0] : "null", disposition, contentId, fileName);
         
-        // 1. Identify if this part should be treated as an attachment/inline resource (V10.26)
+        // 1. Identify if this part should be treated as an attachment/inline resource
         boolean isAttachment = bodyPart != null && isActualAttachment(bodyPart);
 
         if (isAttachment) {
@@ -963,7 +980,7 @@ public class ImapService {
                 return true;
             }
             
-            // Recursive check for nested multiparts (Optimized V10.28)
+            // Recursive check for nested multiparts (Optimized)
             if (bodyPart.isMimeType("multipart/*")) {
                 Object content = bodyPart.getContent();
                 if (content instanceof Multipart) {
@@ -1021,5 +1038,138 @@ public class ImapService {
             log.warn("Failed to extract Gmail ThreadId: {}", e.getMessage());
         }
         return null;
+    }
+
+    /**
+     * Scans the provided HTML content for cloud storage links (Google Drive, Dropbox, OneDrive).
+     * Discovered links are added as 'External Attachments' to the provided list.
+     */
+    public void scanForCloudLinks(String html, List<MailMessageDetailDto.AttachmentDto> attachments, int[] index) {
+        if (html == null || html.isEmpty()) return;
+
+        log.info("[V10-SCANNER-DEBUG] Scanning body (Length: {}). Snippet: {}", 
+                html.length(), html.substring(0, Math.min(html.length(), 200)).replace("\n", " "));
+
+        // Big 3 Cloud Providers Regex Patterns - WIDE ANGLE
+        Map<String, String> patterns = new LinkedHashMap<>();
+        patterns.put("Google Drive", "https?://(?:[a-zA-Z0-9-]+\\.)*drive\\.google\\.com/[^\\s\"'<>]+");
+        patterns.put("Dropbox", "https?://(?:www\\.)?dropbox\\.com/[^\\s\"'<>]+");
+        patterns.put("OneDrive", "https?://(?:[a-zA-Z0-9-]+\\.)*(?:onedrive\\.live\\.com|1drv\\.ms)/[^\\s\"'<>]+");
+
+        for (Map.Entry<String, String> entry : patterns.entrySet()) {
+            java.util.regex.Pattern p = java.util.regex.Pattern.compile(entry.getValue());
+            java.util.regex.Matcher m = p.matcher(html);
+            while (m.find()) {
+                String url = m.group(0);
+                
+                // Unwrap Google Redirects
+                if (url.contains("google.com/url?q=")) {
+                    url = unwrapGoogleRedirect(url);
+                }
+
+                String finalUrl = url;
+                boolean exists = attachments.stream().anyMatch(a -> finalUrl.equals(a.getExternalUrl()));
+                if (!exists) {
+                    attachments.add(MailMessageDetailDto.AttachmentDto.builder()
+                            .id("cloud-" + index[0]++)
+                            .filename(entry.getKey() + " Link")
+                            .contentType("text/html")
+                            .size(0)
+                            .inline(false)
+                            .externalUrl(finalUrl)
+                            .build());
+                    log.info("[V10-CLOUD-HIT] Found {} Link: {}", entry.getKey(), finalUrl);
+                }
+            }
+        }
+    }
+
+    private String unwrapGoogleRedirect(String url) {
+        try {
+            int qIndex = url.indexOf("q=");
+            if (qIndex != -1) {
+                String sub = url.substring(qIndex + 2);
+                int ampIndex = sub.indexOf("&");
+                String wrapped = (ampIndex != -1) ? sub.substring(0, ampIndex) : sub;
+                return java.net.URLDecoder.decode(wrapped, java.nio.charset.StandardCharsets.UTF_8);
+            }
+        } catch (Exception e) {
+            log.warn("[V10-SCANNER-ERROR] Failed to unwrap redirect: {}", url);
+        }
+        return url;
+    }
+
+    /**
+     * Version of scanForCloudLinks for the List View DTO (Metadata).
+     */
+    public void scanForCloudLinksMetadata(String html, List<MailMessageDto.AttachmentMetadataDto> attachments, int[] index) {
+        if (html == null || html.isEmpty()) return;
+
+        Map<String, String> patterns = new LinkedHashMap<>();
+        patterns.put("Google Drive", "https?://(?:[a-zA-Z0-9-]+\\.)*drive\\.google\\.com/[^\\s\"'<>]+");
+        patterns.put("Dropbox", "https?://(?:www\\.)?dropbox\\.com/[^\\s\"'<>]+");
+        patterns.put("OneDrive", "https?://(?:[a-zA-Z0-9-]+\\.)*(?:onedrive\\.live\\.com|1drv\\.ms)/[^\\s\"'<>]+");
+
+        for (Map.Entry<String, String> entry : patterns.entrySet()) {
+            java.util.regex.Pattern p = java.util.regex.Pattern.compile(entry.getValue());
+            java.util.regex.Matcher m = p.matcher(html);
+            while (m.find()) {
+                String url = m.group(0);
+                if (url.contains("google.com/url?q=")) {
+                    url = unwrapGoogleRedirect(url);
+                }
+                
+                String finalUrl = url;
+                boolean exists = attachments.stream().anyMatch(a -> finalUrl.equals(a.getExternalUrl()));
+                if (!exists) {
+                    attachments.add(MailMessageDto.AttachmentMetadataDto.builder()
+                            .id("cloud-" + index[0]++)
+                            .filename(entry.getKey() + " Link")
+                            .contentType("text/html")
+                            .size(0)
+                            .inline(false)
+                            .externalUrl(finalUrl)
+                            .build());
+                }
+            }
+        }
+    }
+
+    /**
+     * Version of scanForCloudLinks for the Entity DTO (Rendering View).
+     */
+    public void scanForCloudLinksEntityDto(String html, List<EmailEntityDto.AttachmentDto> attachments, int[] index) {
+        if (html == null || html.isEmpty()) return;
+
+        Map<String, String> patterns = new LinkedHashMap<>();
+        patterns.put("Google Drive", "https?://(?:[a-zA-Z0-9-]+\\.)*drive\\.google\\.com/[^\\s\"'<>]+");
+        patterns.put("Dropbox", "https?://(?:www\\.)?dropbox\\.com/[^\\s\"'<>]+");
+        patterns.put("OneDrive", "https?://(?:[a-zA-Z0-9-]+\\.)*(?:onedrive\\.live\\.com|1drv\\.ms)/[^\\s\"'<>]+");
+
+        for (Map.Entry<String, String> entry : patterns.entrySet()) {
+            java.util.regex.Pattern p = java.util.regex.Pattern.compile(entry.getValue());
+            java.util.regex.Matcher m = p.matcher(html);
+            while (m.find()) {
+                String url = m.group(0);
+                if (url.contains("google.com/url?q=")) {
+                    url = unwrapGoogleRedirect(url);
+                }
+                
+                String finalUrl = url;
+                boolean exists = attachments.stream().anyMatch(a -> finalUrl.equals(a.getExternalUrl()));
+                if (!exists) {
+                    attachments.add(EmailEntityDto.AttachmentDto.builder()
+                            .id("cloud-" + index[0]++)
+                            .filename(entry.getKey() + " Link")
+                            .contentType("text/html")
+                            .size(0)
+                            .inline(false)
+                            .externalUrl(finalUrl)
+                            .url(finalUrl)
+                            .build());
+                    log.info("[SCANNER-CATCHUP] Dynamically found {} Link: {}", entry.getKey(), finalUrl);
+                }
+            }
+        }
     }
 }

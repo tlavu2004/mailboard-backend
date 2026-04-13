@@ -263,11 +263,33 @@ public class EmailSyncService {
                         changed = true;
                     }
 
-                    // Update attachments if missing or changed
+                    // Update attachments if missing or changed (V10.32: Smarter merging for cloud links)
                     if (msg.getAttachments() != null && !msg.getAttachments().isEmpty()) {
-                        if (existing.getAttachments() == null || existing.getAttachments().isEmpty()) {
-                            existing.getAttachments().clear();
-                            existing.getAttachments().addAll(mapAttachments(msg.getAttachments(), existing));
+                        boolean attachmentListChanged = false;
+                        for (var msgAt : msg.getAttachments()) {
+                            // Check if this specific attachment already exists (by server ID or external URL)
+                            boolean alreadyExists = existing.getAttachments().stream().anyMatch(dbAt -> {
+                                if (msgAt.getExternalUrl() != null) {
+                                    return msgAt.getExternalUrl().equals(dbAt.getExternalUrl());
+                                }
+                                return msgAt.getId() != null && msgAt.getId().equals(dbAt.getServerAttachmentId());
+                            });
+
+                            if (!alreadyExists) {
+                                existing.getAttachments().add(com.awad.emailclientai.modules.email.entity.EmailAttachment.builder()
+                                        .email(existing)
+                                        .filename(msgAt.getFilename())
+                                        .contentType(msgAt.getContentType())
+                                        .size(msgAt.getSize())
+                                        .serverAttachmentId(msgAt.getId())
+                                        .contentId(msgAt.getContentId())
+                                        .inline(msgAt.isInline())
+                                        .externalUrl(msgAt.getExternalUrl())
+                                        .build());
+                                attachmentListChanged = true;
+                            }
+                        }
+                        if (attachmentListChanged) {
                             changed = true;
                         }
                     }
@@ -451,6 +473,7 @@ public class EmailSyncService {
                 .serverAttachmentId(dto.getId())
                 .contentId(dto.getContentId())
                 .inline(dto.isInline())
+                .externalUrl(dto.getExternalUrl())
                 .build())
                 .collect(Collectors.toList());
     }
@@ -468,6 +491,7 @@ public class EmailSyncService {
                 .serverAttachmentId(dto.getId())
                 .contentId(dto.getContentId())
                 .inline(dto.isInline())
+                .externalUrl(dto.getExternalUrl())
                 .build())
                 .collect(Collectors.toList());
     }
