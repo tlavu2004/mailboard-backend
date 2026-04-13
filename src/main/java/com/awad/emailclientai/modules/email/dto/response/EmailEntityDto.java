@@ -30,6 +30,8 @@ public class EmailEntityDto {
     private boolean isRead;
     private boolean isStarred;
     private boolean hasAttachments;
+    private boolean hasCloudLinks; // V10.35
+    private boolean hasPhysicalAttachments; // V10.35
     private String gmailLink;
     private String accountEmail;
     private List<AttachmentDto> attachments;

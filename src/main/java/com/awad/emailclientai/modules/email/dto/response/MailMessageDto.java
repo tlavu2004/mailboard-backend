@@ -90,6 +90,16 @@ public class MailMessageDto {
     private boolean hasAttachments;
     
     /**
+     * Whether the message has cloud links.
+     */
+    private boolean hasCloudLinks;
+    
+    /**
+     * Whether the message has physical attachments.
+     */
+    private boolean hasPhysicalAttachments;
+    
+    /**
      * Gmail labels (fetched via X-GM-LABELS).
      */
     private List<String> labels;

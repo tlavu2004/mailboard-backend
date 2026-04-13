@@ -69,7 +69,24 @@ public class EmailService {
 
     public EmailEntityDto mapToDto(EmailEntity entity) {
         String body = entity.getBody();
+        final String finalBody = body; // Make it effectively final for lambda
+
         List<EmailEntityDto.AttachmentDto> attachments = entity.getAttachments().stream()
+                .filter(at -> {
+                    boolean isImg = at.getContentType() != null && at.getContentType().startsWith("image/");
+                    if (isImg) {
+                        if (at.isInline() || at.getContentId() != null) {
+                            return false; // Standard inline image
+                        }
+                        // V10.36 Edge Case: If the image filename is explicitly referenced in the HTML body 
+                        // (e.g. as an 'alt' attribute or src), it is acting as an inline image/banner.
+                        if (at.getFilename() != null && !at.getFilename().isEmpty() && 
+                            finalBody != null && finalBody.contains(at.getFilename())) {
+                            return false; 
+                        }
+                    }
+                    return true;
+                })
                 .map(at -> EmailEntityDto.AttachmentDto.builder()
                         .id(at.getId().toString())
                         .filename(at.getFilename())
@@ -77,9 +94,9 @@ public class EmailService {
                         .contentType(at.getContentType())
                         .serverAttachmentId(at.getServerAttachmentId())
                         .contentId(at.getContentId())
-                        .inline(at.isInline())
+                        .inline(at.isInline() || at.getContentId() != null)
                         .externalUrl(at.getExternalUrl())
-                        .url(at.getExternalUrl() != null ? at.getExternalUrl() : (at.isInline() ? 
+                        .url(at.getExternalUrl() != null ? at.getExternalUrl() : (at.isInline() || at.getContentId() != null ? 
                                 String.format("emails/%d/attachments/%d/inline", entity.getId(), at.getId()) :
                                 String.format("emails/%d/attachments/%d/download", entity.getId(), at.getId())))
                         .build())
@@ -90,6 +107,10 @@ public class EmailService {
 
         // V10.32: Dynamic Discovery Fallback for existing emails
         imapService.scanForCloudLinksEntityDto(body, attachments, new int[]{attachments.size()});
+
+        // V10.35: Final flag calculation for accurate UI indicators
+        boolean hasCloud = attachments.stream().anyMatch(a -> a.getExternalUrl() != null);
+        boolean hasPhysical = attachments.stream().anyMatch(a -> a.getExternalUrl() == null);
 
         return EmailEntityDto.builder()
                 .id(entity.getId())
@@ -105,7 +126,9 @@ public class EmailService {
                 .summary(entity.getSummary())
                 .summarySource(entity.getSummarySource() != null ? entity.getSummarySource().name() : null)
                 .isRead(entity.isRead())
-                .hasAttachments(entity.isHasAttachments())
+                .hasAttachments(hasCloud || hasPhysical)
+                .hasCloudLinks(hasCloud)
+                .hasPhysicalAttachments(hasPhysical)
                 .accountEmail(entity.getAccount().getEmailAddress())
                 .attachments(attachments)
                 .gmailLink(entity.getGmailMessageId() != null ? 

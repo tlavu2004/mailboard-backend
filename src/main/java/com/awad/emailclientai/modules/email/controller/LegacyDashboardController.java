@@ -525,7 +525,12 @@ public class LegacyDashboardController {
             
             m.put("isRead", entity.isRead());
             m.put("isStarred", entity.isStarred());
-            m.put("hasAttachments", entity.isHasAttachments());
+            
+            // V10.36: Use mapToDto's comprehensive logic to calculate correct flags and cloud links
+            com.awad.emailclientai.modules.email.dto.response.EmailEntityDto dto = emailService.mapToDto(entity);
+            m.put("hasAttachments", dto.isHasAttachments());
+            m.put("hasCloudLinks", dto.isHasCloudLinks());
+            m.put("hasPhysicalAttachments", dto.isHasPhysicalAttachments());
             
             String dateStr = entity.getReceivedDate() != null ? entity.getReceivedDate().toString() + "Z" : "2024-01-01T00:00:00Z";
             m.put("receivedAt", dateStr);
@@ -565,7 +570,12 @@ public class LegacyDashboardController {
         card.put("received_at", email.getReceivedDate() != null ? email.getReceivedDate().toString() + "Z" : "");
         card.put("is_read", email.isRead());
         card.put("is_starred", email.isStarred());
-        card.put("has_attachments", email.isHasAttachments());
+        
+        com.awad.emailclientai.modules.email.dto.response.EmailEntityDto dto = emailService.mapToDto(email);
+        card.put("has_attachments", dto.isHasAttachments());
+        card.put("has_cloud_links", dto.isHasCloudLinks());
+        card.put("has_physical_attachments", dto.isHasPhysicalAttachments());
+        
         return card;
     }
 }

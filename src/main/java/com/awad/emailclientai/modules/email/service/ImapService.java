@@ -662,9 +662,14 @@ public class ImapService {
         // Scan for Cloud Links in list view to ensure 'hasAttachments' icon appears
         scanForCloudLinksMetadata(dto.getBody(), attachments, new int[]{attachments.size()});
 
+        boolean localHasCloudLinks = attachments.stream().anyMatch(a -> a.getExternalUrl() != null);
+        boolean localHasPhysicalAttachments = attachments.stream().anyMatch(a -> a.getExternalUrl() == null);
+
         return dto.toBuilder()
                 .attachments(attachments)
                 .hasAttachments(hasAttachments || !attachments.isEmpty())
+                .hasCloudLinks(localHasCloudLinks)
+                .hasPhysicalAttachments(localHasPhysicalAttachments)
                 .build();
     }
 
@@ -854,7 +859,7 @@ public class ImapService {
                     .filename(fileName != null ? fileName : "attachment-" + attachmentIndex[0])
                     .contentType(contentType)
                     .size(bodyPart != null ? bodyPart.getSize() : 0)
-                    .inline(false)
+                    .inline(contentId != null)
                     .contentId(contentId)
                     .build());
             return; 
