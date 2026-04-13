@@ -710,18 +710,22 @@ public class ImapService {
 
     private String fetchBodyContent(Message message) {
          try {
-             Object content = message.getContent();
-             log.debug("Fetching body content, content type: {}", content != null ? content.getClass().getName() : "null");
-             if (content instanceof String) {
-                 return (String) content;
-             } else if (content instanceof Multipart) {
-                 return getTextFromMultipart((Multipart) content);
+             StringBuilder textBuilder = new StringBuilder();
+             StringBuilder htmlBuilder = new StringBuilder();
+             List<MailMessageDetailDto.AttachmentDto> throwawayAttachments = new ArrayList<>();
+             
+             // Use the robust recursive parser instead of the flawed getTextFromMultipart
+             processContentRecursive(message.getContent(), message.getContentType(), 
+                     textBuilder, htmlBuilder, throwawayAttachments, new int[]{0}, null);
+                     
+             if (htmlBuilder.length() > 0) {
+                 return htmlBuilder.toString();
              }
+             return textBuilder.toString();
          } catch (Exception e) {
              log.warn("Failed to fetch body content for message: {}", e.getMessage());
              return "";
          }
-         return "";
     }
 
     private String generatePreview(Message message) {
@@ -747,27 +751,6 @@ public class ImapService {
         result = result.replaceAll("<[^>]*>", "");
         // 3. Unescape entities
         return result.replaceAll("&nbsp;", " ").replaceAll("&lt;", "<").replaceAll("&gt;", ">").trim();
-    }
-
-    private String getTextFromMultipart(Multipart multipart) throws Exception {
-        String plainText = null;
-        for (int i = 0; i < multipart.getCount(); i++) {
-            BodyPart bodyPart = multipart.getBodyPart(i);
-            if (bodyPart.isMimeType("text/html")) {
-                return (String) bodyPart.getContent();
-            } else if (bodyPart.isMimeType("text/plain")) {
-                if (plainText == null) plainText = (String) bodyPart.getContent();
-            } else if (bodyPart.getContent() instanceof Multipart) {
-                String result = getTextFromMultipart((Multipart) bodyPart.getContent());
-                // If the recursive call found HTML, return it immediately
-                // We can check if it looks like HTML by seeing if it contains '<'
-                if (result != null && (result.contains("<html") || result.contains("<body") || result.contains("<div"))) {
-                    return result;
-                }
-                if (plainText == null) plainText = result;
-            }
-        }
-        return plainText;
     }
 
     private MailMessageDetailDto convertToDetailDto(Message message, long uid) 
