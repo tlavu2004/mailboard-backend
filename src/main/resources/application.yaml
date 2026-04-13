@@ -118,6 +118,8 @@ logging:
     org.springframework.security: DEBUG
     org.springframework.web: DEBUG
     org.hibernate.SQL: INFO
+  # file:
+  #   name: /app/logs/mailboard.log
 
 ---
 
