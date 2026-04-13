@@ -366,44 +366,90 @@ public class ImapService {
             Message message = uidFolder.getMessageByUID(uid);
             
             if (message == null) {
+                folder.close(false);
                 throw new MessagingException("Message not found");
             }
             
-            // Find the attachment by ID (index)
-            int attachmentIndex = Integer.parseInt(attachmentId);
+            int targetIndex = Integer.parseInt(attachmentId);
+            int[] currentIndex = {0};
+            BodyPart foundPart = null;
+
             Object content = message.getContent();
-            
             if (content instanceof Multipart) {
-                Multipart multipart = (Multipart) content;
-                int currentIndex = 0;
-                
-                for (int i = 0; i < multipart.getCount(); i++) {
-                    BodyPart bodyPart = multipart.getBodyPart(i);
-                    String disposition = bodyPart.getDisposition();
-                    
-                    if (Part.ATTACHMENT.equalsIgnoreCase(disposition) || 
-                        Part.INLINE.equalsIgnoreCase(disposition) ||
-                        bodyPart.getFileName() != null) {
-                        
-                        if (currentIndex == attachmentIndex) {
-                            // Read stream to memory to allow closing folder/store
-                            byte[] contentBytes = bodyPart.getInputStream().readAllBytes();
-                            
-                            return AttachmentResourceDto.builder()
-                                    .inputStream(new java.io.ByteArrayInputStream(contentBytes))
-                                    .filename(bodyPart.getFileName() != null ? bodyPart.getFileName() : "attachment")
-                                    .contentType(bodyPart.getContentType())
-                                    .size(contentBytes.length)
-                                    .build();
-                        }
-                        currentIndex++;
-                    }
-                }
+                foundPart = findAttachmentPartRecursive((Multipart) content, targetIndex, currentIndex);
             }
             
+            if (foundPart == null) {
+                folder.close(false);
+                throw new MessagingException("Attachment not found at index: " + targetIndex);
+            }
+
+            log.info("[DeepDownload] Found target attachment part: {}, Type: {}", 
+                    foundPart.getFileName(), foundPart.getContentType());
+
+            // Read stream to memory to allow closing folder/store
+            byte[] contentBytes = foundPart.getInputStream().readAllBytes();
+            
+            AttachmentResourceDto result = AttachmentResourceDto.builder()
+                    .inputStream(new java.io.ByteArrayInputStream(contentBytes))
+                    .filename(foundPart.getFileName() != null ? foundPart.getFileName() : "attachment-" + targetIndex)
+                    .contentType(foundPart.getContentType())
+                    .size(contentBytes.length)
+                    .build();
+
             folder.close(false);
-            throw new MessagingException("Attachment not found");
+            return result;
         }
+    }
+
+    private BodyPart findAttachmentPartRecursive(Multipart multipart, int targetIndex, int[] currentIndex) 
+            throws MessagingException, IOException {
+        for (int i = 0; i < multipart.getCount(); i++) {
+            BodyPart bodyPart = multipart.getBodyPart(i);
+            
+            // OPTIMIZATION: Check if it's an attachment BEFORE loading content (V10.28)
+            if (isActualAttachment(bodyPart)) {
+                if (currentIndex[0] == targetIndex) {
+                    return bodyPart;
+                }
+                currentIndex[0]++;
+            } 
+            // LIGHTWEIGHT CHECK: Only recurse if it's a multipart without downloading everything first
+            else if (bodyPart.isMimeType("multipart/*")) {
+                Object content = bodyPart.getContent();
+                if (content instanceof Multipart) {
+                    BodyPart nested = findAttachmentPartRecursive((Multipart) content, targetIndex, currentIndex);
+                    if (nested != null) return nested;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isActualAttachment(BodyPart bodyPart) throws MessagingException {
+        String disposition = bodyPart.getDisposition();
+        String fileName = bodyPart.getFileName();
+        String contentId = getContentId(bodyPart);
+
+        // 1. Explicitly marked as attachment -> Always include
+        if (Part.ATTACHMENT.equalsIgnoreCase(disposition)) {
+            return true;
+        }
+
+        // 2. Has a filename -> Almost certainly a user file, even if it has a CID (V10.29)
+        if (fileName != null && !fileName.trim().isEmpty()) {
+            // Check if it's just a tiny tracking pixel or tiny icon (optional safety)
+            // But usually, if it has a filename, the user expects to see it.
+            return true;
+        }
+
+        // 3. Has a Content-ID but NO filename -> This is a decorative inline element (e.g., logo)
+        // We skip these for the "Downloads" list to keep it clean.
+        if (contentId != null && fileName == null) {
+            return false;
+        }
+
+        return false;
     }
 
     /**
@@ -780,29 +826,24 @@ public class ImapService {
         log.info("[IMAP-XRAY-V10] Inspecting Part: Type={}, Disp={}, ID={}, File={}", 
                 contentType != null ? contentType.split(";")[0] : "null", disposition, contentId, fileName);
         
-        // 1. Identify if this part should be treated as an attachment/inline resource
-        boolean isAttachment = Part.ATTACHMENT.equalsIgnoreCase(disposition) || fileName != null;
-        boolean isInline = contentId != null || Part.INLINE.equalsIgnoreCase(disposition);
+        // 1. Identify if this part should be treated as an attachment/inline resource (V10.26)
+        boolean isAttachment = bodyPart != null && isActualAttachment(bodyPart);
 
-        // EXTRA CHECK: If it has any identifier but isn't the body, treat as attachment
-        if (contentId != null || (fileName != null && !isBodyPart(contentType))) {
-            isInline = true;
-        }
-
-        if (isAttachment || (isInline && !(content instanceof Multipart))) {
-            log.info("[IMAP-XRAY-HIT-V10] Capturing as attachment: {}, CID: {}, Type: {}", 
-                    fileName != null ? fileName : "inline-" + contentId, contentId, contentType);
-            // Treat as attachment
+        if (isAttachment) {
+            log.info("[IMAP-XRAY-HIT-V10] Capturing as real attachment: {}, CID: {}, Type: {}", 
+                    fileName != null ? fileName : "attachment", contentId, contentType);
             attachments.add(MailMessageDetailDto.AttachmentDto.builder()
                     .id(String.valueOf(attachmentIndex[0]++))
-                    .filename(fileName != null ? fileName : (isInline ? "inline-" + contentId : "attachment-" + attachmentIndex[0]))
+                    .filename(fileName != null ? fileName : "attachment-" + attachmentIndex[0])
                     .contentType(contentType)
                     .size(bodyPart != null ? bodyPart.getSize() : 0)
-                    .inline(isInline)
+                    .inline(false)
                     .contentId(contentId)
                     .build());
-            return; // Don't process as text/html if it's an attachment
+            return; 
         }
+
+        // 2. Process content... (logic continues for text/html and inline CIDs)
 
         // 2. Process content based on type
         if (content instanceof String) {
@@ -917,17 +958,18 @@ public class ImapService {
     private boolean checkMultipartAttachments(Multipart multipart) throws MessagingException, IOException {
         for (int i = 0; i < multipart.getCount(); i++) {
             BodyPart bodyPart = multipart.getBodyPart(i);
-            String disposition = bodyPart.getDisposition();
             
-            if (Part.ATTACHMENT.equalsIgnoreCase(disposition) || 
-               (Part.INLINE.equalsIgnoreCase(disposition) && bodyPart.getFileName() != null)) {
+            if (isActualAttachment(bodyPart)) {
                 return true;
             }
             
-            // Recursive check for nested multiparts
-            if (bodyPart.getContent() instanceof Multipart) {
-                if (checkMultipartAttachments((Multipart) bodyPart.getContent())) {
-                    return true;
+            // Recursive check for nested multiparts (Optimized V10.28)
+            if (bodyPart.isMimeType("multipart/*")) {
+                Object content = bodyPart.getContent();
+                if (content instanceof Multipart) {
+                    if (checkMultipartAttachments((Multipart) content)) {
+                        return true;
+                    }
                 }
             }
         }
@@ -939,22 +981,21 @@ public class ImapService {
                                            int[] index) throws MessagingException, IOException {
         for (int i = 0; i < multipart.getCount(); i++) {
             BodyPart bodyPart = multipart.getBodyPart(i);
-            String disposition = bodyPart.getDisposition();
             
-            if (Part.ATTACHMENT.equalsIgnoreCase(disposition) || 
-                Part.INLINE.equalsIgnoreCase(disposition) ||
-                bodyPart.getFileName() != null) {
-                
+            if (isActualAttachment(bodyPart)) {
                 attachments.add(MailMessageDto.AttachmentMetadataDto.builder()
                         .id(String.valueOf(index[0]++))
                         .filename(bodyPart.getFileName() != null ? bodyPart.getFileName() : "attachment-" + index[0])
                         .contentType(bodyPart.getContentType())
                         .size(bodyPart.getSize())
                         .contentId(getContentId(bodyPart))
-                        .inline(Part.INLINE.equalsIgnoreCase(disposition))
+                        .inline(false)
                         .build());
-            } else if (bodyPart.getContent() instanceof Multipart) {
-                collectAttachmentMetadata((Multipart) bodyPart.getContent(), attachments, index);
+            } else if (bodyPart.isMimeType("multipart/*")) {
+                Object content = bodyPart.getContent();
+                if (content instanceof Multipart) {
+                    collectAttachmentMetadata((Multipart) content, attachments, index);
+                }
             }
         }
     }
@@ -980,11 +1021,5 @@ public class ImapService {
             log.warn("Failed to extract Gmail ThreadId: {}", e.getMessage());
         }
         return null;
-    }
-
-    private boolean isBodyPart(String contentType) {
-        if (contentType == null) return false;
-        String type = contentType.toLowerCase();
-        return type.contains("text/plain") || type.contains("text/html");
     }
 }
