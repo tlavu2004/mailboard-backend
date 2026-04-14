@@ -39,6 +39,9 @@ public class EmailSyncService {
     private final KanbanService kanbanService;
     private final NotificationWebSocketHandler notificationWebSocketHandler;
 
+    @org.springframework.beans.factory.annotation.Value("${app.mail.sync.batch-size:20}")
+    private int batchSize;
+
     /** Gmail system labels to ignore when determining custom labels */
     private static final Set<String> SYSTEM_LABELS = Set.of(
             "INBOX", "SENT", "DRAFT", "DRAFTS", "SPAM", "TRASH",
@@ -96,35 +99,45 @@ public class EmailSyncService {
             return;
         }
 
-        log.info("Found {} corrupted emails for account: {}. Starting repair...", corrupted.size(), accountId);
+        log.info("[V13-REPAIR] Found {} corrupted emails for account: {}. Starting efficient repair...", corrupted.size(), accountId);
         EmailAccount account = accountRepository.findById(accountId).orElse(null);
         if (account == null) return;
 
-        for (EmailEntity entity : corrupted) {
-            try {
-                // Fetch full detail with HTML
-                var detail = imapService.getMessageDetail(account, "INBOX", entity.getUid());
-                String newBody = (detail.getBodyHtml() != null && !detail.getBodyHtml().isEmpty()) 
-                                 ? detail.getBodyHtml() 
-                                 : detail.getBodyText();
+        // Efficiency: Open ONE store and ONE folder for the whole Batch
+        try (jakarta.mail.Store store = imapService.connectToStore(account)) {
+            jakarta.mail.Folder folder = store.getFolder("INBOX");
+            folder.open(jakarta.mail.Folder.READ_ONLY);
 
-                if (detail != null && newBody != null) {
-                    entity.setBody(newBody);
-                    // Re-generate preview and snippet
-                    String plainText = imapService.stripHtml(newBody);
-                    entity.setSnippet(plainText.length() > 150 ? plainText.substring(0, 147) + "..." : plainText);
-                    
-                    // Re-generate embedding
-                    generateAndSetEmbedding(entity, entity.getSubject(), newBody);
-                    
-                    emailRepository.save(entity);
-                    log.info("Successfully repaired email ID: {}", entity.getId());
+            for (EmailEntity entity : corrupted) {
+                try {
+                    // Fetch full detail using the shared folder
+                    var detail = imapService.getMessageDetail(folder, entity.getUid());
+                    String newBody = (detail.getBodyHtml() != null && !detail.getBodyHtml().isEmpty()) 
+                                     ? detail.getBodyHtml() 
+                                     : detail.getBodyText();
+
+                    if (detail != null && newBody != null) {
+                        entity.setBody(newBody);
+                        // Re-generate preview and snippet
+                        String plainText = imapService.stripHtml(newBody);
+                        entity.setSnippet(plainText.length() > 150 ? plainText.substring(0, 147) + "..." : plainText);
+                        
+                        // Re-generate embedding
+                        generateAndSetEmbedding(entity, entity.getSubject(), newBody);
+                        
+                        emailRepository.save(entity);
+                        log.info("[V13-REPAIR] Successfully repaired email ID: {}", entity.getId());
+                    }
+                } catch (Exception e) {
+                    log.error("[V13-REPAIR] Failed to repair email ID: {}. Error: {}", entity.getId(), e.getMessage());
                 }
-            } catch (Exception e) {
-                log.error("Failed to repair email ID: {}. Error: {}", entity.getId(), e.getMessage());
             }
+            folder.close(false);
+        } catch (Exception e) {
+            log.error("[V13-REPAIR] Fatal error during batch repair for account {}: {}", accountId, e.getMessage());
         }
     }
+
 
     @Transactional
     public void refreshEmail(Long emailId) {
@@ -174,172 +187,198 @@ public class EmailSyncService {
         Long accountId = account.getId();
 
         try {
-            List<MailMessageDto> messages = imapService.getMessages(account, folderName, page, limit);
+            int currentLimit = limit > 0 ? limit : batchSize;
+            int currentPage = page;
+            int totalNewFound = 0;
+            int maxPagesToTry = 3; // Prevent infinite loops
+            
+            log.info("[V11-SYNC] Starting sync for account: {} (Folder: {}, Initial Page: {})", 
+                account.getEmailAddress(), folderName, currentPage);
 
-            for (MailMessageDto msg : messages) {
-                String targetStatus = determineStatusFromLabels(msg, accountId);
-                log.info("Syncing email: {} | Labels: {} | Target Status: {}",
-                    msg.getSubject(), msg.getLabels(), targetStatus);
+            while (totalNewFound < currentLimit && (currentPage - page) < maxPagesToTry) {
+                List<MailMessageDto> messages = imapService.getMessages(account, folderName, currentPage, currentLimit);
+                if (messages.isEmpty()) {
+                    log.info("[V11-SYNC] No more messages found on server at page {}", currentPage);
+                    break;
+                }
 
-                Optional<EmailEntity> existingOpt = emailRepository.findByMessageId(msg.getMessageId());
-                if (existingOpt.isPresent()) {
-                    EmailEntity existing = existingOpt.get();
-                    boolean changed = false;
-
-                    // Update Gmail IDs if missing
-                    if (existing.getGmailMessageId() == null && msg.getGmailMessageId() != null) {
-                        existing.setGmailMessageId(msg.getGmailMessageId());
-                        changed = true;
-                    }
-                    if (existing.getThreadId() == null && msg.getThreadId() != null) {
-                        existing.setThreadId(msg.getThreadId());
-                        changed = true;
-                    }
-
-                    // If body is missing or looks corrupted (e.g. starts with CSS after the stripping bug), update it
-                    boolean isCorrupted = existing.getBody() != null && 
-                                          (existing.getBody().contains("body {") || 
-                                           existing.getBody().contains(".ie-browser") ||
-                                           existing.getBody().contains(".mso-container") ||
-                                           existing.getBody().contains("ExternalClass")); 
+                for (MailMessageDto msg : messages) {
+                    processMessage(msg, account, accountId);
                     
-                    if (existing.getBody() == null || existing.getBody().isEmpty() || isCorrupted) {
-                        if (msg.getBody() != null && !msg.getBody().isEmpty()) {
-                            existing.setBody(msg.getBody());
-                            changed = true;
-                        }
+                    // Count how many are new for "Smart Sync" quota
+                    if (!emailRepository.existsByMessageId(msg.getMessageId())) {
+                        totalNewFound++;
                     }
 
-                    // If embedding of the currently preferred dimension is missing, generate it
-                    int preferredDim = embeddingService.getPreferredDimension();
-                    boolean hasPreferred = (preferredDim == 768 && existing.getEmbedding768() != null) ||
-                                         (preferredDim == 384 && existing.getEmbedding384() != null);
-
-                    if (!hasPreferred && existing.getBody() != null && !existing.getBody().isEmpty()) {
-                        // Skip embeddings for unimportant folders
-                        String status = existing.getStatus();
-                        if (status != null && !status.equalsIgnoreCase("TRASH") && !status.equalsIgnoreCase("SPAM")) {
-                            generateAndSetEmbedding(existing, existing.getSubject(), existing.getSnippet());
-                            if (existing.getEmbedding768() != null || existing.getEmbedding384() != null) {
-                                changed = true;
-                            }
-                        }
-                    }
-
-                    if (changed) {
-                        emailRepository.save(existing);
-                        log.info("Updated email ID: {} (Body/Embedding)", existing.getId());
-                    }
-
-                    // Update read status if changed
-                    if (existing.isRead() != msg.isRead()) {
-                        existing.setRead(msg.isRead());
-                        changed = true;
-                    }
-
-                    // Update star status if changed
-                    if (existing.isStarred() != msg.isStarred()) {
-                        existing.setStarred(msg.isStarred());
-                        changed = true;
-                    }
-
-                    // Migration: If existing status is STARRED, move to targetStatus and set isStarred based on Gmail
-                    if ("STARRED".equalsIgnoreCase(existing.getStatus())) {
-                        existing.setStatus(targetStatus);
-                        existing.setStarred(msg.isStarred());
-                        changed = true;
-                        log.info("Migrating legacy STARRED status to {} and setting isStarred={}", 
-                            targetStatus, msg.isStarred());
-                    } else if (!existing.getStatus().equals(targetStatus)) {
-                        log.info("Updating status for email ID {} from {} to {} based on labels",
-                            existing.getId(), existing.getStatus(), targetStatus);
-                        existing.setStatus(targetStatus);
-                        changed = true;
-                    }
-
-                    // Update hasAttachments if changed
-                    if (existing.isHasAttachments() != msg.isHasAttachments()) {
-                        existing.setHasAttachments(msg.isHasAttachments());
-                        changed = true;
-                    }
-
-                    // Update attachments if missing or changed (V10.32: Smarter merging for cloud links)
-                    if (msg.getAttachments() != null && !msg.getAttachments().isEmpty()) {
-                        boolean attachmentListChanged = false;
-                        for (var msgAt : msg.getAttachments()) {
-                            // Check if this specific attachment already exists (by server ID or external URL)
-                            boolean alreadyExists = existing.getAttachments().stream().anyMatch(dbAt -> {
-                                if (msgAt.getExternalUrl() != null) {
-                                    return msgAt.getExternalUrl().equals(dbAt.getExternalUrl());
-                                }
-                                return msgAt.getId() != null && msgAt.getId().equals(dbAt.getServerAttachmentId());
-                            });
-
-                            if (!alreadyExists) {
-                                existing.getAttachments().add(com.awad.emailclientai.modules.email.entity.EmailAttachment.builder()
-                                        .email(existing)
-                                        .filename(msgAt.getFilename())
-                                        .contentType(msgAt.getContentType())
-                                        .size(msgAt.getSize())
-                                        .serverAttachmentId(msgAt.getId())
-                                        .contentId(msgAt.getContentId())
-                                        .inline(msgAt.isInline())
-                                        .externalUrl(msgAt.getExternalUrl())
-                                        .build());
-                                attachmentListChanged = true;
-                            }
-                        }
-                        if (attachmentListChanged) {
-                            changed = true;
-                        }
-                    }
-
-                    if (changed) {
-                        emailRepository.save(existing);
-                    }
-                    continue;
                 }
-
-                EmailEntity entity = EmailEntity.builder()
-                        .messageId(msg.getMessageId())
-                        .threadId(msg.getThreadId())
-                        .gmailMessageId(msg.getGmailMessageId())
-                        .uid(msg.getUid())
-                        .subject(msg.getSubject())
-                        .sender(msg.getFrom())
-                        .snippet(msg.getPreview())
-                        .body(msg.getBody())
-                        .receivedDate(msg.getReceivedAt())
-                        .isRead(msg.isRead())
-                        .hasAttachments(msg.isHasAttachments())
-                        .status(targetStatus)
-                        .account(account)
-                        .kanbanOrder((double) msg.getReceivedAt().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
-                        .build();
-
-                // Map and set attachments
-                if (msg.getAttachments() != null && !msg.getAttachments().isEmpty()) {
-                    entity.getAttachments().clear();
-                    entity.getAttachments().addAll(mapAttachments(msg.getAttachments(), entity));
-                }
-
-                try {
-                    emailRepository.save(entity);
-                    // Generate embedding after entity is persisted (has ID)
-                    // Skip for TRASH and SPAM
-                    if (!"TRASH".equalsIgnoreCase(targetStatus) && !"SPAM".equalsIgnoreCase(targetStatus)) {
-                        generateAndSetEmbedding(entity, msg.getSubject(), msg.getPreview());
-                    }
-                } catch (DataIntegrityViolationException e) {
-                    log.warn("Duplicate email detected during sync (messageId: {}), skipping.", msg.getMessageId());
-                }
+                
+                currentPage++;
             }
         } catch (jakarta.mail.MessagingException e) {
             log.error("Failed to fetch messages for account: " + account.getEmailAddress(), e);
         }
     }
 
+    private void processMessage(MailMessageDto msg, EmailAccount account, Long accountId) {
+        String targetStatus = determineStatusFromLabels(msg, accountId);
+        Optional<EmailEntity> existingOpt = emailRepository.findByMessageId(msg.getMessageId());
+        
+        if (existingOpt.isPresent()) {
+            EmailEntity existing = existingOpt.get();
+            boolean changed = false;
+
+            // Update Gmail IDs if missing
+            if (existing.getGmailMessageId() == null && msg.getGmailMessageId() != null) {
+                existing.setGmailMessageId(msg.getGmailMessageId());
+                changed = true;
+            }
+            if (existing.getThreadId() == null && msg.getThreadId() != null) {
+                existing.setThreadId(msg.getThreadId());
+                changed = true;
+            }
+
+            // If body is missing or looks corrupted (starts with CSS after the stripping bug), update it
+            boolean isCorrupted = existing.getBody() != null && 
+                                  (existing.getBody().contains("body {") || 
+                                   existing.getBody().contains(".ie-browser") ||
+                                   existing.getBody().contains(".mso-container") ||
+                                   existing.getBody().contains("ExternalClass")); 
+            
+            if (existing.getBody() == null || existing.getBody().isEmpty() || isCorrupted) {
+                if (msg.getBody() != null && !msg.getBody().isEmpty()) {
+                    existing.setBody(msg.getBody());
+                    changed = true;
+                }
+            }
+
+            // If embedding of the currently preferred dimension is missing, generate it
+            int preferredDim = embeddingService.getPreferredDimension();
+            boolean hasPreferred = (preferredDim == 768 && existing.getEmbedding768() != null) ||
+                                 (preferredDim == 384 && existing.getEmbedding384() != null);
+
+            if (!hasPreferred && existing.getBody() != null && !existing.getBody().isEmpty()) {
+                // Skip embeddings for unimportant folders
+                String status = existing.getStatus();
+                if (status != null && !status.equalsIgnoreCase("TRASH") && !status.equalsIgnoreCase("SPAM")) {
+                    generateAndSetEmbedding(existing, existing.getSubject(), existing.getSnippet());
+                    if (existing.getEmbedding768() != null || existing.getEmbedding384() != null) {
+                        changed = true;
+                    }
+                }
+            }
+
+            if (changed) {
+                emailRepository.save(existing);
+                log.info("Updated email ID: {} (Body/Embedding)", existing.getId());
+            }
+
+            // Update read status if changed
+            if (existing.isRead() != msg.isRead()) {
+                existing.setRead(msg.isRead());
+                changed = true;
+            }
+
+            // Update star status if changed
+            if (existing.isStarred() != msg.isStarred()) {
+                existing.setStarred(msg.isStarred());
+                changed = true;
+            }
+
+            // Migration: If existing status is STARRED, move to targetStatus and set isStarred based on Gmail
+            if ("STARRED".equalsIgnoreCase(existing.getStatus())) {
+                existing.setStatus(targetStatus);
+                existing.setStarred(msg.isStarred());
+                changed = true;
+                log.info("Migrating legacy STARRED status to {} and setting isStarred={}", 
+                    targetStatus, msg.isStarred());
+            } else if (!existing.getStatus().equals(targetStatus)) {
+                log.info("Updating status for email ID {} from {} to {} based on labels",
+                    existing.getId(), existing.getStatus(), targetStatus);
+                existing.setStatus(targetStatus);
+                changed = true;
+            }
+
+            // Update hasAttachments if changed
+            if (existing.isHasAttachments() != msg.isHasAttachments()) {
+                existing.setHasAttachments(msg.isHasAttachments());
+                changed = true;
+            }
+
+            // Update attachments if missing or changed (V10.32: Smarter merging for cloud links)
+            if (msg.getAttachments() != null && !msg.getAttachments().isEmpty()) {
+                boolean attachmentListChanged = false;
+                for (var msgAt : msg.getAttachments()) {
+                    // Check if this specific attachment already exists (by server ID or external URL)
+                    boolean alreadyExists = existing.getAttachments().stream().anyMatch(dbAt -> {
+                        if (msgAt.getExternalUrl() != null) {
+                            return msgAt.getExternalUrl().equals(dbAt.getExternalUrl());
+                        }
+                        return msgAt.getId() != null && msgAt.getId().equals(dbAt.getServerAttachmentId());
+                    });
+
+                    if (!alreadyExists) {
+                        existing.getAttachments().add(com.awad.emailclientai.modules.email.entity.EmailAttachment.builder()
+                                .email(existing)
+                                .filename(msgAt.getFilename())
+                                .contentType(msgAt.getContentType())
+                                .size(msgAt.getSize())
+                                .serverAttachmentId(msgAt.getId())
+                                .contentId(msgAt.getContentId())
+                                .inline(msgAt.isInline())
+                                .externalUrl(msgAt.getExternalUrl())
+                                .build());
+                        attachmentListChanged = true;
+                    }
+                }
+                if (attachmentListChanged) {
+                    changed = true;
+                }
+            }
+
+            if (changed) {
+                emailRepository.save(existing);
+            }
+            return;
+        }
+
+        // New Email Creation
+        EmailEntity entity = EmailEntity.builder()
+                .messageId(msg.getMessageId())
+                .threadId(msg.getThreadId())
+                .gmailMessageId(msg.getGmailMessageId())
+                .uid(msg.getUid())
+                .subject(msg.getSubject())
+                .sender(msg.getFrom())
+                .snippet(msg.getPreview())
+                .body(msg.getBody())
+                .receivedDate(msg.getReceivedAt())
+                .isRead(msg.isRead())
+                .hasAttachments(msg.isHasAttachments())
+                .status(targetStatus)
+                .account(account)
+                .kanbanOrder((double) msg.getReceivedAt().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
+                .build();
+
+        // Map and set attachments
+        if (msg.getAttachments() != null && !msg.getAttachments().isEmpty()) {
+            entity.getAttachments().clear();
+            entity.getAttachments().addAll(mapAttachments(msg.getAttachments(), entity));
+        }
+
+        try {
+            emailRepository.save(entity);
+            // Generate embedding after entity is persisted (has ID)
+            // Skip for TRASH and SPAM
+            if (!"TRASH".equalsIgnoreCase(targetStatus) && !"SPAM".equalsIgnoreCase(targetStatus)) {
+                generateAndSetEmbedding(entity, msg.getSubject(), msg.getPreview());
+            }
+        } catch (DataIntegrityViolationException e) {
+            log.warn("Duplicate email detected during sync (messageId: {}), skipping.", msg.getMessageId());
+        }
+    }
+
     /**
+
      * Background task to wake up snoozed emails.
      * Runs every minute.
      */

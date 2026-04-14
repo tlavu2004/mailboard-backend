@@ -161,11 +161,13 @@ public class EmailService {
         while (scriptMatcher.find()) scriptCount++;
         resolvedHtml = scriptMatcher.replaceAll("");
 
-        // Strip dangerous containers: <iframe>, <embed>, <object>, <base>, <link>, <meta>, <applet>, <form>
-        java.util.regex.Pattern framePattern = java.util.regex.Pattern.compile("(?is)<(iframe|embed|object|base|link|meta|applet|form)\\b[^>]*>.*?</\\1>|<(iframe|embed|object|base|link|meta|applet|form)\\b[^>]*>");
+        // Strip dangerous containers: <iframe>, <embed>, <object>, <base>, <link>, <applet>, <form>
+        // Note: <meta> is allowed for responsiveness (Standard in GitHub/Newsletters)
+        java.util.regex.Pattern framePattern = java.util.regex.Pattern.compile("(?is)<(iframe|embed|object|base|link|applet|form)\\b[^>]*>.*?</\\1>|<(iframe|embed|object|base|link|applet|form)\\b[^>]*>");
         java.util.regex.Matcher frameMatcher = framePattern.matcher(resolvedHtml);
         while (frameMatcher.find()) frameCount++;
         resolvedHtml = frameMatcher.replaceAll("");
+
 
         // Strip ALL 'on*' event attributes (aggressive purge)
         java.util.regex.Pattern onEventPattern = java.util.regex.Pattern.compile("(?i)\\s+on[a-z]+\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+)");
@@ -185,15 +187,34 @@ public class EmailService {
         StringBuffer styleSb = new StringBuffer();
         while (styleMatcher.find()) {
             String content = styleMatcher.group(1);
-            if (content.toLowerCase().matches(".*(expression|javascript|@import|url\\s*\\().*")) {
+            // V12: Removed 'url\s*\(' from blacklist. Many modern emails use url() for safe fonts/images.
+            // Still blocking dangerous expressions and JS-in-CSS.
+            if (content.toLowerCase().matches(".*(expression|javascript|@import).*")) {
                 styleStrippedCount++;
                 styleMatcher.appendReplacement(styleSb, "");
             } else {
                 styleMatcher.appendReplacement(styleSb, styleMatcher.group(0));
             }
         }
+
         styleMatcher.appendTail(styleSb);
         resolvedHtml = styleSb.toString();
+
+        // 2. Browser standard compliance fix: Convert ';' to ',' in meta tags (Fixes console warnings)
+        java.util.regex.Pattern metaSemicolonPattern = java.util.regex.Pattern.compile("(?is)<meta\\b[^>]*name=[\"']viewport[\"'][^>]*content=[\"']([^\"']+)[\"']");
+        java.util.regex.Matcher metaMatcher = metaSemicolonPattern.matcher(resolvedHtml);
+        StringBuffer metaSb = new StringBuffer();
+        while (metaMatcher.find()) {
+            String content = metaMatcher.group(1);
+            if (content.contains(";")) {
+                String fixedContent = content.replace(";", ",");
+                metaMatcher.appendReplacement(metaSb, metaMatcher.group(0).replace(content, fixedContent));
+            } else {
+                metaMatcher.appendReplacement(metaSb, metaMatcher.group(0));
+            }
+        }
+        metaMatcher.appendTail(metaSb);
+        resolvedHtml = metaSb.toString();
 
         log.info("[V10-SHIELD-AUDIT] Email {}: Stripped {} scripts, {} frames/meta, {} on* events, {} js-urls, {} styles", 
                 emailId, scriptCount, frameCount, onEventCount, jsUrlCount, styleStrippedCount);
@@ -206,40 +227,56 @@ public class EmailService {
         log.debug("[Rendering] Checking CID replacements for email ID: {}", emailId);
         
         for (EmailAttachment at : attachments) {
-            if (at.isInline() && at.getContentId() != null) {
+            // V12: Remove strict checking of at.isInline(). Many clients use cid: for regular attachments.
+            if (at.getContentId() != null) {
                 // Normalize Content-ID (strip brackets if present)
                 String cid = at.getContentId().replaceAll("[<>]", "").trim();
                 String proxyUrl = String.format("/api/v1/emails/%d/attachments/%d/inline", emailId, at.getId());
                 
-                // Use a Case-Insensitive regex to find 'cid:[<]ID[>]'
+                // Case-Insensitive regex to find 'cid:[<]ID[>]'
                 java.util.regex.Pattern cidPattern = java.util.regex.Pattern.compile("(?i)cid:<?(" + java.util.regex.Pattern.quote(cid) + ")>?");
                 java.util.regex.Matcher cidMatcher = cidPattern.matcher(resolvedHtml);
                 
                 int count = 0;
-                while (cidMatcher.find()) count++;
+                StringBuffer sb = new StringBuffer();
+                while (cidMatcher.find()) {
+                    cidMatcher.appendReplacement(sb, proxyUrl);
+                    count++;
+                }
+                cidMatcher.appendTail(sb);
                 
                 if (count > 0) {
-                    resolvedHtml = cidMatcher.replaceAll(proxyUrl);
-                    log.info("Successfully replaced {} matches for CID: {} in Email ID: {}", count, cid, emailId);
+                    resolvedHtml = sb.toString();
+                    log.info("[V12-CID] Replaced {} matches for CID: {} in Email ID: {}", count, cid, emailId);
+                } else {
+                    // Log even if zero matches to help debug why VNG emails aren't replacing
+                    log.debug("[V12-CID] Checking CID: {} - No matches found in body for Email ID: {}", cid, emailId);
                 }
             }
         }
-        // Bridge Script for Secure Auto-Resize
-        String bridgeScript = "<script>" +
+
+        // Bridge Script for Secure Auto-Resize (V13 Optimization)
+        String styleFix = "<style>" +
+            "html, body { margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; width: 100% !important; }" +
+            "* { max-width: 100vw !important; box-sizing: border-box !important; }" +
+            "</style>";
+
+        String bridgeScript = styleFix + "<script>" +
             "function sendHeight() {" +
-            "  document.body.style.margin = '0';" +
-            "  document.body.style.overflowY = 'hidden';" + // Force expand vertically
-            "  document.body.style.overflowX = 'auto';" +  // Allow horizontal scroll
-            "  document.documentElement.style.overflowX = 'auto';" +
-            "  var height = Math.max(document.body.offsetHeight, document.body.scrollHeight);" +
-            "  window.parent.postMessage({ type: 'MB_RESIZE', height: height }, '*');" +
+            "  var body = document.body, html = document.documentElement;" +
+            "  var height = Math.max(body.scrollHeight, body.offsetHeight, html.clientHeight, html.scrollHeight, html.offsetHeight);" +
+            "  // Use a slightly more conservative approach to avoid infinite expansion\n" +
+            "  var finalHeight = html.offsetHeight || body.offsetHeight;" +
+            "  window.parent.postMessage({ type: 'MB_RESIZE', height: finalHeight }, '*');" +
             "}" +
             "window.onload = sendHeight;" +
             "window.onresize = sendHeight;" +
-            "setInterval(sendHeight, 1000);" +
+            "// Periodic check for dynamic content (e.g. late loading images)\n" +
+            "setInterval(sendHeight, 1500);" +
             "</script>";
         
         resolvedHtml = resolvedHtml + bridgeScript;
+
 
         return resolvedHtml;
     }

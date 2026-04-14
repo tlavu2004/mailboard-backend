@@ -167,25 +167,27 @@ public class ImapService {
         try (Store store = connectToStore(account)) {
             Folder folder = store.getFolder(folderName);
             folder.open(Folder.READ_ONLY);
-            
-            if (!(folder instanceof UIDFolder)) {
-                throw new MessagingException("Folder does not support UIDs");
-            }
-            
-            UIDFolder uidFolder = (UIDFolder) folder;
-            Message message = uidFolder.getMessageByUID(uid);
-            
-            if (message == null) {
-                folder.close(false);
-                throw new MessagingException("Message not found with UID: " + uid);
-            }
-            
-            MailMessageDetailDto detail = convertToDetailDto(message, uid);
+            MailMessageDetailDto detail = getMessageDetail(folder, uid);
             folder.close(false);
-            
             return detail;
         }
     }
+
+    public MailMessageDetailDto getMessageDetail(Folder folder, long uid) throws MessagingException, IOException {
+        if (!(folder instanceof UIDFolder)) {
+            throw new MessagingException("Folder does not support UIDs");
+        }
+        
+        UIDFolder uidFolder = (UIDFolder) folder;
+        Message message = uidFolder.getMessageByUID(uid);
+        
+        if (message == null) {
+            throw new MessagingException("Message not found with UID: " + uid);
+        }
+        
+        return convertToDetailDto(message, uid);
+    }
+
 
     /**
      * Marks a message as read/unread.
@@ -523,13 +525,14 @@ public class ImapService {
         return null;
     }
 
-    // ================== Private Helper Methods ==================
-
-    private Store connectToStore(EmailAccount account) throws MessagingException {
+    // ================== Shared Connection Methods ==================
+    
+    public Store connectToStore(EmailAccount account) throws MessagingException {
         return connectToStoreInternal(account, true);
     }
 
     private Store connectToStoreInternal(EmailAccount account, boolean retryOnAuthFailure) throws MessagingException {
+
         Properties props = new Properties();
         
         // Use 'gimaps' for Gmail (enables X-GM-LABELS, X-GM-MSGID, etc.), 'imaps' for others
@@ -851,26 +854,35 @@ public class ImapService {
         // 2. Process content... (logic continues for text/html and inline CIDs)
 
         // 2. Process content based on type
-        if (content instanceof String) {
-            String body = (String) content;
-            if (contentType != null && contentType.toLowerCase().contains("text/html")) {
+        if (content instanceof String body) {
+            String lowerType = contentType != null ? contentType.toLowerCase() : "";
+            if (lowerType.contains("text/html")) {
                 htmlBuilder.append(body);
-            } else {
+                log.debug("[IMAP-XRAY-CONTENT] Appended HTML content (Length: {})", body.length());
+            } else if (lowerType.contains("text/plain")) {
                 textBuilder.append(body);
+                log.debug("[IMAP-XRAY-CONTENT] Appended Plain Text content (Length: {})", body.length());
+            } else {
+                log.debug("[IMAP-XRAY-CONTENT] String content with unknown type: {}", contentType);
             }
-        } else if (content instanceof Multipart) {
-            Multipart multipart = (Multipart) content;
+        } else if (content instanceof Multipart multipart) {
             for (int i = 0; i < multipart.getCount(); i++) {
                 BodyPart childPart = multipart.getBodyPart(i);
                 processContentRecursive(childPart.getContent(), childPart.getContentType(),
                         textBuilder, htmlBuilder, attachments, attachmentIndex, childPart);
             }
-        } else if (content instanceof MimeBodyPart) {
-            MimeBodyPart mbp = (MimeBodyPart) content;
+        } else if (content instanceof MimeBodyPart mbp) {
+            log.debug("[IMAP-XRAY-CONTENT] Processing nested MimeBodyPart: {}", contentType);
             processContentRecursive(mbp.getContent(), mbp.getContentType(),
                     textBuilder, htmlBuilder, attachments, attachmentIndex, mbp);
+        } else if (content instanceof java.io.InputStream) {
+            log.debug("[IMAP-XRAY-CONTENT] Skipping InputStream part (likely binary/attachment): {}", contentType);
+        } else {
+            log.warn("[IMAP-XRAY-CONTENT] Unexpected content type: {} (Class: {})", 
+                    contentType, content != null ? content.getClass().getName() : "null");
         }
     }
+
 
     private void processContent(Message message, String bodyText, String bodyHtml,
                                  List<MailMessageDetailDto.AttachmentDto> attachments, 

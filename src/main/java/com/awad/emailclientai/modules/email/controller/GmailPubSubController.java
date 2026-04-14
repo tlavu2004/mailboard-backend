@@ -28,6 +28,9 @@ public class GmailPubSubController {
     private final NotificationWebSocketHandler webSocketHandler;
     private final ObjectMapper objectMapper;
 
+    @org.springframework.beans.factory.annotation.Value("${app.mail.sync.batch-size:20}")
+    private int batchSize;
+
     /**
      * Webhook endpoint to receive push notifications from Google Cloud Pub/Sub.
      * Google sends a POST request with a "message" field containing base64 encoded data.
@@ -59,7 +62,7 @@ public class GmailPubSubController {
                 // Trigger sync in a separate thread (non-blocking for Google)
                 new Thread(() -> {
                     try {
-                        emailSyncService.syncEmailsForAccount(account.getId(), "INBOX", 20, 0);
+                        emailSyncService.syncEmailsForAccount(account.getId(), "INBOX", batchSize, 0);
                         
                         // Notify frontend via WebSocket
                         webSocketHandler.sendNotification(account.getId(), "{\"type\": \"NEW_EMAILS\", \"message\": \"Sync completed for " + emailAddress + "\"}");

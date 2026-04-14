@@ -98,7 +98,7 @@ public class EmailController {
             @AuthenticationPrincipal com.awad.emailclientai.modules.user.security.UserPrincipal principal,
             @RequestParam(required = false) Long accountId,
             @RequestParam(defaultValue = "INBOX") String folderName,
-            @RequestParam(defaultValue = "10") int limit,
+            @RequestParam(defaultValue = "20") int limit,
             @RequestParam(defaultValue = "0") int page) {
         
         if (accountId != null) {

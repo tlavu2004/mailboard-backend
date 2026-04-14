@@ -18,6 +18,8 @@ import java.util.Optional;
 @Repository
 public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSpecificationExecutor<EmailEntity> {
     Optional<EmailEntity> findByMessageId(String messageId);
+    boolean existsByMessageId(String messageId);
+
     
     List<EmailEntity> findByStatus(String status);
 
