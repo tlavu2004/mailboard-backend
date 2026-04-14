@@ -18,7 +18,13 @@ public class EmailEntityDto {
     private String gmailMessageId;
     private Long uid;
     private String subject;
-    private String sender;
+    private EmailAddressDto from;
+    private List<EmailAddressDto> to;
+    private List<EmailAddressDto> cc;
+    private String sender; // Legacy fallback
+    private String fromName; // Legacy fallback
+    private List<String> recipientTo; // Legacy fallback
+    private List<String> recipientCc; // Legacy fallback
     private String snippet;
     private String body;
     private String status;
@@ -35,6 +41,15 @@ public class EmailEntityDto {
     private String gmailLink;
     private String accountEmail;
     private List<AttachmentDto> attachments;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class EmailAddressDto {
+        private String name;
+        private String email;
+    }
 
     @Data
     @Builder

@@ -35,13 +35,44 @@ public class EmailService {
 
     @PostConstruct
     public void init() {
-        log.info(">>>> [X-RAY-RELOADED-V10] Initialized and Monitoring Rendering <<<<");
+        log.info(">>>> Initialized and Monitoring Rendering <<<<");
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public EmailEntityDto getEmailDetail(Long id) {
         EmailEntity email = emailRepository.findById(id)
                 .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_NOT_FOUND));
+        
+        // V30: Live Healing - If body is completely missing, reach out to IMAP to recover it
+        if (email.getBody() == null || email.getBody().trim().isEmpty()) {
+            log.info("[LIVE-HEALING] Body missing for email ID: {}. Attempting recovery from server...", id);
+            try {
+                // Determine folder name (Simplified: LinkedIn/Standard incoming is almost always INBOX)
+                String folderName = "INBOX";
+                if ("SENT".equalsIgnoreCase(email.getStatus())) {
+                    folderName = "SENT";
+                }
+                
+                String liveBody = imapService.fetchLiveBody(email.getAccount(), folderName, email.getUid());
+                
+                if (liveBody != null && !liveBody.isEmpty()) {
+                    email.setBody(liveBody);
+                    
+                    // Also heal snippet if it was just the subject before
+                    if (email.getSnippet() == null || email.getSnippet().trim().isEmpty() || email.getSnippet().equals(email.getSubject())) {
+                        String cleanSnippet = liveBody.replaceAll("<[^>]*>", " ").trim();
+                        email.setSnippet(cleanSnippet.substring(0, Math.min(cleanSnippet.length(), 200)));
+                    }
+                    
+                    emailRepository.save(email);
+                    log.info("[LIVE-HEALING] Success! Body recovered and persisted for email ID: {}", id);
+                } else {
+                    log.warn("[LIVE-HEALING] Server returned empty body for email ID: {}", id);
+                }
+            } catch (Exception e) {
+                log.error("[LIVE-HEALING] Error during recovery for email ID: {}: {}", id, e.getMessage());
+            }
+        }
         
         return mapToDto(email);
     }
@@ -81,7 +112,7 @@ public class EmailService {
                         if (at.isInline() || at.getContentId() != null) {
                             return false; // Standard inline image
                         }
-                        // V10.36 Edge Case: If the image filename is explicitly referenced in the HTML body 
+                        // Edge Case: If the image filename is explicitly referenced in the HTML body 
                         // (e.g. as an 'alt' attribute or src), it is acting as an inline image/banner.
                         if (at.getFilename() != null && !at.getFilename().isEmpty() && 
                             finalBody != null && finalBody.contains(at.getFilename())) {
@@ -108,10 +139,10 @@ public class EmailService {
         // Transform body for all emails (Sanitization, Meta-fix, CID resolution)
         body = processEmailBody(body, entity.getId(), entity.getAttachments());
 
-        // V10.32: Dynamic Discovery Fallback for existing emails
+        // Dynamic Discovery Fallback for existing emails
         imapService.scanForCloudLinksEntityDto(body, attachments, new int[]{attachments.size()});
 
-        // V10.35: Final flag calculation for accurate UI indicators
+        // Final flag calculation for accurate UI indicators
         boolean hasCloud = attachments.stream().anyMatch(a -> a.getExternalUrl() != null);
         boolean hasPhysical = attachments.stream().anyMatch(a -> a.getExternalUrl() == null);
 
@@ -120,7 +151,17 @@ public class EmailService {
                 .messageId(entity.getMessageId())
                 .uid(entity.getUid())
                 .subject(entity.getSubject())
-                .sender(entity.getSender())
+                .from(EmailEntityDto.EmailAddressDto.builder()
+                        .name(entity.getFromName())
+                        .email(entity.getSender())
+                        .build())
+                .to(entity.getRecipientTo() != null ? java.util.Arrays.stream(entity.getRecipientTo().split(",\\s*"))
+                        .map(email -> EmailEntityDto.EmailAddressDto.builder().email(email.trim()).build())
+                        .collect(java.util.stream.Collectors.toList()) : java.util.Collections.emptyList())
+                .sender(entity.getSender()) // Legacy fallback
+                .fromName(entity.getFromName()) // Legacy fallback
+                .recipientTo(entity.getRecipientTo() != null ? java.util.Arrays.asList(entity.getRecipientTo().split(",\\s*")) : java.util.Collections.emptyList()) // Legacy fallback
+                .recipientCc(entity.getRecipientCc() != null ? java.util.Arrays.asList(entity.getRecipientCc().split(",\\s*")) : java.util.Collections.emptyList()) // Legacy fallback
                 .snippet(entity.getSnippet())
                 .body(body)
                 .status(entity.getStatus())
@@ -147,7 +188,7 @@ public class EmailService {
     public String processEmailBody(String html, Long emailId, List<EmailAttachment> attachments) {
         if (html == null) return null;
         
-        log.info("[V10-DEBUG-START] Processing Email ID: {}", emailId);
+        log.info("[DEBUG-START] Processing Email ID: {}", emailId);
         
         String resolvedHtml = html;
         int scriptCount = 0;
@@ -156,7 +197,7 @@ public class EmailService {
         int frameCount = 0;
         int styleStrippedCount = 0;
 
-        // 1. X-Ray Reloaded V10 Sanitization
+        // 1. HTML Sanitization
         
         // Strip <script>
         Pattern scriptPattern = Pattern.compile("(?is)<script\\b[^>]*>.*?</script>");
@@ -190,7 +231,7 @@ public class EmailService {
         StringBuffer styleSb = new StringBuffer();
         while (styleMatcher.find()) {
             String content = styleMatcher.group(1);
-            // V12: Removed 'url\s*\(' from blacklist. Many modern emails use url() for safe fonts/images.
+            // Removed 'url\s*\(' from blacklist. Many modern emails use url() for safe fonts/images.
             // Still blocking dangerous expressions and JS-in-CSS.
             if (content.toLowerCase().matches(".*(expression|javascript|@import).*")) {
                 styleStrippedCount++;
@@ -230,18 +271,18 @@ public class EmailService {
         resolvedHtml = metaSb.toString();
 
 
-        log.info("[V10-SHIELD-AUDIT] Email {}: Stripped {} scripts, {} frames/meta, {} on* events, {} js-urls, {} styles", 
+        log.info("[SHIELD-AUDIT] Email {}: Stripped {} scripts, {} frames/meta, {} on* events, {} js-urls, {} styles", 
                 emailId, scriptCount, frameCount, onEventCount, jsUrlCount, styleStrippedCount);
 
         if (attachments == null || attachments.isEmpty()) {
-            log.info("[V7-DEBUG-END] No attachments found for email {}", emailId);
+            log.info("[DEBUG-END] No attachments found for email {}", emailId);
             return resolvedHtml;
         }
 
         log.debug("[Rendering] Checking CID replacements for email ID: {}", emailId);
         
         for (EmailAttachment at : attachments) {
-            // V12: Remove strict checking of at.isInline(). Many clients use cid: for regular attachments.
+            // Remove strict checking of at.isInline(). Many clients use cid: for regular attachments.
             if (at.getContentId() != null) {
                 // Normalize Content-ID (strip brackets if present)
                 String cid = at.getContentId().replaceAll("[<>]", "").trim();
@@ -261,57 +302,65 @@ public class EmailService {
                 
                 if (count > 0) {
                     resolvedHtml = sb.toString();
-                    log.info("[V12-CID] Replaced {} matches for CID: {} in Email ID: {}", count, cid, emailId);
+                    log.info("[CID] Replaced {} matches for CID: {} in Email ID: {}", count, cid, emailId);
                 } else {
                     // Log even if zero matches to help debug why VNG emails aren't replacing
-                    log.debug("[V12-CID] Checking CID: {} - No matches found in body for Email ID: {}", cid, emailId);
+                    log.debug("[CID] Checking CID: {} - No matches found in body for Email ID: {}", cid, emailId);
                 }
             }
         }
-        // V16-V19 Stabilization: Wrap content in a safe container and neutralize all height loops
-        resolvedHtml = "<div id=\"mb-stable-container\">" + resolvedHtml + "</div>";
+        // Final styling and script injection
+        resolvedHtml = injectPremiumExperience(resolvedHtml, emailId);
 
-        // Bridge Script for Secure Auto-Resize (V19 Reactive Stabilization)
+        return resolvedHtml;
+    }
+
+    private String injectPremiumExperience(String html, Long emailId) {
+        String processedHtml = "<div id=\"mb-stable-container\">" + html + "</div>";
+        
         String styleFix = "<style>" +
-            "html, body { margin: 0 !important; padding: 0 !important; overflow-y: hidden !important; overflow-x: auto !important; width: 100% !important; height: auto !important; min-height: 100% !important; }" +
-            "#mb-stable-container { display: flow-root !important; width: 100% !important; height: auto !important; min-height: 0 !important; }" +
-            "img { max-width: 100% !important; height: auto !important; }" + 
+            "html, body { " +
+            "  margin: 0 !important; padding: 20px !important; " + // Stable Document Gutter
+            "  overflow-y: hidden !important; overflow-x: auto !important; " +
+            "  width: 100% !important; height: auto !important; min-height: 100% !important; " +
+            "  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important; " +
+            "  line-height: 1.5 !important; color: #1a202c !important; " +
+            "}" +
+            "#mb-stable-container { " +
+            "  display: flow-root !important; width: 100% !important; height: auto !important; min-height: 0 !important; " +
+            "}" +
+            ".mb-plain-text-body { " +
+            "  white-space: pre-wrap !important; " +
+            "  word-wrap: break-word !important; overflow-wrap: break-word !important; " +
+            "}" +
+            "img { max-width: 100% !important; height: auto !important; display: inline-block; vertical-align: middle; }" + 
+            "a { color: #3182ce !important; text-decoration: underline !important; }" +
             "</style>";
 
         String bridgeScript = styleFix + "<script>" +
             "(function() {" +
             "  var lastHeight = 0;" +
-            "  // V20: Immediate reset-to-baseline (400px) to match frontend reset logic\n" +
             "  window.parent.postMessage({ type: 'MB_RESIZE', height: 400 }, '*');" +
-            "  " +
             "  function sendHeight() {" +
-            "    var container = document.getElementById('mb-stable-container');" +
-            "    if (!container) return;" +
-            "    var newHeight = container.offsetHeight;" +
-            "    if (newHeight > 10 && Math.abs(newHeight - lastHeight) > 3) {" +
-            "      lastHeight = newHeight;" +
-            "      window.parent.postMessage({ type: 'MB_RESIZE', height: newHeight + 40 }, '*');" +
+            "    var frame = document.getElementById('mb-stable-container');" +
+            "    if (frame) {" +
+            "      var newHeight = frame.offsetHeight + 40;" + // Buffer for gutters
+            "      if (Math.abs(newHeight - lastHeight) > 5) {" +
+            "        lastHeight = newHeight;" +
+            "        window.parent.postMessage({ type: 'MB_RESIZE', height: newHeight }, '*');" +
+            "      }" +
             "    }" +
             "  }" +
-            "  " +
-            "  // V19: Use ResizeObserver for instant, efficient reactiveness\n" +
             "  if (window.ResizeObserver) {" +
             "    var observer = new ResizeObserver(sendHeight);" +
             "    observer.observe(document.getElementById('mb-stable-container'));" +
             "  } else {" +
-            "    setInterval(sendHeight, 1500);" + // Fallback for very old browsers
+            "    setInterval(sendHeight, 1000);" +
+            "    window.onload = sendHeight;" +
             "  }" +
-            "  window.onload = function() { setTimeout(sendHeight, 200); };" +
-            "  window.onresize = sendHeight;" +
-            "  document.addEventListener('DOMContentLoaded', sendHeight);" +
             "})();" +
             "</script>";
-        
-        resolvedHtml = resolvedHtml + bridgeScript;
 
-        return resolvedHtml;
+        return processedHtml + bridgeScript;
     }
 }
-
-
-

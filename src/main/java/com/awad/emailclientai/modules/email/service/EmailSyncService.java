@@ -242,7 +242,8 @@ public class EmailSyncService {
                                   (existing.getBody().contains("body {") || 
                                    existing.getBody().contains(".ie-browser") ||
                                    existing.getBody().contains(".mso-container") ||
-                                   existing.getBody().contains("ExternalClass")); 
+                                   existing.getBody().contains("ExternalClass") ||
+                                   existing.getBody().contains("class=\"mb-plain-text-body\"")); 
             
             if (existing.getBody() == null || existing.getBody().isEmpty() || isCorrupted) {
                 if (msg.getBody() != null && !msg.getBody().isEmpty()) {
@@ -298,9 +299,22 @@ public class EmailSyncService {
                 changed = true;
             }
 
-            // Update hasAttachments if changed
             if (existing.isHasAttachments() != msg.isHasAttachments()) {
                 existing.setHasAttachments(msg.isHasAttachments());
+                changed = true;
+            }
+
+            // Sync missing names/recipients for existing emails (Migration Bridge)
+            if (existing.getFromName() == null && msg.getFromName() != null) {
+                existing.setFromName(msg.getFromName());
+                changed = true;
+            }
+            if (existing.getRecipientTo() == null && msg.getTo() != null) {
+                existing.setRecipientTo(String.join(", ", msg.getTo()));
+                changed = true;
+            }
+            if (existing.getRecipientCc() == null && msg.getCc() != null) {
+                existing.setRecipientCc(String.join(", ", msg.getCc()));
                 changed = true;
             }
 
@@ -349,6 +363,9 @@ public class EmailSyncService {
                 .uid(msg.getUid())
                 .subject(msg.getSubject())
                 .sender(msg.getFrom())
+                .fromName(msg.getFromName())
+                .recipientTo(msg.getTo() != null ? String.join(", ", msg.getTo()) : null)
+                .recipientCc(msg.getCc() != null ? String.join(", ", msg.getCc()) : null)
                 .snippet(msg.getPreview())
                 .body(msg.getBody())
                 .receivedDate(msg.getReceivedAt())

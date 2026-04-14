@@ -34,6 +34,14 @@ public class EmailEntity {
 
     private String sender;
 
+    private String fromName;
+
+    @Column(columnDefinition = "TEXT")
+    private String recipientTo;
+
+    @Column(columnDefinition = "TEXT")
+    private String recipientCc;
+
     @Column(length = 500)
     private String snippet; // Short preview
 

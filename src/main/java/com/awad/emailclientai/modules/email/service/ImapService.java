@@ -13,14 +13,20 @@ import com.awad.emailclientai.shared.service.EncryptionService;
 import jakarta.mail.*;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeBodyPart;
+import org.eclipse.angus.mail.imap.IMAPFolder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Service for connecting to email servers via IMAP protocol.
@@ -33,6 +39,29 @@ public class ImapService {
 
     private final EncryptionService encryptionService;
     private final GoogleTokenService googleTokenService;
+
+    // ================== Shared Constants ==================
+
+    private static final String[] TRASH_FOLDER_NAMES = {
+            "[Gmail]/Trash", "[Gmail]/Thùng rác", "Trash", "Deleted Items", "Deleted"
+    };
+
+    private static final String[] SENT_FOLDER_NAMES = {
+            "Sent", "Sent Items", "Sent Mail",
+            "[Gmail]/Sent Mail", "INBOX.Sent", "INBOX.Sent Items"
+    };
+
+    private static final Map<String, Pattern> CLOUD_LINK_PATTERNS;
+    private static final Pattern GOOGLE_REDIRECT_PATTERN =
+            Pattern.compile("google.com/url\\?q=([^&]+)");
+
+    static {
+        Map<String, Pattern> map = new LinkedHashMap<>();
+        map.put("Google Drive", Pattern.compile("https?://(?:[a-zA-Z0-9-]+\\.)*drive\\.google\\.com/[^\\s\"'<>]+"));
+        map.put("Dropbox", Pattern.compile("https?://(?:www\\.)?dropbox\\.com/[^\\s\"'<>]+"));
+        map.put("OneDrive", Pattern.compile("https?://(?:[a-zA-Z0-9-]+\\.)*(?:onedrive\\.live\\.com|1drv\\.ms)/[^\\s\"'<>]+"));
+        CLOUD_LINK_PATTERNS = Collections.unmodifiableMap(map);
+    }
 
     /**
      * Tests the connection to an IMAP server.
@@ -52,6 +81,38 @@ public class ImapService {
     /**
      * Retrieves the list of folders/mailboxes from the email account.
      */
+    public String fetchLiveBody(EmailAccount account, String folderName, long uid) {
+        log.info("[LIVE-HEALING] Attempting to fetch live body for UID: {}", uid);
+        try {
+            Store store = connectToStore(account);
+            Folder folder = store.getFolder(folderName);
+            if (!folder.isOpen()) {
+                folder.open(Folder.READ_ONLY);
+            }
+            
+            Message message = null;
+            if (folder instanceof IMAPFolder imapFolder) {
+                message = imapFolder.getMessageByUID(uid);
+            }
+            
+            if (message == null) {
+                log.warn("[LIVE-HEALING] Message not found on server for UID: {}", uid);
+                return null;
+            }
+            
+            String body = fetchBodyContent(message);
+            folder.close(false);
+            store.close();
+            
+            log.info("[LIVE-HEALING] Successfully fetched {} bytes for UID: {}", 
+                    body != null ? body.length() : 0, uid);
+            return body;
+        } catch (Exception e) {
+            log.error("[LIVE-HEALING] Failed to fetch live body: {}", e.getMessage());
+            return null;
+        }
+    }
+
     public List<MailFolderDto> getFolders(EmailAccount account) throws MessagingException {
         List<MailFolderDto> folders = new ArrayList<>();
         
@@ -327,9 +388,8 @@ public class ImapService {
             }
 
             // Find trash folder by common names
-            String[] trashNames = {"[Gmail]/Trash", "[Gmail]/Thùng rác", "Trash", "Deleted Items", "Deleted"};
             Folder trashFolder = null;
-            for (String name : trashNames) {
+            for (String name : TRASH_FOLDER_NAMES) {
                 try {
                     Folder f = store.getFolder(name);
                     if (f.exists()) {
@@ -429,23 +489,27 @@ public class ImapService {
         return null;
     }
 
-    private boolean isActualAttachment(BodyPart bodyPart) throws MessagingException {
-        String disposition = bodyPart.getDisposition();
-        String fileName = bodyPart.getFileName();
-        String contentId = getContentId(bodyPart);
-        String contentType = bodyPart.getContentType() != null ? bodyPart.getContentType().toLowerCase() : "";
+    private boolean isActualAttachment(Part part) throws MessagingException {
+        if (part == null) return false; // Safety check for root part
+        String disposition = part.getDisposition();
+        String fileName = part.getFileName();
+        String contentId = null;
+        if (part instanceof BodyPart bp) {
+            contentId = getContentId(bp);
+        }
+        String contentType = part.getContentType() != null ? part.getContentType().toLowerCase() : "";
 
-        // 1. Explicitly marked as attachment -> Always include
-        if (Part.ATTACHMENT.equalsIgnoreCase(disposition)) {
-            return true;
+        // 1. Specialized Check: If it's a TEXT or HTML part, we ALMOST NEVER treat it as an attachment,
+        // even if it has a filename (common in GitHub or forward-as-attachment emails).
+        // This is checked FIRST to overrule explicit attachment flags from providers.
+        if (contentType.contains("text/html") || contentType.contains("text/plain")) {
+            log.debug("[IMAP-XRAY] Text/HTML part found with filename '{}'. Prioritizing as Body.", fileName);
+            return false;
         }
 
-        // 2. Specialized Check: If it's a TEXT or HTML part, we ALMOST NEVER treat it as an attachment,
-        // even if it has a filename (common in GitHub or forward-as-attachment emails).
-        // Exceptions would be if disposition was explicitly "attachment" (handled above).
-        if (contentType.contains("text/html") || contentType.contains("text/plain")) {
-            log.debug("[IMAP-XRAY-V14] Text/HTML part found with filename '{}'. Prioritizing as Body.", fileName);
-            return false;
+        // 2. Explicitly marked as attachment -> Always include
+        if (Part.ATTACHMENT.equalsIgnoreCase(disposition)) {
+            return true;
         }
 
         // 3. Has a filename -> Almost certainly a user file, even if it has a CID
@@ -515,12 +579,7 @@ public class ImapService {
      * Attempts to find the Sent folder by common names.
      */
     private Folder findSentFolder(Store store) throws MessagingException {
-        String[] possibleNames = {
-            "Sent", "Sent Items", "Sent Mail", 
-            "[Gmail]/Sent Mail", "INBOX.Sent", "INBOX.Sent Items"
-        };
-        
-        for (String name : possibleNames) {
+        for (String name : SENT_FOLDER_NAMES) {
             try {
                 Folder folder = store.getFolder(name);
                 if (folder.exists()) {
@@ -727,12 +786,19 @@ public class ImapService {
              
              // Use the robust recursive parser instead of the flawed getTextFromMultipart
              processContentRecursive(message.getContent(), message.getContentType(), 
-                     textBuilder, htmlBuilder, throwawayAttachments, new int[]{0}, null);
+                     textBuilder, htmlBuilder, throwawayAttachments, new int[]{0}, message);
                      
              if (htmlBuilder.length() > 0) {
                  return htmlBuilder.toString();
              }
-             return textBuilder.toString();
+             
+             // Targeted Fallback: Wrap plain text in a unique container to allow isolated CSS styling
+             String plainText = textBuilder.toString();
+             if (!plainText.isEmpty()) {
+                 return "<div class=\"mb-plain-text-body\">" + plainText + "</div>";
+             }
+             
+             return "";
          } catch (Exception e) {
              log.warn("Failed to fetch body content for message: {}", e.getMessage());
              return "";
@@ -789,7 +855,7 @@ public class ImapService {
         StringBuilder textBuilder = new StringBuilder();
         StringBuilder htmlBuilder = new StringBuilder();
         processContentRecursive(message.getContent(), message.getContentType(), 
-                textBuilder, htmlBuilder, attachments, new int[]{0}, null);
+                textBuilder, htmlBuilder, attachments, new int[]{0}, message);
 
         LocalDateTime sentAt = message.getSentDate() != null 
                 ? message.getSentDate().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime()
@@ -833,37 +899,52 @@ public class ImapService {
     private void processContentRecursive(Object content, String contentType,
                                           StringBuilder textBuilder, StringBuilder htmlBuilder,
                                           List<MailMessageDetailDto.AttachmentDto> attachments,
-                                          int[] attachmentIndex, BodyPart bodyPart) throws MessagingException, IOException {
+                                          int[] attachmentIndex, Part part) throws MessagingException, IOException {
         
-        String disposition = bodyPart != null ? bodyPart.getDisposition() : null;
-        String contentId = bodyPart != null ? getContentId(bodyPart) : null;
-        String fileName = bodyPart != null ? bodyPart.getFileName() : null;
-
-        log.info("[IMAP-XRAY-V10] Inspecting Part: Type={}, Disp={}, ID={}, File={}", 
-                contentType != null ? contentType.split(";")[0] : "null", disposition, contentId, fileName);
+        String disposition = part != null ? part.getDisposition() : null;
+        String contentId = (part instanceof BodyPart bp) ? getContentId(bp) : null;
+        String fileName = part != null ? part.getFileName() : null;
+        
+        log.info("[IMAP-TRACE] Part Found - Type: {}, Disp: {}, CID: {}, FileName: {}, Class: {}", 
+                contentType != null ? contentType.split(";")[0] : "null", 
+                disposition, 
+                contentId, 
+                fileName,
+                content != null ? content.getClass().getName() : "null");
         
         // 1. Identify if this part should be treated as an attachment/inline resource
-        boolean isAttachment = bodyPart != null && isActualAttachment(bodyPart);
+        boolean isAttachment = isActualAttachment(part);
+        String lowerType = contentType != null ? contentType.toLowerCase() : "";
 
         if (isAttachment) {
-            log.info("[IMAP-XRAY-HIT-V10] Capturing as real attachment: {}, CID: {}, Type: {}", 
-                    fileName != null ? fileName : "attachment", contentId, contentType);
+            log.info("[IMAP-TRACE-HIT] Capturing as Attachment: {}, CID: {}", fileName, contentId);
+
             attachments.add(MailMessageDetailDto.AttachmentDto.builder()
                     .id(String.valueOf(attachmentIndex[0]++))
                     .filename(fileName != null ? fileName : "attachment-" + attachmentIndex[0])
                     .contentType(contentType)
-                    .size(bodyPart != null ? bodyPart.getSize() : 0)
+                    .size(part != null ? part.getSize() : 0)
                     .inline(contentId != null)
                     .contentId(contentId)
                     .build());
-            return; 
+            
+            // Resilience Logic: 
+            // 1. If it's a MULTIPART, we MUST NOT return even if flagged as attachment. 
+            // We need to dive into it to find potentially hidden body parts (common in complex clients).
+            if (content instanceof Multipart) {
+                log.info("[IMAP-XRAY] Nested Multipart inside Attachment '{}'. Continuing recursion.", fileName);
+            }
+            // 2. High-Fidelity Bypass: If this "attachment" is actually text/html or text/plain, proceed.
+            else if (lowerType.contains("text/html") || lowerType.contains("text/plain")) {
+                log.info("[IMAP-XRAY] Text part found inside Attachment '{}'. Extracting as body.", fileName);
+            }
+            else {
+                return; // Genuine non-text attachment, safe to skip body extraction
+            }
         }
-
-        // 2. Process content... (logic continues for text/html and inline CIDs)
 
         // 2. Process content based on type
         if (content instanceof String body) {
-            String lowerType = contentType != null ? contentType.toLowerCase() : "";
             if (lowerType.contains("text/html")) {
                 htmlBuilder.append(body);
                 log.debug("[IMAP-XRAY-CONTENT] Appended HTML content (Length: {})", body.length());
@@ -879,12 +960,36 @@ public class ImapService {
                 processContentRecursive(childPart.getContent(), childPart.getContentType(),
                         textBuilder, htmlBuilder, attachments, attachmentIndex, childPart);
             }
+        } else if (content instanceof Message nestedMessage) {
+            log.info("[IMAP-XRAY] Found nested Message (Forwarded as attachment)");
+            processContentRecursive(nestedMessage.getContent(), nestedMessage.getContentType(),
+                    textBuilder, htmlBuilder, attachments, attachmentIndex, nestedMessage);
         } else if (content instanceof MimeBodyPart mbp) {
             log.debug("[IMAP-XRAY-CONTENT] Processing nested MimeBodyPart: {}", contentType);
             processContentRecursive(mbp.getContent(), mbp.getContentType(),
                     textBuilder, htmlBuilder, attachments, attachmentIndex, mbp);
-        } else if (content instanceof java.io.InputStream) {
-            log.debug("[IMAP-XRAY-CONTENT] Skipping InputStream part (likely binary/attachment): {}", contentType);
+        } else if (content instanceof InputStream is) {
+            if (lowerType.contains("text/html") || lowerType.contains("text/plain")) {
+                log.debug("[IMAP-XRAY] Converting InputStream body to String (Type: {})", lowerType);
+                String body = org.springframework.util.StreamUtils.copyToString(is, StandardCharsets.UTF_8);
+                if (lowerType.contains("text/html")) {
+                    htmlBuilder.append(body);
+                } else {
+                    textBuilder.append(body);
+                }
+            } else {
+                log.debug("[IMAP-XRAY] Skipping non-text InputStream part: {}", contentType);
+            }
+        } else if (content instanceof byte[] bytes) {
+            if (lowerType.contains("text/html") || lowerType.contains("text/plain")) {
+                log.debug("[IMAP-XRAY] Converting byte[] body to String (Type: {})", lowerType);
+                String body = new String(bytes, StandardCharsets.UTF_8);
+                if (lowerType.contains("text/html")) {
+                    htmlBuilder.append(body);
+                } else {
+                    textBuilder.append(body);
+                }
+            }
         } else {
             log.warn("[IMAP-XRAY-CONTENT] Unexpected content type: {} (Class: {})", 
                     contentType, content != null ? content.getClass().getName() : "null");
@@ -1059,14 +1164,8 @@ public class ImapService {
                 html.length(), html.substring(0, Math.min(html.length(), 200)).replace("\n", " "));
 
         // Big 3 Cloud Providers Regex Patterns - WIDE ANGLE
-        Map<String, String> patterns = new LinkedHashMap<>();
-        patterns.put("Google Drive", "https?://(?:[a-zA-Z0-9-]+\\.)*drive\\.google\\.com/[^\\s\"'<>]+");
-        patterns.put("Dropbox", "https?://(?:www\\.)?dropbox\\.com/[^\\s\"'<>]+");
-        patterns.put("OneDrive", "https?://(?:[a-zA-Z0-9-]+\\.)*(?:onedrive\\.live\\.com|1drv\\.ms)/[^\\s\"'<>]+");
-
-        for (Map.Entry<String, String> entry : patterns.entrySet()) {
-            java.util.regex.Pattern p = java.util.regex.Pattern.compile(entry.getValue());
-            java.util.regex.Matcher m = p.matcher(html);
+        for (Map.Entry<String, Pattern> entry : CLOUD_LINK_PATTERNS.entrySet()) {
+            Matcher m = entry.getValue().matcher(html);
             while (m.find()) {
                 String url = m.group(0);
                 
@@ -1094,12 +1193,9 @@ public class ImapService {
 
     private String unwrapGoogleRedirect(String url) {
         try {
-            int qIndex = url.indexOf("q=");
-            if (qIndex != -1) {
-                String sub = url.substring(qIndex + 2);
-                int ampIndex = sub.indexOf("&");
-                String wrapped = (ampIndex != -1) ? sub.substring(0, ampIndex) : sub;
-                return java.net.URLDecoder.decode(wrapped, java.nio.charset.StandardCharsets.UTF_8);
+            Matcher m = GOOGLE_REDIRECT_PATTERN.matcher(url);
+            if (m.find()) {
+                return URLDecoder.decode(m.group(1), StandardCharsets.UTF_8);
             }
         } catch (Exception e) {
             log.warn("[V10-SCANNER-ERROR] Failed to unwrap redirect: {}", url);
@@ -1113,14 +1209,8 @@ public class ImapService {
     public void scanForCloudLinksMetadata(String html, List<MailMessageDto.AttachmentMetadataDto> attachments, int[] index) {
         if (html == null || html.isEmpty()) return;
 
-        Map<String, String> patterns = new LinkedHashMap<>();
-        patterns.put("Google Drive", "https?://(?:[a-zA-Z0-9-]+\\.)*drive\\.google\\.com/[^\\s\"'<>]+");
-        patterns.put("Dropbox", "https?://(?:www\\.)?dropbox\\.com/[^\\s\"'<>]+");
-        patterns.put("OneDrive", "https?://(?:[a-zA-Z0-9-]+\\.)*(?:onedrive\\.live\\.com|1drv\\.ms)/[^\\s\"'<>]+");
-
-        for (Map.Entry<String, String> entry : patterns.entrySet()) {
-            java.util.regex.Pattern p = java.util.regex.Pattern.compile(entry.getValue());
-            java.util.regex.Matcher m = p.matcher(html);
+        for (Map.Entry<String, Pattern> entry : CLOUD_LINK_PATTERNS.entrySet()) {
+            Matcher m = entry.getValue().matcher(html);
             while (m.find()) {
                 String url = m.group(0);
                 if (url.contains("google.com/url?q=")) {
@@ -1149,14 +1239,8 @@ public class ImapService {
     public void scanForCloudLinksEntityDto(String html, List<EmailEntityDto.AttachmentDto> attachments, int[] index) {
         if (html == null || html.isEmpty()) return;
 
-        Map<String, String> patterns = new LinkedHashMap<>();
-        patterns.put("Google Drive", "https?://(?:[a-zA-Z0-9-]+\\.)*drive\\.google\\.com/[^\\s\"'<>]+");
-        patterns.put("Dropbox", "https?://(?:www\\.)?dropbox\\.com/[^\\s\"'<>]+");
-        patterns.put("OneDrive", "https?://(?:[a-zA-Z0-9-]+\\.)*(?:onedrive\\.live\\.com|1drv\\.ms)/[^\\s\"'<>]+");
-
-        for (Map.Entry<String, String> entry : patterns.entrySet()) {
-            java.util.regex.Pattern p = java.util.regex.Pattern.compile(entry.getValue());
-            java.util.regex.Matcher m = p.matcher(html);
+        for (Map.Entry<String, Pattern> entry : CLOUD_LINK_PATTERNS.entrySet()) {
+            Matcher m = entry.getValue().matcher(html);
             while (m.find()) {
                 String url = m.group(0);
                 if (url.contains("google.com/url?q=")) {
