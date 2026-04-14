@@ -433,20 +433,27 @@ public class ImapService {
         String disposition = bodyPart.getDisposition();
         String fileName = bodyPart.getFileName();
         String contentId = getContentId(bodyPart);
+        String contentType = bodyPart.getContentType() != null ? bodyPart.getContentType().toLowerCase() : "";
 
         // 1. Explicitly marked as attachment -> Always include
         if (Part.ATTACHMENT.equalsIgnoreCase(disposition)) {
             return true;
         }
 
-        // 2. Has a filename -> Almost certainly a user file, even if it has a CID
+        // 2. Specialized Check: If it's a TEXT or HTML part, we ALMOST NEVER treat it as an attachment,
+        // even if it has a filename (common in GitHub or forward-as-attachment emails).
+        // Exceptions would be if disposition was explicitly "attachment" (handled above).
+        if (contentType.contains("text/html") || contentType.contains("text/plain")) {
+            log.debug("[IMAP-XRAY-V14] Text/HTML part found with filename '{}'. Prioritizing as Body.", fileName);
+            return false;
+        }
+
+        // 3. Has a filename -> Almost certainly a user file, even if it has a CID
         if (fileName != null && !fileName.trim().isEmpty()) {
-            // Check if it's just a tiny tracking pixel or tiny icon (optional safety)
-            // But usually, if it has a filename, the user expects to see it.
             return true;
         }
 
-        // 3. Has a Content-ID but NO filename -> This is a decorative inline element (e.g., logo)
+        // 4. Has a Content-ID but NO filename -> This is a decorative inline element (e.g., logo)
         // We skip these for the "Downloads" list to keep it clean.
         if (contentId != null && fileName == null) {
             return false;
@@ -454,6 +461,7 @@ public class ImapService {
 
         return false;
     }
+
 
     /**
      * Appends a sent message to the Sent folder using IMAP APPEND.
