@@ -32,6 +32,7 @@ public class EmailService {
     private final EmailRepository emailRepository;
     private final EmailAttachmentRepository attachmentRepository;
     private final ImapService imapService;
+    private final EmailSyncService emailSyncService;
 
     @PostConstruct
     public void init() {
@@ -71,6 +72,20 @@ public class EmailService {
                 }
             } catch (Exception e) {
                 log.error("[LIVE-HEALING] Error during recovery for email ID: {}: {}", id, e.getMessage());
+            }
+        }
+
+        // If backend marks email as having attachments but DB record has none,
+        // attempt a targeted refresh to fetch attachment metadata from the server.
+        if (email.isHasAttachments() && (email.getAttachments() == null || email.getAttachments().isEmpty())) {
+            log.info("[LIVE-HEALING] Attachments missing for email ID: {}. Attempting detail refresh...", id);
+            try {
+                emailSyncService.refreshEmail(id);
+                // Reload entity after refresh
+                email = emailRepository.findById(id)
+                        .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_NOT_FOUND));
+            } catch (Exception e) {
+                log.warn("[LIVE-HEALING] Failed to refresh attachments for email ID {}: {}", id, e.getMessage());
             }
         }
         

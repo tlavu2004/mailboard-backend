@@ -13,6 +13,9 @@ import com.awad.emailclientai.modules.email.service.GmailLabelService;
 import com.awad.emailclientai.modules.kanban.entity.KanbanColumn;
 import com.awad.emailclientai.modules.kanban.service.KanbanService;
 import com.awad.emailclientai.modules.user.security.UserPrincipal;
+import com.awad.emailclientai.modules.email.dto.response.MailMessageDetailDto;
+import com.awad.emailclientai.modules.email.entity.EmailProvider;
+import org.springframework.http.HttpStatus;
 import org.springframework.data.domain.PageRequest;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -85,6 +88,36 @@ public class LegacyDashboardController {
             log.warn("Could not include accountId in mailboxes respond: {}", e.getMessage());
         }
         return ResponseEntity.ok(ApiResponse.success(data));
+    }
+
+    @GetMapping("/emails/{id}/imap-detail")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getImapDetail(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long id
+    ) {
+        EmailEntity entity = emailRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Email not found"));
+
+        EmailAccount primary = getPrimaryAccount(principal);
+        if (!primary.getId().equals(entity.getAccount().getId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error("Not allowed to access this email"));
+        }
+
+        String folderName = "INBOX";
+        if (entity.getStatus() != null && entity.getStatus().equalsIgnoreCase("SENT")) {
+            if (entity.getAccount().getProvider() == EmailProvider.GMAIL) folderName = "[Gmail]/Sent Mail";
+            else folderName = "Sent";
+        }
+
+        try {
+            MailMessageDetailDto detail = imapService.getMessageDetail(entity.getAccount(), folderName, entity.getUid());
+            Map<String, Object> data = new HashMap<>();
+            data.put("detail", detail);
+            return ResponseEntity.ok(ApiResponse.success(data));
+        } catch (Exception e) {
+            log.error("Failed to fetch IMAP detail for email {}: {}", id, e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ApiResponse.error("Failed to fetch IMAP detail: " + e.getMessage()));
+        }
     }
 
     @GetMapping("/mailboxes/{id}/emails")
@@ -509,12 +542,8 @@ public class LegacyDashboardController {
             if (from.get("name").isEmpty()) from.put("name", from.get("email"));
             m.put("from", from);
             
-            // Required empty arrays
-            m.put("to", new ArrayList<>());
-            m.put("cc", new ArrayList<>());
-            m.put("bcc", new ArrayList<>());
+            // Labels placeholder; recipients and attachments populated from DTO below
             m.put("labels", new ArrayList<>());
-            m.put("attachments", new ArrayList<>());
             
             m.put("subject", entity.getSubject() != null ? entity.getSubject() : "(No Subject)");
             m.put("preview", entity.getSnippet() != null ? entity.getSnippet() : "");
@@ -527,10 +556,24 @@ public class LegacyDashboardController {
             m.put("isStarred", entity.isStarred());
             
             // V10.36: Use mapToDto's comprehensive logic to calculate correct flags and cloud links
-            com.awad.emailclientai.modules.email.dto.response.EmailEntityDto dto = emailService.mapToDto(entity);
-            m.put("hasAttachments", dto.isHasAttachments());
-            m.put("hasCloudLinks", dto.isHasCloudLinks());
-            m.put("hasPhysicalAttachments", dto.isHasPhysicalAttachments());
+                com.awad.emailclientai.modules.email.dto.response.EmailEntityDto dto = emailService.mapToDto(entity);
+
+                // Populate recipient lists for list-view to avoid requiring an extra detail fetch
+                java.util.List<String> toList = (dto.getRecipientTo() != null && !dto.getRecipientTo().isEmpty()) ? dto.getRecipientTo()
+                    : (dto.getTo() != null ? dto.getTo().stream().map(a -> a.getEmail()).collect(Collectors.toList()) : new java.util.ArrayList<>());
+                java.util.List<String> ccList = (dto.getRecipientCc() != null && !dto.getRecipientCc().isEmpty()) ? dto.getRecipientCc()
+                    : (dto.getCc() != null ? dto.getCc().stream().map(a -> a.getEmail()).collect(Collectors.toList()) : new java.util.ArrayList<>());
+
+                m.put("to", toList);
+                m.put("cc", ccList);
+                m.put("bcc", new java.util.ArrayList<>());
+
+                // Include attachments metadata so the UI can show download/open buttons without extra fetch
+                m.put("attachments", dto.getAttachments() != null ? dto.getAttachments() : new java.util.ArrayList<>());
+
+                m.put("hasAttachments", dto.isHasAttachments());
+                m.put("hasCloudLinks", dto.isHasCloudLinks());
+                m.put("hasPhysicalAttachments", dto.isHasPhysicalAttachments());
             
             String dateStr = entity.getReceivedDate() != null ? entity.getReceivedDate().toString() + "Z" : "2024-01-01T00:00:00Z";
             m.put("receivedAt", dateStr);

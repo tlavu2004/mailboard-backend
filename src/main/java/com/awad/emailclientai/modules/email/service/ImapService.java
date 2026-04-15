@@ -498,31 +498,30 @@ public class ImapService {
             contentId = getContentId(bp);
         }
         String contentType = part.getContentType() != null ? part.getContentType().toLowerCase() : "";
-
-        // 1. Specialized Check: If it's a TEXT or HTML part, we ALMOST NEVER treat it as an attachment,
-        // even if it has a filename (common in GitHub or forward-as-attachment emails).
-        // This is checked FIRST to overrule explicit attachment flags from providers.
-        if (contentType.contains("text/html") || contentType.contains("text/plain")) {
-            log.debug("[IMAP-XRAY] Text/HTML part found with filename '{}'. Prioritizing as Body.", fileName);
-            return false;
-        }
-
-        // 2. Explicitly marked as attachment -> Always include
+        // 1. Explicitly marked as attachment -> Always include
         if (Part.ATTACHMENT.equalsIgnoreCase(disposition)) {
             return true;
         }
 
-        // 3. Has a filename -> Almost certainly a user file, even if it has a CID
+        // 2. If there's a filename, treat it as an attachment. This covers text/plain attachments
+        // (e.g. .txt) which are valid user attachments even though their MIME type is text/*.
         if (fileName != null && !fileName.trim().isEmpty()) {
+            log.debug("[IMAP-XRAY] Part with filename '{}' treated as attachment.", fileName);
             return true;
         }
 
-        // 4. Has a Content-ID but NO filename -> This is a decorative inline element (e.g., logo)
-        // We skip these for the "Downloads" list to keep it clean.
+        // 3. If it's a TEXT or HTML part WITHOUT a filename, it's likely the body rather than an attachment.
+        if (contentType.contains("text/html") || contentType.contains("text/plain")) {
+            log.debug("[IMAP-XRAY] Text/HTML part without filename treated as body, not attachment.");
+            return false;
+        }
+
+        // 4. Has a Content-ID but NO filename -> decorative inline element (e.g., logo)
         if (contentId != null && fileName == null) {
             return false;
         }
 
+        // 5. Fallback: treat as non-attachment
         return false;
     }
 
@@ -705,6 +704,17 @@ public class ImapService {
             }
         } catch (Exception e) {
             log.warn("Failed to extract attachment metadata for UID {}: {}", uid, e.getMessage());
+        }
+
+        // Debug logging: show what's been detected as attachment metadata
+        log.info("[IMAP-META] UID {} attachmentsCount={}", uid, attachments.size());
+        for (var at : attachments) {
+            try {
+                log.info("[IMAP-META] UID {} attachment meta: filename='{}', id='{}', contentId='{}', externalUrl='{}'",
+                        uid, at.getFilename(), at.getId(), at.getContentId(), at.getExternalUrl());
+            } catch (Exception ex) {
+                log.warn("[IMAP-META] Failed to log attachment meta for UID {}: {}", uid, ex.getMessage());
+            }
         }
 
         MailMessageDto dto = MailMessageDto.builder()

@@ -21,8 +21,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Optional;
 import java.util.Set;
+import java.util.Map;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.awad.emailclientai.modules.email.entity.EmailProvider;
 import java.util.stream.Collectors;
 import org.springframework.dao.DataIntegrityViolationException;
 
@@ -145,7 +149,13 @@ public class EmailSyncService {
         EmailAccount account = entity.getAccount();
         
         try {
-            var detail = imapService.getMessageDetail(account, "INBOX", entity.getUid());
+            // Choose folder based on entity status and provider (Sent folder names differ per provider)
+            String folderName = "INBOX";
+            if (entity.getStatus() != null && entity.getStatus().equalsIgnoreCase("SENT")) {
+                if (account.getProvider() == EmailProvider.GMAIL) folderName = "[Gmail]/Sent Mail";
+                else folderName = "Sent";
+            }
+            var detail = imapService.getMessageDetail(account, folderName, entity.getUid());
             String newBody = (detail.getBodyHtml() != null && !detail.getBodyHtml().isEmpty()) 
                              ? detail.getBodyHtml() 
                              : detail.getBodyText();
@@ -195,6 +205,9 @@ public class EmailSyncService {
             log.info("[V11-SYNC] Starting sync for account: {} (Folder: {}, Initial Page: {})", 
                 account.getEmailAddress(), folderName, currentPage);
 
+            // Collect newly created email IDs so we can notify frontend with exact items
+            List<Long> newEmailIds = new ArrayList<>();
+
             while (totalNewFound < currentLimit && (currentPage - page) < maxPagesToTry) {
                 List<MailMessageDto> messages = imapService.getMessages(account, folderName, currentPage, currentLimit);
                 if (messages.isEmpty()) {
@@ -203,7 +216,7 @@ public class EmailSyncService {
                 }
 
                 for (MailMessageDto msg : messages) {
-                    processMessage(msg, account, accountId);
+                    processMessage(msg, account, accountId, folderName, newEmailIds);
                     
                     // Count how many are new for "Smart Sync" quota
                     if (!emailRepository.existsByMessageId(msg.getMessageId())) {
@@ -214,12 +227,68 @@ public class EmailSyncService {
                 
                 currentPage++;
             }
+            // After finishing the sync batch, if we created new emails, notify frontend with their IDs
+            if (!newEmailIds.isEmpty()) {
+                try {
+                    ObjectMapper mapper = new ObjectMapper();
+                    Map<String, Object> payload = Map.of(
+                            "type", "NEW_EMAILS",
+                            "emailIds", newEmailIds
+                    );
+                    String payloadJson = mapper.writeValueAsString(payload);
+                    notificationWebSocketHandler.sendNotification(account.getId(), "NEW_EMAILS", payloadJson);
+                    log.info("[V11-SYNC] Sent NEW_EMAILS notification with {} ids for account {}", newEmailIds.size(), account.getId());
+                } catch (Exception e) {
+                    log.warn("[V11-SYNC] Failed to send detailed NEW_EMAILS notification: {}", e.getMessage());
+                }
+            }
         } catch (jakarta.mail.MessagingException e) {
             log.error("Failed to fetch messages for account: " + account.getEmailAddress(), e);
         }
     }
 
-    private void processMessage(MailMessageDto msg, EmailAccount account, Long accountId) {
+    private void processMessage(MailMessageDto msg, EmailAccount account, Long accountId, String folderName, List<Long> newEmailIds) {
+        log.info("[SYNC-TRACE] Processing message: messageId={}, uid={}, gmailMessageId={}, hasAttachments={}, attachmentsCount={}, folder={}",
+            msg.getMessageId(), msg.getUid(), msg.getGmailMessageId(), msg.isHasAttachments(), (msg.getAttachments() != null ? msg.getAttachments().size() : 0), folderName);
+
+        // Proactive: if IMAP says there are attachments but the lightweight list metadata is empty,
+        // do a targeted getMessageDetail to populate attachments and body BEFORE persisting.
+        if (msg.isHasAttachments() && (msg.getAttachments() == null || msg.getAttachments().isEmpty())) {
+            try {
+                log.info("[SYNC-TRACE] Attachment metadata missing for messageId={}, attempting pre-save IMAP detail fetch (folder={})", msg.getMessageId(), folderName);
+                MailMessageDetailDto detail = imapService.getMessageDetail(account, folderName, msg.getUid());
+                if (detail != null) {
+                    // Populate body if missing
+                    String newBody = detail.getBodyHtml() != null && !detail.getBodyHtml().isEmpty() ? detail.getBodyHtml() : detail.getBodyText();
+                    if ((msg.getBody() == null || msg.getBody().isEmpty()) && newBody != null) {
+                        msg.setBody(newBody);
+                    }
+
+                    // Convert detail attachments to list-view metadata
+                    if (detail.getAttachments() != null && !detail.getAttachments().isEmpty()) {
+                        List<MailMessageDto.AttachmentMetadataDto> meta = new ArrayList<>();
+                        int[] idx = new int[]{0};
+                        for (var at : detail.getAttachments()) {
+                            MailMessageDto.AttachmentMetadataDto m = MailMessageDto.AttachmentMetadataDto.builder()
+                                    .id(at.getId())
+                                    .filename(at.getFilename())
+                                    .contentType(at.getContentType())
+                                    .size(at.getSize())
+                                    .contentId(at.getContentId())
+                                    .inline(at.isInline())
+                                    .externalUrl(at.getExternalUrl())
+                                    .build();
+                            meta.add(m);
+                            idx[0]++;
+                        }
+                        msg.setAttachments(meta);
+                        log.info("[SYNC-TRACE] Populated {} attachment metadata entries from IMAP for messageId={}", meta.size(), msg.getMessageId());
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[SYNC-TRACE] Pre-save IMAP detail fetch failed for messageId={}: {}", msg.getMessageId(), e.getMessage());
+            }
+        }
         String targetStatus = determineStatusFromLabels(msg, accountId);
         Optional<EmailEntity> existingOpt = emailRepository.findByMessageId(msg.getMessageId());
         
@@ -384,10 +453,25 @@ public class EmailSyncService {
 
         try {
             emailRepository.save(entity);
+            // Record newly created email ID for detailed WS notification
+            try {
+                if (newEmailIds != null) newEmailIds.add(entity.getId());
+            } catch (Exception ignored) {}
             // Generate embedding after entity is persisted (has ID)
             // Skip for TRASH and SPAM
             if (!"TRASH".equalsIgnoreCase(targetStatus) && !"SPAM".equalsIgnoreCase(targetStatus)) {
                 generateAndSetEmbedding(entity, msg.getSubject(), msg.getPreview());
+            }
+            // If IMAP reported attachments but msg didn't include attachment metadata
+            // or entity indicates attachments but none were mapped, attempt a detail refresh
+            boolean msgHasAttachmentMeta = msg.getAttachments() != null && !msg.getAttachments().isEmpty();
+            if (!msgHasAttachmentMeta && (msg.isHasAttachments() || entity.isHasAttachments())) {
+                try {
+                    log.info("Post-create detail refresh for email ID {} to populate attachments.", entity.getId());
+                    refreshEmail(entity.getId());
+                } catch (Exception e) {
+                    log.warn("Failed to refresh details for email ID {}: {}", entity.getId(), e.getMessage());
+                }
             }
         } catch (DataIntegrityViolationException e) {
             log.warn("Duplicate email detected during sync (messageId: {}), skipping.", msg.getMessageId());

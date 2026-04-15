@@ -63,9 +63,6 @@ public class GmailPubSubController {
                 new Thread(() -> {
                     try {
                         emailSyncService.syncEmailsForAccount(account.getId(), "INBOX", batchSize, 0);
-
-                        // Notify frontend via WebSocket using typed payload so FE can react
-                        webSocketHandler.sendNotification(account.getId(), "NEW_EMAILS", "Sync completed for " + emailAddress);
                     } catch (Exception e) {
                         log.error("Error during triggered sync for {}", emailAddress, e);
                     }

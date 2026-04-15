@@ -6,12 +6,14 @@ import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.entity.EmailStatus;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import com.awad.emailclientai.modules.email.service.EmailSyncService;
+import com.awad.emailclientai.modules.email.service.NotificationWebSocketHandler;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.service.EmailAccountService;
 import com.awad.emailclientai.modules.email.service.EmailService;
 import com.awad.emailclientai.shared.exception.BusinessException;
 import com.awad.emailclientai.shared.exception.ErrorCode;
 import com.awad.emailclientai.modules.email.dto.request.SendEmailRequestDto;
+import com.awad.emailclientai.modules.email.entity.EmailProvider;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import org.springframework.web.multipart.MultipartFile;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
@@ -47,6 +49,7 @@ public class EmailController {
     private final com.awad.emailclientai.modules.email.service.AiService aiService;
     private final com.awad.emailclientai.modules.email.repository.EmailAttachmentRepository attachmentRepository;
     private final EmailService emailService;
+    private final NotificationWebSocketHandler notificationWebSocketHandler;
     private final ObjectMapper objectMapper;
 
     public EmailController(
@@ -57,6 +60,7 @@ public class EmailController {
             com.awad.emailclientai.modules.email.service.AiService aiService,
             com.awad.emailclientai.modules.email.repository.EmailAttachmentRepository attachmentRepository,
             EmailService emailService,
+            NotificationWebSocketHandler notificationWebSocketHandler,
             ObjectMapper objectMapper) {
         this.emailRepository = emailRepository;
         this.emailAccountRepository = emailAccountRepository;
@@ -65,6 +69,7 @@ public class EmailController {
         this.aiService = aiService;
         this.attachmentRepository = attachmentRepository;
         this.emailService = emailService;
+        this.notificationWebSocketHandler = notificationWebSocketHandler;
         this.objectMapper = objectMapper;
     }
 
@@ -128,6 +133,18 @@ public class EmailController {
         EmailAccount account = fetchPrimaryAccount(principal);
         SendEmailRequestDto request = mapJsonToDto(jsonBody);
         String messageId = emailAccountService.sendEmail(principal.getId(), account.getId(), request);
+        // Trigger background sync for Sent folder so the new message appears in the app quickly
+        final Long acctIdJson = account.getId();
+        new Thread(() -> {
+            try {
+                String sentFolderName = "Sent";
+                if (account.getProvider() == EmailProvider.GMAIL) sentFolderName = "[Gmail]/Sent Mail";
+                emailSyncService.syncEmailsForAccount(acctIdJson, sentFolderName, 10, 0);
+                notificationWebSocketHandler.sendNotification(acctIdJson, "NEW_EMAILS", "Sent folder updated");
+            } catch (Exception e) {
+                log.warn("Post-send Sent sync failed for account {}: {}", acctIdJson, e.getMessage());
+            }
+        }).start();
         return ResponseEntity.ok(ApiResponse.success("Email sent successfully", messageId));
     }
 
@@ -160,6 +177,18 @@ public class EmailController {
         } else {
             messageId = emailAccountService.sendEmail(principal.getId(), account.getId(), request);
         }
+        // Trigger background sync for Sent folder so the new message appears in the app quickly
+        final Long acctIdMulti = account.getId();
+        new Thread(() -> {
+            try {
+                String sentFolderName = "Sent";
+                if (account.getProvider() == EmailProvider.GMAIL) sentFolderName = "[Gmail]/Sent Mail";
+                emailSyncService.syncEmailsForAccount(acctIdMulti, sentFolderName, 10, 0);
+                notificationWebSocketHandler.sendNotification(acctIdMulti, "NEW_EMAILS", "Sent folder updated");
+            } catch (Exception e) {
+                log.warn("Post-send Sent sync failed for account {}: {}", acctIdMulti, e.getMessage());
+            }
+        }).start();
         return ResponseEntity.ok(ApiResponse.success("Email sent successfully", messageId));
     }
 
