@@ -521,9 +521,9 @@ public class LegacyDashboardController {
             // Generate gmailLink
             String emailAddr = activeAccount != null ? activeAccount.getEmailAddress() : entity.getAccount().getEmailAddress();
             String encodedEmail = URLEncoder.encode(emailAddr, StandardCharsets.UTF_8);
-            String gmailLink = entity.getGmailMessageId() != null ? 
-                    String.format("https://mail.google.com/mail/u/%s/#inbox/%s", encodedEmail, entity.getGmailMessageId()) :
-                    String.format("https://mail.google.com/mail/u/%s/#search/rfc822msgid:%s", 
+                String gmailLink = entity.getGmailMessageId() != null ?
+                    String.format("https://mail.google.com/mail/u/0/?authuser=%s#inbox/%s", encodedEmail, entity.getGmailMessageId()) :
+                    String.format("https://mail.google.com/mail/u/0/?authuser=%s#search/rfc822msgid:%s",
                         encodedEmail, URLEncoder.encode(entity.getMessageId(), StandardCharsets.UTF_8));
             m.put("gmailLink", gmailLink);
             

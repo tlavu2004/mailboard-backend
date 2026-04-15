@@ -190,13 +190,14 @@ public class EmailService {
                 .hasPhysicalAttachments(hasPhysical)
                 .accountEmail(entity.getAccount().getEmailAddress())
                 .attachments(attachments)
-                .gmailLink(entity.getGmailMessageId() != null ? 
-                        String.format("https://mail.google.com/mail/u/%s/#inbox/%s", 
-                            URLEncoder.encode(entity.getAccount().getEmailAddress(), StandardCharsets.UTF_8),
-                            entity.getGmailMessageId()) :
-                        String.format("https://mail.google.com/mail/u/%s/#search/rfc822msgid:%s", 
-                            URLEncoder.encode(entity.getAccount().getEmailAddress(), StandardCharsets.UTF_8),
-                            URLEncoder.encode(entity.getMessageId(), StandardCharsets.UTF_8)))
+                .gmailLink(entity.getGmailMessageId() != null ?
+                    // Use u/0 plus authuser param to allow Gmail to open the correct signed-in account
+                    String.format("https://mail.google.com/mail/u/0/?authuser=%s#inbox/%s",
+                        URLEncoder.encode(entity.getAccount().getEmailAddress(), StandardCharsets.UTF_8),
+                        entity.getGmailMessageId()) :
+                    String.format("https://mail.google.com/mail/u/0/?authuser=%s#search/rfc822msgid:%s",
+                        URLEncoder.encode(entity.getAccount().getEmailAddress(), StandardCharsets.UTF_8),
+                        URLEncoder.encode(entity.getMessageId(), StandardCharsets.UTF_8)))
                 .build();
     }
 
