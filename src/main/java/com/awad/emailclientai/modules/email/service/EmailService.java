@@ -191,6 +191,23 @@ public class EmailService {
         log.info("[DEBUG-START] Processing Email ID: {}", emailId);
         
         String resolvedHtml = html;
+
+        // V31: Plain-text detection for legacy DB records that were stored before the ImapService fix.
+        // If the body contains no HTML tags at all (e.g. GitHub text-only notifications),
+        // convert it to proper HTML with line breaks and clickable links.
+        if (!resolvedHtml.contains("<") && !resolvedHtml.contains(">")) {
+            log.info("[PLAIN-TEXT-FIX] Email {} body has no HTML tags. Converting plain text to HTML.", emailId);
+            resolvedHtml = convertPlainTextToHtml(resolvedHtml);
+        }
+        // Also catch bodies that only have the mb-plain-text-body wrapper but no <br> inside
+        // (legacy records from the old wrapping logic)
+        else if (resolvedHtml.startsWith("<div class=\"mb-plain-text-body\">") && !resolvedHtml.contains("<br>") && !resolvedHtml.contains("<a ")) {
+            log.info("[PLAIN-TEXT-FIX] Email {} has legacy plain-text wrapper without formatting. Re-converting.", emailId);
+            // Strip the old wrapper and re-process
+            String inner = resolvedHtml.replace("<div class=\"mb-plain-text-body\">", "").replace("</div>", "");
+            resolvedHtml = convertPlainTextToHtml(inner);
+        }
+
         int scriptCount = 0;
         int onEventCount = 0;
         int jsUrlCount = 0;
@@ -362,5 +379,37 @@ public class EmailService {
             "</script>";
 
         return processedHtml + bridgeScript;
+    }
+
+    /**
+     * Converts raw plain-text to presentable HTML with line breaks and clickable links.
+     * Used for legacy DB records and text-only emails (e.g. GitHub notifications).
+     */
+    private String convertPlainTextToHtml(String plainText) {
+        // Step 1: HTML-escape to prevent XSS
+        String escaped = plainText
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
+
+        // Step 2: Auto-link URLs
+        Pattern urlPattern = Pattern.compile("(https?://[^\\s&]+)");
+        Matcher urlMatcher = urlPattern.matcher(escaped);
+        StringBuffer sb = new StringBuffer();
+        while (urlMatcher.find()) {
+            String url = urlMatcher.group(1);
+            String trimmed = url.replaceAll("[.,;:!?)]+$", "");
+            String trailing = url.substring(trimmed.length());
+            String replacement = "<a href=\"" + trimmed + "\" target=\"_blank\" rel=\"noopener noreferrer\">" + trimmed + "</a>" + trailing;
+            urlMatcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+        }
+        urlMatcher.appendTail(sb);
+        escaped = sb.toString();
+
+        // Step 3: Convert newlines to <br> tags
+        escaped = escaped.replace("\r\n", "<br>").replace("\n", "<br>");
+
+        return "<div class=\"mb-plain-text-body\">" + escaped + "</div>";
     }
 }

@@ -795,7 +795,7 @@ public class ImapService {
              // Targeted Fallback: Wrap plain text in a unique container to allow isolated CSS styling
              String plainText = textBuilder.toString();
              if (!plainText.isEmpty()) {
-                 return "<div class=\"mb-plain-text-body\">" + plainText + "</div>";
+                 return convertPlainTextToHtml(plainText);
              }
              
              return "";
@@ -803,6 +803,42 @@ public class ImapService {
              log.warn("Failed to fetch body content for message: {}", e.getMessage());
              return "";
          }
+    }
+
+    /**
+     * Converts raw plain-text email body into presentable HTML.
+     * 1. HTML-escapes special characters to prevent injection.
+     * 2. Auto-links URLs so they become clickable (target=_blank).
+     * 3. Converts newlines to br tags.
+     * 4. Wraps everything in the mb-plain-text-body container.
+     */
+    private String convertPlainTextToHtml(String plainText) {
+        // Step 1: HTML-escape to prevent XSS
+        String escaped = plainText
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
+
+        // Step 2: Auto-link URLs (must run AFTER escaping so we don't break the <a> tags we create)
+        Pattern urlPattern = Pattern.compile("(https?://[^\\s&]+)");
+        Matcher urlMatcher = urlPattern.matcher(escaped);
+        StringBuffer sb = new StringBuffer();
+        while (urlMatcher.find()) {
+            String url = urlMatcher.group(1);
+            // Trim trailing punctuation that was likely not part of the URL
+            String trimmed = url.replaceAll("[.,;:!?)]+$", "");
+            String trailing = url.substring(trimmed.length());
+            String replacement = "<a href=\"" + trimmed + "\" target=\"_blank\" rel=\"noopener noreferrer\">" + trimmed + "</a>" + trailing;
+            urlMatcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+        }
+        urlMatcher.appendTail(sb);
+        escaped = sb.toString();
+
+        // Step 3: Convert newlines to <br> tags  
+        escaped = escaped.replace("\r\n", "<br>").replace("\n", "<br>");
+
+        return "<div class=\"mb-plain-text-body\">" + escaped + "</div>";
     }
 
     private String generatePreview(Message message) {
