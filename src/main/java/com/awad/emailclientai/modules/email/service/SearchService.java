@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -159,7 +160,7 @@ public class SearchService {
                 .body((String) row[8])
                 .status((String) row[9])
                 .receivedDate(receivedDate)
-                .receivedAt(receivedDate != null ? receivedDate.toString() : null)
+                .receivedAt(receivedDate != null ? receivedDate.atZone(ZoneId.systemDefault()).toInstant().toString() : null)
                 .snoozedUntil(snoozedUntil)
                 .summary((String) row[12])
                 .isRead(row[13] != null && (Boolean) row[13])

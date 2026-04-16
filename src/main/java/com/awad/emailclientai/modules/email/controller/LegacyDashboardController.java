@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -575,7 +576,12 @@ public class LegacyDashboardController {
                 m.put("hasCloudLinks", dto.isHasCloudLinks());
                 m.put("hasPhysicalAttachments", dto.isHasPhysicalAttachments());
             
-            String dateStr = entity.getReceivedDate() != null ? entity.getReceivedDate().toString() + "Z" : "2024-01-01T00:00:00Z";
+            String dateStr;
+            if (entity.getReceivedDate() != null) {
+                dateStr = entity.getReceivedDate().atZone(ZoneId.systemDefault()).toInstant().toString();
+            } else {
+                dateStr = "2024-01-01T00:00:00Z";
+            }
             m.put("receivedAt", dateStr);
             m.put("createdAt", dateStr);
             m.put("summary", entity.getSummary());
@@ -604,13 +610,13 @@ public class LegacyDashboardController {
         card.put("preview", email.getSnippet());
         
         String encodedEmail = URLEncoder.encode(email.getAccount().getEmailAddress(), StandardCharsets.UTF_8);
-        String gmailUrl = email.getGmailMessageId() != null ? 
-                String.format("https://mail.google.com/mail/u/%s/#inbox/%s", encodedEmail, email.getGmailMessageId()) :
-                String.format("https://mail.google.com/mail/u/%s/#search/rfc822msgid:%s", 
-                    encodedEmail, URLEncoder.encode(email.getMessageId(), StandardCharsets.UTF_8));
-        
+        String gmailUrl = email.getGmailMessageId() != null ?
+            String.format("https://mail.google.com/mail/u/0/?authuser=%s#inbox/%s", encodedEmail, email.getGmailMessageId()) :
+            String.format("https://mail.google.com/mail/u/0/?authuser=%s#search/rfc822msgid:%s", 
+                encodedEmail, URLEncoder.encode(email.getMessageId(), StandardCharsets.UTF_8));
+
         card.put("gmail_url", gmailUrl);
-        card.put("received_at", email.getReceivedDate() != null ? email.getReceivedDate().toString() + "Z" : "");
+        card.put("received_at", email.getReceivedDate() != null ? email.getReceivedDate().atZone(ZoneId.systemDefault()).toInstant().toString() : "");
         card.put("is_read", email.isRead());
         card.put("is_starred", email.isStarred());
         

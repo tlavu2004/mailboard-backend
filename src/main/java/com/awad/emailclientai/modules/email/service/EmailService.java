@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.time.ZoneId;
 
 @Service
 @RequiredArgsConstructor
@@ -181,6 +182,7 @@ public class EmailService {
                 .body(body)
                 .status(entity.getStatus())
                 .receivedDate(entity.getReceivedDate())
+                .receivedAt(entity.getReceivedDate() != null ? entity.getReceivedDate().atZone(ZoneId.systemDefault()).toInstant().toString() : null)
                 .snoozedUntil(entity.getSnoozedUntil())
                 .summary(entity.getSummary())
                 .summarySource(entity.getSummarySource() != null ? entity.getSummarySource().name() : null)
