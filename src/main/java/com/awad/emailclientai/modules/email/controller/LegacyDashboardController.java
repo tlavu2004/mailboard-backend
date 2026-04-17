@@ -192,18 +192,27 @@ public class LegacyDashboardController {
         }
 
         List<Map<String, Object>> mapped = filteredStream.stream()
-                .map(e -> this.mapToFrontendEmail(e, account))
-                .collect(Collectors.toList());
+            .map(e -> this.mapToFrontendEmail(e, account))
+            .collect(Collectors.toList());
+
+        // Apply pagination (slice the mapped list)
+        int total = mapped.size();
+        int fromIndex = Math.max(0, (page - 1) * perPage);
+        int toIndex = Math.min(fromIndex + perPage, total);
+        List<Map<String, Object>> pageSlice = new ArrayList<>();
+        if (fromIndex < total && fromIndex < toIndex) {
+            pageSlice = mapped.subList(fromIndex, toIndex);
+        }
 
         Map<String, Object> data = new HashMap<>();
-        data.put("emails", mapped);
-        data.put("total", mapped.size());
+        data.put("emails", pageSlice);
+        data.put("total", total);
         data.put("page", page);
         data.put("perPage", perPage);
-        data.put("hasNextPage", false);
-        
-        log.info("Bridge: Returning {}/{} emails for mailbox {} account {} (Filters: unread={}, hasAttachments={}, sort={} {})", 
-                mapped.size(), emails.size(), id, account.getId(), unread, hasAttachments, sortBy, sortOrder);
+        data.put("hasNextPage", toIndex < total);
+
+        log.info("Bridge: Returning paged emails {}/{} (page {}, perPage {}) for mailbox {} account {} (Filters: unread={}, hasAttachments={}, sort={} {})", 
+            pageSlice.size(), total, page, perPage, id, account.getId(), unread, hasAttachments, sortBy, sortOrder);
         return ResponseEntity.ok(ApiResponse.success(data));
     }
 
