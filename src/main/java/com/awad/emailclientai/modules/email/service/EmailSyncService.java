@@ -493,23 +493,39 @@ public class EmailSyncService {
             return;
         }
 
-        java.util.Set<Long> affectedAccountIds = new java.util.HashSet<>();
+        java.util.Map<Long, java.util.List<Long>> unsnoozedByAccount = new java.util.HashMap<>();
 
         for (EmailEntity email : snoozedEmails) {
             log.info("Waking up email ID: {}", email.getId());
             email.setStatus(EmailStatus.INBOX);
             email.setSnoozedUntil(null);
             emailRepository.save(email);
-            
-            if (email.getAccount() != null) {
-                affectedAccountIds.add(email.getAccount().getId());
+
+            if (email.getAccount() != null && email.getAccount().getId() != null) {
+                unsnoozedByAccount.computeIfAbsent(email.getAccount().getId(), k -> new java.util.ArrayList<>()).add(email.getId());
             }
         }
 
-        // Notify frontend for each affected account
-        for (Long accountId : affectedAccountIds) {
-            notificationWebSocketHandler.sendNotification(accountId, "NEW_EMAILS", "Email(s) returned from snooze");
-            log.info("Sent wake-up notification for account ID: {}", accountId);
+        // Notify frontend for each affected account, including explicit email IDs so FE can fetch and insert them
+        if (!unsnoozedByAccount.isEmpty()) {
+            ObjectMapper mapper = new ObjectMapper();
+            for (var entry : unsnoozedByAccount.entrySet()) {
+                Long accountId = entry.getKey();
+                java.util.List<Long> ids = entry.getValue();
+                try {
+                    java.util.Map<String, Object> payload = java.util.Map.of(
+                            "type", "NEW_EMAILS",
+                            "emailIds", ids
+                    );
+                    String payloadJson = mapper.writeValueAsString(payload);
+                    notificationWebSocketHandler.sendNotification(accountId, "NEW_EMAILS", payloadJson);
+                    log.info("Sent wake-up notification with {} ids for account ID: {}", ids.size(), accountId);
+                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                    log.warn("Failed to serialize wake-up payload for account {}: {}", accountId, e.getMessage());
+                    // Fallback: send a generic message so FE still knows to refresh
+                    notificationWebSocketHandler.sendNotification(accountId, "NEW_EMAILS", "Email(s) returned from snooze");
+                }
+            }
         }
     }
 
