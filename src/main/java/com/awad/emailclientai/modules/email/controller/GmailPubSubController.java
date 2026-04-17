@@ -3,7 +3,6 @@ package com.awad.emailclientai.modules.email.controller;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.service.EmailSyncService;
-import com.awad.emailclientai.modules.email.service.NotificationWebSocketHandler;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -25,7 +24,6 @@ public class GmailPubSubController {
 
     private final EmailAccountRepository accountRepository;
     private final EmailSyncService emailSyncService;
-    private final NotificationWebSocketHandler webSocketHandler;
     private final ObjectMapper objectMapper;
 
     @org.springframework.beans.factory.annotation.Value("${app.mail.sync.batch-size:20}")

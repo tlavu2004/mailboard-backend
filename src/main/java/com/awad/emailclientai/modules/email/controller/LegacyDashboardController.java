@@ -607,6 +607,7 @@ public class LegacyDashboardController {
         card.put("sender", email.getSender());
         card.put("subject", email.getSubject());
         card.put("summary", email.getSummary());
+        card.put("summary_source", email.getSummarySource() != null ? email.getSummarySource().name() : null);
         card.put("preview", email.getSnippet());
         
         String encodedEmail = URLEncoder.encode(email.getAccount().getEmailAddress(), StandardCharsets.UTF_8);
