@@ -351,35 +351,32 @@ public class EmailService {
     }
 
     private String injectPremiumExperience(String html, Long emailId) {
-        String processedHtml = "<div id=\"mb-stable-container\">" + html + "</div>";
-        
+        if (html == null) return null;
+
+        // Scope visual fixes to the container to avoid colliding with email templates' global CSS
         String styleFix = "<style>" +
-            "html, body { " +
-            "  margin: 0 !important; padding: 20px !important; " + // Stable Document Gutter
-            "  overflow-y: hidden !important; overflow-x: auto !important; " +
-            "  width: 100% !important; height: auto !important; min-height: 100% !important; " +
-            "  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important; " +
-            "  line-height: 1.5 !important; color: #1a202c !important; " +
-            "}" +
             "#mb-stable-container { " +
-            "  display: flow-root !important; width: 100% !important; height: auto !important; min-height: 0 !important; " +
+            "  box-sizing: border-box !important; padding: 12px !important; " +
+            "  width: 100% !important; height: auto !important; min-height: 0 !important; " +
+            "  background: transparent !important; color: inherit !important; " +
+            "  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important; " +
+            "  line-height: 1.5 !important; " +
             "}" +
-            ".mb-plain-text-body { " +
-            "  white-space: pre-wrap !important; " +
-            "  word-wrap: break-word !important; overflow-wrap: break-word !important; " +
-            "}" +
-            "img { max-width: 100% !important; height: auto !important; display: inline-block; vertical-align: middle; }" + 
-            "a { color: #3182ce !important; text-decoration: underline !important; }" +
+            ".mb-plain-text-body { white-space: pre-wrap !important; word-wrap: break-word !important; overflow-wrap: break-word !important; }" +
+            "#mb-stable-container img { max-width: 100% !important; height: auto !important; display: inline-block; vertical-align: middle; }" +
+            "#mb-stable-container a { color: #3182ce !important; text-decoration: underline !important; }" +
+            // Target common dark-mode helpers used by edX/Coursera templates. STRICTLY scoped to our container only.
+            "#mb-stable-container .darkmode, #mb-stable-container .darkmode *, #mb-stable-container .darkmode2, #mb-stable-container .darkmode2 *, #mb-stable-container .darkmode3, #mb-stable-container .darkmode3 * { background-color: #ffffff !important; color: #000000 !important; background-image: none !important; filter: none !important; mix-blend-mode: normal !important; -webkit-text-fill-color: #000000 !important; }" +
             "</style>";
 
-        String bridgeScript = styleFix + "<script>" +
+        String bridgeScriptOnly = "<script>" +
             "(function() {" +
             "  var lastHeight = 0;" +
             "  window.parent.postMessage({ type: 'MB_RESIZE', height: 400 }, '*');" +
             "  function sendHeight() {" +
             "    var frame = document.getElementById('mb-stable-container');" +
             "    if (frame) {" +
-            "      var newHeight = frame.offsetHeight + 40;" + // Buffer for gutters
+            "      var newHeight = frame.offsetHeight + 24;" +
             "      if (Math.abs(newHeight - lastHeight) > 5) {" +
             "        lastHeight = newHeight;" +
             "        window.parent.postMessage({ type: 'MB_RESIZE', height: newHeight }, '*');" +
@@ -396,7 +393,58 @@ public class EmailService {
             "})();" +
             "</script>";
 
-        return processedHtml + bridgeScript;
+        String lower = html.toLowerCase();
+        boolean isFullDoc = lower.contains("<html") || lower.contains("<!doctype") || lower.contains("<body");
+
+        if (isFullDoc) {
+            // Insert styleFix into head when possible to avoid breaking document structure
+            if (lower.contains("</head>")) {
+                int idx = lower.indexOf("</head>");
+                html = html.substring(0, idx) + styleFix + html.substring(idx);
+            } else if (lower.contains("<head")) {
+                int headOpen = lower.indexOf("<head");
+                int headClose = html.indexOf('>', headOpen);
+                if (headClose != -1) {
+                    int insertPos = headClose + 1;
+                    html = html.substring(0, insertPos) + styleFix + html.substring(insertPos);
+                } else {
+                    // fallback: inject a head after <html>
+                    if (lower.contains("<html")) {
+                        int htmlOpen = lower.indexOf("<html");
+                        int htmlClose = html.indexOf('>', htmlOpen);
+                        if (htmlClose != -1) {
+                            int insertPos = htmlClose + 1;
+                            html = html.substring(0, insertPos) + "<head>" + styleFix + "</head>" + html.substring(insertPos);
+                        }
+                    }
+                }
+            } else if (lower.contains("<html")) {
+                int htmlOpen = lower.indexOf("<html");
+                int htmlClose = html.indexOf('>', htmlOpen);
+                if (htmlClose != -1) {
+                    int insertPos = htmlClose + 1;
+                    html = html.substring(0, insertPos) + "<head>" + styleFix + "</head>" + html.substring(insertPos);
+                }
+            } else {
+                // Can't reasonably inject into head; fall back to wrapping
+                String processedHtml = "<div id=\"mb-stable-container\">" + html + "</div>";
+                return processedHtml + styleFix + bridgeScriptOnly;
+            }
+
+            // Insert bridge script before </body> or append
+            if (lower.contains("</body>")) {
+                int idx2 = lower.indexOf("</body>");
+                html = html.substring(0, idx2) + bridgeScriptOnly + html.substring(idx2);
+            } else {
+                html = html + bridgeScriptOnly;
+            }
+
+            return html;
+        }
+
+        // Fragment: safe to wrap inside our container
+        String processedHtml = "<div id=\"mb-stable-container\">" + html + "</div>";
+        return processedHtml + styleFix + bridgeScriptOnly;
     }
 
     /**
