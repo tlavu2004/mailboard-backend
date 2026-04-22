@@ -6,8 +6,12 @@ import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.entity.EmailStatus;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import com.awad.emailclientai.modules.email.service.EmailSyncService;
-import com.awad.emailclientai.modules.email.service.NotificationWebSocketHandler;
+import com.awad.emailclientai.modules.email.service.AiService;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
+import com.awad.emailclientai.modules.email.repository.EmailAttachmentRepository;
+import com.awad.emailclientai.modules.user.security.UserPrincipal;
+import com.awad.emailclientai.modules.email.repository.EmailSpecification;
+import com.awad.emailclientai.modules.email.entity.EmailAttachment;
 import com.awad.emailclientai.modules.email.service.EmailAccountService;
 import com.awad.emailclientai.modules.email.service.EmailService;
 import com.awad.emailclientai.shared.exception.BusinessException;
@@ -46,10 +50,9 @@ public class EmailController {
     private final EmailAccountRepository emailAccountRepository;
     private final EmailAccountService emailAccountService;
     private final EmailSyncService emailSyncService;
-    private final com.awad.emailclientai.modules.email.service.AiService aiService;
-    private final com.awad.emailclientai.modules.email.repository.EmailAttachmentRepository attachmentRepository;
+    private final AiService aiService;
+    private final EmailAttachmentRepository attachmentRepository;
     private final EmailService emailService;
-    private final NotificationWebSocketHandler notificationWebSocketHandler;
     private final ObjectMapper objectMapper;
 
     public EmailController(
@@ -57,10 +60,9 @@ public class EmailController {
             EmailAccountRepository emailAccountRepository,
             EmailAccountService emailAccountService,
             EmailSyncService emailSyncService,
-            com.awad.emailclientai.modules.email.service.AiService aiService,
-            com.awad.emailclientai.modules.email.repository.EmailAttachmentRepository attachmentRepository,
+            AiService aiService,
+            EmailAttachmentRepository attachmentRepository,
             EmailService emailService,
-            NotificationWebSocketHandler notificationWebSocketHandler,
             ObjectMapper objectMapper) {
         this.emailRepository = emailRepository;
         this.emailAccountRepository = emailAccountRepository;
@@ -69,7 +71,6 @@ public class EmailController {
         this.aiService = aiService;
         this.attachmentRepository = attachmentRepository;
         this.emailService = emailService;
-        this.notificationWebSocketHandler = notificationWebSocketHandler;
         this.objectMapper = objectMapper;
     }
 
@@ -99,8 +100,8 @@ public class EmailController {
 
     @PostMapping("/sync")
     @Operation(summary = "Sync Emails from Gmail")
-    public ResponseEntity<ApiResponse<String>> syncEmails(
-            @AuthenticationPrincipal com.awad.emailclientai.modules.user.security.UserPrincipal principal,
+        public ResponseEntity<ApiResponse<String>> syncEmails(
+            @AuthenticationPrincipal UserPrincipal principal,
             @RequestParam(required = false) Long accountId,
             @RequestParam(defaultValue = "INBOX") String folderName,
             @RequestParam(defaultValue = "20") int limit,
@@ -117,16 +118,16 @@ public class EmailController {
 
     @PostMapping("/repair")
     @Operation(summary = "Repair Corrupted Email Bodies")
-    public ResponseEntity<ApiResponse<String>> repairEmails(
-            @AuthenticationPrincipal com.awad.emailclientai.modules.user.security.UserPrincipal principal) {
+        public ResponseEntity<ApiResponse<String>> repairEmails(
+            @AuthenticationPrincipal UserPrincipal principal) {
         emailSyncService.repairEmailsForUser(principal.getId());
         return ResponseEntity.ok(ApiResponse.success("Repair process completed"));
     }
 
     @PostMapping(value = "/send", consumes = MediaType.APPLICATION_JSON_VALUE)
     @Operation(summary = "Bridge: Send Email (JSON)")
-    public ResponseEntity<ApiResponse<String>> sendEmailBridgeJson(
-            @AuthenticationPrincipal com.awad.emailclientai.modules.user.security.UserPrincipal principal,
+        public ResponseEntity<ApiResponse<String>> sendEmailBridgeJson(
+            @AuthenticationPrincipal UserPrincipal principal,
             @RequestBody Map<String, Object> jsonBody
     ) throws MessagingException {
         log.info("Bridge Send Email (JSON): Request from user {}", principal.getId());
@@ -140,7 +141,7 @@ public class EmailController {
                 String sentFolderName = "Sent";
                 if (account.getProvider() == EmailProvider.GMAIL) sentFolderName = "[Gmail]/Sent Mail";
                 emailSyncService.syncEmailsForAccount(acctIdJson, sentFolderName, 10, 0);
-                notificationWebSocketHandler.sendNotification(acctIdJson, "NEW_EMAILS", "Sent folder updated");
+                // Detailed NEW_EMAILS notifications (with emailIds) are emitted by EmailSyncService
             } catch (Exception e) {
                 log.warn("Post-send Sent sync failed for account {}: {}", acctIdJson, e.getMessage());
             }
@@ -150,8 +151,8 @@ public class EmailController {
 
     @PostMapping(value = "/send", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Bridge: Send Email (Multipart)")
-    public ResponseEntity<ApiResponse<String>> sendEmailBridgeMultipart(
-            @AuthenticationPrincipal com.awad.emailclientai.modules.user.security.UserPrincipal principal,
+        public ResponseEntity<ApiResponse<String>> sendEmailBridgeMultipart(
+            @AuthenticationPrincipal UserPrincipal principal,
             @RequestParam(value = "attachments", required = false) List<MultipartFile> attachments,
             @RequestParam(value = "to", required = false) String toString,
             @RequestParam(value = "cc", required = false) String ccString,
@@ -184,7 +185,7 @@ public class EmailController {
                 String sentFolderName = "Sent";
                 if (account.getProvider() == EmailProvider.GMAIL) sentFolderName = "[Gmail]/Sent Mail";
                 emailSyncService.syncEmailsForAccount(acctIdMulti, sentFolderName, 10, 0);
-                notificationWebSocketHandler.sendNotification(acctIdMulti, "NEW_EMAILS", "Sent folder updated");
+                // Detailed NEW_EMAILS notifications (with emailIds) are emitted by EmailSyncService
             } catch (Exception e) {
                 log.warn("Post-send Sent sync failed for account {}: {}", acctIdMulti, e.getMessage());
             }
@@ -193,8 +194,8 @@ public class EmailController {
     }
 
     // RENAMED from getPrimaryAccount to fetchPrimaryAccount to avoid any resolution conflicts
-    private com.awad.emailclientai.modules.email.entity.EmailAccount fetchPrimaryAccount(
-            com.awad.emailclientai.modules.user.security.UserPrincipal principal) {
+    private EmailAccount fetchPrimaryAccount(
+            UserPrincipal principal) {
         return emailAccountRepository.findByUserIdAndActiveTrue(principal.getId())
                 .stream().findFirst()
                 .orElseThrow(() -> new RuntimeException("No active account linked."));
@@ -241,7 +242,7 @@ public class EmailController {
         var resource = emailService.getInlineAttachment(id, atId);
         String contentType = emailService.getAttachmentContentType(atId);
         String filename = attachmentRepository.findById(atId)
-                .map(com.awad.emailclientai.modules.email.entity.EmailAttachment::getFilename)
+            .map(EmailAttachment::getFilename)
                 .orElse("attachment");
         
         return ResponseEntity.ok()
@@ -294,7 +295,7 @@ public class EmailController {
                 ? org.springframework.data.domain.Sort.Direction.ASC : org.springframework.data.domain.Sort.Direction.DESC;
         org.springframework.data.domain.Sort sortObj = org.springframework.data.domain.Sort.by(direction, sortParts[0]);
         org.springframework.data.jpa.domain.Specification<EmailEntity> spec = 
-                com.awad.emailclientai.modules.email.repository.EmailSpecification.filterEmails(accountId, status, unread, hasAttachments);
+            EmailSpecification.filterEmails(accountId, status, unread, hasAttachments);
 
         List<EmailEntityDto> dtos = emailRepository.findAll(spec, sortObj).stream()
                 .map(emailService::mapToDto).collect(Collectors.toList());
@@ -322,8 +323,8 @@ public class EmailController {
     }
 
     @GetMapping("/suggest")
-    public ResponseEntity<ApiResponse<String>> suggestSearch(
-            @AuthenticationPrincipal com.awad.emailclientai.modules.user.security.UserPrincipal principal, 
+        public ResponseEntity<ApiResponse<String>> suggestSearch(
+            @AuthenticationPrincipal UserPrincipal principal, 
             @RequestParam String input) {
         String suggestion = aiService.suggestSearchQuery(input, principal.getId());
         return ResponseEntity.ok(ApiResponse.success("Suggestion generated", suggestion));

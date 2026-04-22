@@ -236,7 +236,9 @@ public class EmailSyncService {
                             "emailIds", newEmailIds
                     );
                     String payloadJson = mapper.writeValueAsString(payload);
-                    notificationWebSocketHandler.sendNotification(account.getId(), "NEW_EMAILS", payloadJson);
+                    // Send the serialized payload directly so the frontend receives
+                    // a top-level object with `emailIds` instead of a nested string.
+                    notificationWebSocketHandler.sendRawNotification(account.getId(), payloadJson);
                     log.info("[V11-SYNC] Sent NEW_EMAILS notification with {} ids for account {}", newEmailIds.size(), account.getId());
                 } catch (Exception e) {
                     log.warn("[V11-SYNC] Failed to send detailed NEW_EMAILS notification: {}", e.getMessage());
@@ -518,7 +520,7 @@ public class EmailSyncService {
                             "emailIds", ids
                     );
                     String payloadJson = mapper.writeValueAsString(payload);
-                    notificationWebSocketHandler.sendNotification(accountId, "NEW_EMAILS", payloadJson);
+                    notificationWebSocketHandler.sendRawNotification(accountId, payloadJson);
                     log.info("Sent wake-up notification with {} ids for account ID: {}", ids.size(), accountId);
                 } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
                     log.warn("Failed to serialize wake-up payload for account {}: {}", accountId, e.getMessage());

@@ -87,6 +87,27 @@ public class NotificationWebSocketHandler extends TextWebSocketHandler {
         sendNotification(accountId, "INFO", payload);
     }
 
+    /**
+     * Send a raw JSON payload string directly to the account's sessions.
+     * This avoids double-wrapping an already-serialized JSON payload in the
+     * { type:, message: } envelope which made parsing on the frontend brittle.
+     */
+    public void sendRawNotification(Long accountId, String jsonPayload) {
+        Set<WebSocketSession> sessions = accountSessions.get(accountId);
+        if (sessions != null) {
+            TextMessage message = new TextMessage(jsonPayload);
+            sessions.forEach(session -> {
+                try {
+                    if (session.isOpen()) {
+                        session.sendMessage(message);
+                    }
+                } catch (IOException e) {
+                    log.error("Error sending raw WebSocket message to account: {}", accountId, e);
+                }
+            });
+        }
+    }
+
     private Long getAccountId(WebSocketSession session) {
         String query = session.getUri() != null ? session.getUri().getQuery() : null;
         if (query != null && query.contains("accountId=")) {
