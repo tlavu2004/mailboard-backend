@@ -174,6 +174,9 @@ public class EmailService {
                 .to(entity.getRecipientTo() != null ? java.util.Arrays.stream(entity.getRecipientTo().split(",\\s*"))
                         .map(email -> EmailEntityDto.EmailAddressDto.builder().email(email.trim()).build())
                         .collect(java.util.stream.Collectors.toList()) : java.util.Collections.emptyList())
+                .cc(entity.getRecipientCc() != null ? java.util.Arrays.stream(entity.getRecipientCc().split(",\\s*"))
+                    .map(email -> EmailEntityDto.EmailAddressDto.builder().email(email.trim()).build())
+                    .collect(java.util.stream.Collectors.toList()) : java.util.Collections.emptyList())
                 .sender(entity.getSender()) // Legacy fallback
                 .fromName(entity.getFromName()) // Legacy fallback
                 .recipientTo(entity.getRecipientTo() != null ? java.util.Arrays.asList(entity.getRecipientTo().split(",\\s*")) : java.util.Collections.emptyList()) // Legacy fallback
