@@ -10,6 +10,8 @@ import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.gmail.Gmail;
+import com.google.api.services.gmail.model.ListMessagesResponse;
+import com.google.api.services.gmail.model.ModifyMessageRequest;
 import com.google.api.services.gmail.model.Label;
 import com.google.api.services.gmail.model.ListLabelsResponse;
 import lombok.RequiredArgsConstructor;
@@ -85,6 +87,13 @@ public class GmailLabelService {
         return createLabelInternal(account, labelName, true);
     }
 
+    /**
+     * Finds a Gmail message by RFC822 Message-ID and modifies its labels.
+     */
+    public void modifyMessageLabelsByMessageId(EmailAccount account, String rawMessageId, List<String> addLabelIds, List<String> removeLabelIds) {
+        modifyMessageLabelsByMessageIdInternal(account, rawMessageId, addLabelIds, removeLabelIds, true);
+    }
+
     private Map<String, String> createLabelInternal(EmailAccount account, String labelName, boolean retryOnAuthFailure) {
         try {
             Gmail gmail = getGmailService(account);
@@ -116,6 +125,58 @@ public class GmailLabelService {
             log.error("Failed to create Gmail label for {}: {}", account.getEmailAddress(), e.getMessage());
             throw new RuntimeException("Failed to create Gmail label: " + e.getMessage());
         }
+    }
+
+    private void modifyMessageLabelsByMessageIdInternal(EmailAccount account, String rawMessageId, List<String> addLabelIds, List<String> removeLabelIds, boolean retryOnAuthFailure) {
+        try {
+            Gmail gmail = getGmailService(account);
+            String normalizedMessageId = normalizeMessageId(rawMessageId);
+            String query = "rfc822msgid:" + quoteIfNeeded(normalizedMessageId);
+
+            ListMessagesResponse response = gmail.users().messages().list("me").setQ(query).setMaxResults(10L).execute();
+            if (response.getMessages() == null || response.getMessages().isEmpty()) {
+                log.warn("No Gmail message found for query {} on {}", query, account.getEmailAddress());
+                return;
+            }
+
+            String gmailMessageId = response.getMessages().get(0).getId();
+            ModifyMessageRequest request = new ModifyMessageRequest();
+            if (addLabelIds != null) request.setAddLabelIds(addLabelIds);
+            if (removeLabelIds != null) request.setRemoveLabelIds(removeLabelIds);
+
+            gmail.users().messages().modify("me", gmailMessageId, request).execute();
+            log.info("Modified Gmail message labels for {} using query {} (messageId={})", account.getEmailAddress(), query, normalizedMessageId);
+        } catch (GoogleJsonResponseException e) {
+            if (retryOnAuthFailure && e.getStatusCode() == 401) {
+                log.info("Gmail message modify auth failed for {}, attempting token refresh...", account.getEmailAddress());
+                if (googleTokenService.refreshAccessToken(account) != null) {
+                    modifyMessageLabelsByMessageIdInternal(account, rawMessageId, addLabelIds, removeLabelIds, false);
+                    return;
+                }
+            }
+            log.error("Failed to modify Gmail message labels for {}: {}", account.getEmailAddress(), e.getMessage());
+            throw new RuntimeException("Failed to modify Gmail message labels: " + e.getMessage());
+        } catch (Exception e) {
+            log.error("Failed to modify Gmail message labels for {}: {}", account.getEmailAddress(), e.getMessage());
+            throw new RuntimeException("Failed to modify Gmail message labels: " + e.getMessage());
+        }
+    }
+
+    private String normalizeMessageId(String rawMessageId) {
+        if (rawMessageId == null) return "";
+        String value = rawMessageId.trim();
+        if (value.startsWith("<") && value.endsWith(">") && value.length() > 2) {
+            value = value.substring(1, value.length() - 1);
+        }
+        return value;
+    }
+
+    private String quoteIfNeeded(String value) {
+        if (value == null) return "";
+        if (value.contains(" ") || value.contains("@") || value.contains("<") || value.contains(">") || value.contains("\"")) {
+            return '"' + value.replace("\"", "\\\"") + '"';
+        }
+        return value;
     }
 
     /**

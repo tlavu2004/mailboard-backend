@@ -13,6 +13,7 @@ import com.awad.emailclientai.shared.service.EncryptionService;
 import jakarta.mail.*;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeBodyPart;
+import jakarta.mail.search.HeaderTerm;
 import org.eclipse.angus.mail.imap.IMAPFolder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -45,6 +46,10 @@ public class ImapService {
     private static final String[] TRASH_FOLDER_NAMES = {
             "[Gmail]/Trash", "[Gmail]/Thùng rác", "Trash", "Deleted Items", "Deleted"
     };
+
+        private static final String[] SPAM_FOLDER_NAMES = {
+            "[Gmail]/Spam", "[Gmail]/Thư rác", "Spam", "Junk", "Junk E-mail"
+        };
 
     private static final String[] SENT_FOLDER_NAMES = {
             "Sent", "Sent Items", "Sent Mail",
@@ -413,6 +418,144 @@ public class ImapService {
 
             sourceFolder.close(true); // expunge from source
         }
+    }
+
+    /**
+     * Moves a message between folders by RFC822 Message-ID instead of UID.
+     * This is more reliable across Gmail labels/folders where UID can differ.
+     */
+    public void moveMessageByMessageId(EmailAccount account, String fromFolderName, String toFolderName, String messageId)
+            throws MessagingException {
+        if (messageId == null || messageId.isBlank()) {
+            log.warn("moveMessageByMessageId skipped: empty messageId");
+            return;
+        }
+
+        String normalizedTarget = normalizeMessageId(messageId);
+
+        try (Store store = connectToStore(account)) {
+            Folder fromFolder = resolveExistingFolder(store, fromFolderName);
+            if (fromFolder == null) {
+                log.warn("Source folder does not exist: {}", fromFolderName);
+                return;
+            }
+
+            Folder toFolder = resolveOrCreateTargetFolder(store, toFolderName);
+            if (toFolder == null) {
+                log.warn("Target folder does not exist and was not created for system safety: {}", toFolderName);
+                return;
+            }
+
+            fromFolder.open(Folder.READ_WRITE);
+
+            Message target = null;
+
+            // Fast path: search by Message-ID header first
+            Message[] matches = fromFolder.search(new HeaderTerm("Message-ID", normalizedTarget));
+            if (matches != null && matches.length > 0) {
+                target = matches[0];
+            }
+
+            // Fallback: tolerant scan to handle <> wrappers / variants
+            if (target == null) {
+                Message[] all = fromFolder.getMessages();
+                for (int i = all.length - 1; i >= 0; i--) {
+                    if (matchesMessageId(all[i], normalizedTarget)) {
+                        target = all[i];
+                        break;
+                    }
+                }
+            }
+
+            if (target == null) {
+                log.warn("Message not found by Message-ID in folder {}: {}", fromFolderName, normalizedTarget);
+                fromFolder.close(false);
+                return;
+            }
+
+            fromFolder.copyMessages(new Message[]{target}, toFolder);
+            target.setFlag(Flags.Flag.DELETED, true);
+            fromFolder.close(true);
+
+            log.info("Moved message by Message-ID from '{}' to '{}' (messageId={})", fromFolder.getFullName(), toFolder.getFullName(), normalizedTarget);
+        }
+    }
+
+    private Folder resolveExistingFolder(Store store, String preferredName) {
+        List<String> candidates = new ArrayList<>();
+        if (preferredName != null && !preferredName.isBlank()) {
+            candidates.add(preferredName);
+        }
+        candidates.addAll(getSystemFolderAliases(preferredName));
+
+        for (String candidate : candidates) {
+            try {
+                Folder folder = store.getFolder(candidate);
+                if (folder != null && folder.exists()) {
+                    return folder;
+                }
+            } catch (Exception ignore) {
+                // try next alias
+            }
+        }
+        return null;
+    }
+
+    private Folder resolveOrCreateTargetFolder(Store store, String preferredName) throws MessagingException {
+        Folder existing = resolveExistingFolder(store, preferredName);
+        if (existing != null) {
+            return existing;
+        }
+
+        // Never create Gmail system folders when alias lookup fails,
+        // otherwise we risk creating fake user labels like "[Gmail]/Trash".
+        String lower = preferredName == null ? "" : preferredName.toLowerCase(Locale.ROOT);
+        boolean isSystemTrashOrSpam = lower.contains("trash") || lower.contains("spam") || lower.contains("junk");
+        if (isSystemTrashOrSpam) {
+            return null;
+        }
+
+        Folder folder = store.getFolder(preferredName);
+        if (!folder.exists()) {
+            folder.create(Folder.HOLDS_MESSAGES);
+        }
+        return folder;
+    }
+
+    private List<String> getSystemFolderAliases(String folderName) {
+        String lower = folderName == null ? "" : folderName.toLowerCase(Locale.ROOT);
+        if (lower.contains("trash") || lower.contains("deleted") || "trash".equals(lower)) {
+            return Arrays.asList(TRASH_FOLDER_NAMES);
+        }
+        if (lower.contains("spam") || lower.contains("junk")) {
+            return Arrays.asList(SPAM_FOLDER_NAMES);
+        }
+        return Collections.emptyList();
+    }
+
+    private boolean matchesMessageId(Message message, String normalizedTarget) {
+        try {
+            String[] headers = message.getHeader("Message-ID");
+            if (headers == null || headers.length == 0) return false;
+            for (String h : headers) {
+                String normalized = normalizeMessageId(h);
+                if (normalized.equalsIgnoreCase(normalizedTarget)) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Failed reading Message-ID header: {}", e.getMessage());
+        }
+        return false;
+    }
+
+    private String normalizeMessageId(String raw) {
+        if (raw == null) return "";
+        String s = raw.trim();
+        if (s.startsWith("<") && s.endsWith(">") && s.length() > 2) {
+            s = s.substring(1, s.length() - 1);
+        }
+        return s.trim();
     }
 
     /**

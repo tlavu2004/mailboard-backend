@@ -31,6 +31,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -368,18 +369,21 @@ public class LegacyDashboardController {
         Long emailId = Long.parseLong(id);
         EmailEntity email = emailRepository.findById(emailId)
                 .orElseThrow(() -> new RuntimeException("Email not found"));
+        String previousStatus = email.getStatus();
         
         List<String> addLabels = request.getOrDefault("addLabels", new ArrayList<>());
         List<String> removeLabels = request.getOrDefault("removeLabels", new ArrayList<>());
+        List<String> normalizedAdd = addLabels.stream().map(v -> v == null ? "" : v.toUpperCase(Locale.ROOT)).collect(Collectors.toList());
+        List<String> normalizedRemove = removeLabels.stream().map(v -> v == null ? "" : v.toUpperCase(Locale.ROOT)).collect(Collectors.toList());
         
         boolean changed = false;
         
-        if (addLabels.contains("STARRED")) {
+        if (normalizedAdd.contains("STARRED")) {
             email.setStarred(true);
             changed = true;
         }
         
-        if (removeLabels.contains("STARRED")) {
+        if (normalizedRemove.contains("STARRED")) {
             email.setStarred(false);
             // Also reset legacy STARRED status if present
             if ("STARRED".equalsIgnoreCase(email.getStatus())) {
@@ -388,13 +392,28 @@ public class LegacyDashboardController {
             changed = true;
         }
         
-        if (removeLabels.contains("UNREAD")) {
+        if (normalizedRemove.contains("UNREAD")) {
             email.setRead(true);
             changed = true;
         }
+
+        if (normalizedAdd.contains("UNREAD")) {
+            email.setRead(false);
+            changed = true;
+        }
+
+        if (normalizedAdd.contains("SPAM")) {
+            email.setStatus("SPAM");
+            changed = true;
+        }
         
-        if (addLabels.contains("TRASH")) {
+        if (normalizedAdd.contains("TRASH")) {
             email.setStatus("TRASH");
+            changed = true;
+        }
+
+        if (normalizedAdd.contains("INBOX")) {
+            email.setStatus(EmailStatus.INBOX);
             changed = true;
         }
         
@@ -403,24 +422,53 @@ public class LegacyDashboardController {
             
             // Sync to Gmail
             try {
-                if (removeLabels.contains("UNREAD")) {
-                    imapService.setMessageRead(email.getAccount(), "INBOX", email.getUid(), true);
-                } else if (addLabels.contains("UNREAD")) {
-                    imapService.setMessageRead(email.getAccount(), "INBOX", email.getUid(), false);
-                }
-                
-                if (addLabels.contains("STARRED")) {
-                    imapService.setMessageStarred(email.getAccount(), "INBOX", email.getUid(), true);
-                } else if (removeLabels.contains("STARRED")) {
-                    imapService.setMessageStarred(email.getAccount(), "INBOX", email.getUid(), false);
+                boolean isGmail = email.getAccount().getProvider() == EmailProvider.GMAIL;
+                String sourceFolder = resolveFolderForStatus(previousStatus, email.getAccount().getProvider());
+
+                if (normalizedRemove.contains("UNREAD")) {
+                    imapService.setMessageRead(email.getAccount(), sourceFolder, email.getUid(), true);
+                } else if (normalizedAdd.contains("UNREAD")) {
+                    imapService.setMessageRead(email.getAccount(), sourceFolder, email.getUid(), false);
                 }
 
-                if (addLabels.contains("TRASH")) {
-                    imapService.trashMessage(email.getAccount(), "INBOX", email.getUid());
+                if (normalizedAdd.contains("STARRED")) {
+                    imapService.setMessageStarred(email.getAccount(), sourceFolder, email.getUid(), true);
+                } else if (normalizedRemove.contains("STARRED")) {
+                    imapService.setMessageStarred(email.getAccount(), sourceFolder, email.getUid(), false);
+                }
+
+                if (normalizedAdd.contains("TRASH")) {
+                    if (isGmail) {
+                        gmailLabelService.modifyMessageLabelsByMessageId(email.getAccount(), email.getMessageId(), List.of("TRASH"), List.of("INBOX", "SPAM"));
+                    } else {
+                        String trashFolder = resolveFolderForStatus("TRASH", email.getAccount().getProvider());
+                        imapService.moveMessageByMessageId(email.getAccount(), sourceFolder, trashFolder, email.getMessageId());
+                    }
                     log.info("Successfully trashed email (UID: {}) from Gmail", email.getUid());
-                    // Crucial: remove from local DB so it doesn't re-sync from Inbox
-                    emailRepository.delete(email);
-                    log.info("Deleted local email record for UID: {}", email.getUid());
+                } else if (normalizedAdd.contains("SPAM")) {
+                    if (isGmail) {
+                        gmailLabelService.modifyMessageLabelsByMessageId(email.getAccount(), email.getMessageId(), List.of("SPAM"), List.of("INBOX", "TRASH"));
+                    } else {
+                        String spamFolder = resolveFolderForStatus("SPAM", email.getAccount().getProvider());
+                        imapService.moveMessageByMessageId(email.getAccount(), sourceFolder, spamFolder, email.getMessageId());
+                    }
+                    log.info("Successfully moved email (UID: {}) to SPAM", email.getUid());
+                } else if (normalizedAdd.contains("INBOX") && normalizedRemove.contains("TRASH")) {
+                    if (isGmail) {
+                        gmailLabelService.modifyMessageLabelsByMessageId(email.getAccount(), email.getMessageId(), List.of("INBOX"), List.of("TRASH", "SPAM"));
+                    } else {
+                        String trashFolder = resolveFolderForStatus("TRASH", email.getAccount().getProvider());
+                        imapService.moveMessageByMessageId(email.getAccount(), trashFolder, "INBOX", email.getMessageId());
+                    }
+                    log.info("Successfully restored email (UID: {}) from TRASH to INBOX", email.getUid());
+                } else if (normalizedAdd.contains("INBOX") && normalizedRemove.contains("SPAM")) {
+                    if (isGmail) {
+                        gmailLabelService.modifyMessageLabelsByMessageId(email.getAccount(), email.getMessageId(), List.of("INBOX"), List.of("SPAM", "TRASH"));
+                    } else {
+                        String spamFolder = resolveFolderForStatus("SPAM", email.getAccount().getProvider());
+                        imapService.moveMessageByMessageId(email.getAccount(), spamFolder, "INBOX", email.getMessageId());
+                    }
+                    log.info("Successfully moved email (UID: {}) from SPAM to INBOX", email.getUid());
                 }
             } catch (Exception e) {
                 log.error("Failed to sync flags/deletion to Gmail for email {}: {}", email.getUid(), e.getMessage());
@@ -429,6 +477,27 @@ public class LegacyDashboardController {
         
         EmailAccount account = getPrimaryAccount(principal);
         return ResponseEntity.ok(ApiResponse.success(mapToFrontendEmail(email, account)));
+    }
+
+    private String resolveFolderForStatus(String status, EmailProvider provider) {
+        String normalized = status == null ? "INBOX" : status.toUpperCase(Locale.ROOT);
+        if (provider == EmailProvider.GMAIL) {
+            return switch (normalized) {
+                case "SPAM" -> "[Gmail]/Spam";
+                case "TRASH" -> "[Gmail]/Trash";
+                case "SENT" -> "[Gmail]/Sent Mail";
+                case "DRAFT", "DRAFTS" -> "[Gmail]/Drafts";
+                default -> "INBOX";
+            };
+        }
+
+        return switch (normalized) {
+            case "SPAM" -> "Spam";
+            case "TRASH" -> "Trash";
+            case "SENT" -> "Sent";
+            case "DRAFT", "DRAFTS" -> "Drafts";
+            default -> "INBOX";
+        };
     }
 
 
