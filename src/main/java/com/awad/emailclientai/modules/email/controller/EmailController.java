@@ -305,9 +305,13 @@ public class EmailController {
     @PutMapping("/{id}/status")
     public ResponseEntity<ApiResponse<EmailEntityDto>> updateStatus(@PathVariable Long id, @RequestParam String status) {
         EmailEntity email = emailRepository.findById(id).orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_NOT_FOUND));
+        String previousStatus = email.getStatus();
         email.setStatus(status);
         if (!EmailStatus.SNOOZED.equals(status)) email.setSnoozedUntil(null);
         EmailEntity saved = emailRepository.save(email);
+        
+        emailService.syncStatusToProvider(email, previousStatus, status);
+        
         return ResponseEntity.ok(ApiResponse.success(emailService.mapToDto(saved)));
     }
 

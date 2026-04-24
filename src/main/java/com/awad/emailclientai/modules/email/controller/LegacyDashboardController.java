@@ -291,6 +291,7 @@ public class LegacyDashboardController {
         EmailEntity email = emailRepository.findById(emailId)
                 .orElseThrow(() -> new RuntimeException("Email not found"));
         
+        String previousStatus = email.getStatus();
         email.setStatus(toStatus);
         
         if (request.containsKey("kanban_order")) {
@@ -298,6 +299,9 @@ public class LegacyDashboardController {
         }
         
         emailRepository.save(email);
+        
+        emailService.syncStatusToProvider(email, previousStatus, toStatus);
+        
         EmailAccount account = getPrimaryAccount(principal);
         
         return ResponseEntity.ok(ApiResponse.success(mapToKanbanCard(email, account)));
@@ -439,7 +443,7 @@ public class LegacyDashboardController {
 
                 if (normalizedAdd.contains("TRASH")) {
                     if (isGmail) {
-                        gmailLabelService.modifyMessageLabelsByMessageId(email.getAccount(), email.getMessageId(), List.of("TRASH"), List.of("INBOX", "SPAM"));
+                        gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("TRASH"), List.of("INBOX", "SPAM"));
                     } else {
                         String trashFolder = resolveFolderForStatus("TRASH", email.getAccount().getProvider());
                         imapService.moveMessageByMessageId(email.getAccount(), sourceFolder, trashFolder, email.getMessageId());
@@ -447,7 +451,7 @@ public class LegacyDashboardController {
                     log.info("Successfully trashed email (UID: {}) from Gmail", email.getUid());
                 } else if (normalizedAdd.contains("SPAM")) {
                     if (isGmail) {
-                        gmailLabelService.modifyMessageLabelsByMessageId(email.getAccount(), email.getMessageId(), List.of("SPAM"), List.of("INBOX", "TRASH"));
+                        gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("SPAM"), List.of("INBOX", "TRASH"));
                     } else {
                         String spamFolder = resolveFolderForStatus("SPAM", email.getAccount().getProvider());
                         imapService.moveMessageByMessageId(email.getAccount(), sourceFolder, spamFolder, email.getMessageId());
@@ -455,7 +459,8 @@ public class LegacyDashboardController {
                     log.info("Successfully moved email (UID: {}) to SPAM", email.getUid());
                 } else if (normalizedAdd.contains("INBOX") && normalizedRemove.contains("TRASH")) {
                     if (isGmail) {
-                        gmailLabelService.modifyMessageLabelsByMessageId(email.getAccount(), email.getMessageId(), List.of("INBOX"), List.of("TRASH", "SPAM"));
+                        gmailLabelService.untrashMessage(email.getAccount(), email.getMessageId(), email.getGmailMessageId());
+                        gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("INBOX"), List.of("SPAM"));
                     } else {
                         String trashFolder = resolveFolderForStatus("TRASH", email.getAccount().getProvider());
                         imapService.moveMessageByMessageId(email.getAccount(), trashFolder, "INBOX", email.getMessageId());
@@ -463,7 +468,7 @@ public class LegacyDashboardController {
                     log.info("Successfully restored email (UID: {}) from TRASH to INBOX", email.getUid());
                 } else if (normalizedAdd.contains("INBOX") && normalizedRemove.contains("SPAM")) {
                     if (isGmail) {
-                        gmailLabelService.modifyMessageLabelsByMessageId(email.getAccount(), email.getMessageId(), List.of("INBOX"), List.of("SPAM", "TRASH"));
+                        gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("INBOX"), List.of("SPAM", "TRASH"));
                     } else {
                         String spamFolder = resolveFolderForStatus("SPAM", email.getAccount().getProvider());
                         imapService.moveMessageByMessageId(email.getAccount(), spamFolder, "INBOX", email.getMessageId());
@@ -472,6 +477,7 @@ public class LegacyDashboardController {
                 }
             } catch (Exception e) {
                 log.error("Failed to sync flags/deletion to Gmail for email {}: {}", email.getUid(), e.getMessage());
+                throw new RuntimeException("Failed to sync mailbox state to Gmail: " + e.getMessage(), e);
             }
         }
         

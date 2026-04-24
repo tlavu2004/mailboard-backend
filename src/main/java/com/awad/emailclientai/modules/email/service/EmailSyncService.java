@@ -291,7 +291,7 @@ public class EmailSyncService {
                 log.warn("[SYNC-TRACE] Pre-save IMAP detail fetch failed for messageId={}: {}", msg.getMessageId(), e.getMessage());
             }
         }
-        String targetStatus = determineStatusFromLabels(msg, accountId);
+        String targetStatus = determineStatusFromLabels(msg, accountId, folderName);
         Optional<EmailEntity> existingOpt = emailRepository.findByMessageId(msg.getMessageId());
         
         if (existingOpt.isPresent()) {
@@ -577,9 +577,21 @@ public class EmailSyncService {
      *   - If exactly 1 custom label remains -> find or create a Kanban column for it
      *   - If 0 or >1 custom labels -> default to INBOX
      */
-    private String determineStatusFromLabels(MailMessageDto msg, Long accountId) {
+    private String determineStatusFromLabels(MailMessageDto msg, Long accountId, String folderName) {
+        String folderStatus = determineStatusFromFolder(folderName);
+        if (folderStatus != null && !EmailStatus.INBOX.equalsIgnoreCase(folderStatus)) {
+            return folderStatus;
+        }
+
         if (msg.getLabels() == null || msg.getLabels().isEmpty()) {
-            return EmailStatus.INBOX;
+            return folderStatus != null ? folderStatus : EmailStatus.INBOX;
+        }
+
+        if (containsSystemLabel(msg.getLabels(), "TRASH") || containsSystemLabel(msg.getLabels(), "\\\\TRASH")) {
+            return "TRASH";
+        }
+        if (containsSystemLabel(msg.getLabels(), "SPAM") || containsSystemLabel(msg.getLabels(), "\\\\SPAM") || containsSystemLabel(msg.getLabels(), "JUNK")) {
+            return "SPAM";
         }
 
         // Filter out system labels (case-insensitive)
@@ -592,7 +604,7 @@ public class EmailSyncService {
                 log.info("Email '{}' has {} custom labels {} -> keeping in INBOX",
                         msg.getSubject(), customLabels.size(), customLabels);
             }
-            return EmailStatus.INBOX;
+            return folderStatus != null ? folderStatus : EmailStatus.INBOX;
         }
 
         // Exactly 1 custom label -> find or create column
@@ -601,6 +613,31 @@ public class EmailSyncService {
         log.info("Auto-mapping email '{}' to column '{}' (status: {}) based on label '{}'",
                 msg.getSubject(), column.getName(), column.getLinkedStatus(), labelName);
         return column.getLinkedStatus();
+    }
+
+    private boolean containsSystemLabel(List<String> labels, String target) {
+        return labels.stream().anyMatch(label -> label != null && label.equalsIgnoreCase(target));
+    }
+
+    private String determineStatusFromFolder(String folderName) {
+        if (folderName == null || folderName.isBlank()) {
+            return EmailStatus.INBOX;
+        }
+
+        String lower = folderName.toLowerCase();
+        if (lower.contains("trash") || lower.contains("deleted") || lower.contains("thùng rác")) {
+            return "TRASH";
+        }
+        if (lower.contains("spam") || lower.contains("junk") || lower.contains("thư rác")) {
+            return "SPAM";
+        }
+        if (lower.contains("draft")) {
+            return "DRAFTS";
+        }
+        if (lower.contains("sent")) {
+            return "SENT";
+        }
+        return EmailStatus.INBOX;
     }
 
     /**

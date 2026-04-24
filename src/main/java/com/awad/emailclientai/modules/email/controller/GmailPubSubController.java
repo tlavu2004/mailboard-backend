@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Base64;
+import java.util.List;
 import java.util.Optional;
 
 @RestController
@@ -60,7 +61,16 @@ public class GmailPubSubController {
                 // Trigger sync in a separate thread (non-blocking for Google)
                 new Thread(() -> {
                     try {
-                        emailSyncService.syncEmailsForAccount(account.getId(), "INBOX", batchSize, 0);
+                        // Sync key system folders so label moves (e.g. Gmail delete -> TRASH)
+                        // are reflected back to local status promptly.
+                        List<String> foldersToSync = List.of("INBOX", "[Gmail]/Trash", "[Gmail]/Spam");
+                        for (String folder : foldersToSync) {
+                            try {
+                                emailSyncService.syncEmailsForAccount(account.getId(), folder, batchSize, 0);
+                            } catch (Exception folderEx) {
+                                log.warn("Triggered sync failed for {} folder {}: {}", emailAddress, folder, folderEx.getMessage());
+                            }
+                        }
                     } catch (Exception e) {
                         log.error("Error during triggered sync for {}", emailAddress, e);
                     }

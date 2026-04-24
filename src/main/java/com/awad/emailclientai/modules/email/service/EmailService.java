@@ -34,6 +34,7 @@ public class EmailService {
     private final EmailAttachmentRepository attachmentRepository;
     private final ImapService imapService;
     private final EmailSyncService emailSyncService;
+    private final GmailLabelService gmailLabelService;
 
     @PostConstruct
     public void init() {
@@ -480,5 +481,78 @@ public class EmailService {
         escaped = escaped.replace("\r\n", "<br>").replace("\n", "<br>");
 
         return "<div class=\"mb-plain-text-body\">" + escaped + "</div>";
+    }
+
+    public void syncStatusToProvider(EmailEntity email, String previousStatus, String newStatus) {
+        if (previousStatus == null) previousStatus = "INBOX";
+        if (newStatus == null) newStatus = "INBOX";
+        
+        String normalizedPrev = previousStatus.toUpperCase(java.util.Locale.ROOT);
+        String normalizedNew = newStatus.toUpperCase(java.util.Locale.ROOT);
+        
+        if (normalizedPrev.equals(normalizedNew)) return;
+        
+        try {
+            boolean isGmail = email.getAccount().getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL;
+            String sourceFolder = resolveFolderForStatus(normalizedPrev, email.getAccount().getProvider());
+            
+            if (normalizedNew.equals("TRASH")) {
+                if (isGmail) {
+                    gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("TRASH"), List.of("INBOX", "SPAM"));
+                } else {
+                    String trashFolder = resolveFolderForStatus("TRASH", email.getAccount().getProvider());
+                    imapService.moveMessageByMessageId(email.getAccount(), sourceFolder, trashFolder, email.getMessageId());
+                }
+            } else if (normalizedNew.equals("SPAM")) {
+                if (isGmail) {
+                    gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("SPAM"), List.of("INBOX", "TRASH"));
+                } else {
+                    String spamFolder = resolveFolderForStatus("SPAM", email.getAccount().getProvider());
+                    imapService.moveMessageByMessageId(email.getAccount(), sourceFolder, spamFolder, email.getMessageId());
+                }
+            } else {
+                // Moving to INBOX or a custom Kanban status (e.g. IN_PROGRESS)
+                // We MUST untrash/unspam it on Gmail/IMAP if it was in TRASH or SPAM
+                if (normalizedPrev.equals("TRASH")) {
+                    if (isGmail) {
+                        gmailLabelService.untrashMessage(email.getAccount(), email.getMessageId(), email.getGmailMessageId());
+                        gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("INBOX"), List.of("TRASH", "SPAM"));
+                    } else {
+                        String trashFolder = resolveFolderForStatus("TRASH", email.getAccount().getProvider());
+                        imapService.moveMessageByMessageId(email.getAccount(), trashFolder, "INBOX", email.getMessageId());
+                    }
+                } else if (normalizedPrev.equals("SPAM")) {
+                    if (isGmail) {
+                        gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("INBOX"), List.of("SPAM", "TRASH"));
+                    } else {
+                        String spamFolder = resolveFolderForStatus("SPAM", email.getAccount().getProvider());
+                        imapService.moveMessageByMessageId(email.getAccount(), spamFolder, "INBOX", email.getMessageId());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to sync status {} to {} for email {}: {}", previousStatus, newStatus, email.getUid(), e.getMessage());
+        }
+    }
+
+    private String resolveFolderForStatus(String status, com.awad.emailclientai.modules.email.entity.EmailProvider provider) {
+        String normalized = status == null ? "INBOX" : status.toUpperCase(java.util.Locale.ROOT);
+        if (provider == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL) {
+            return switch (normalized) {
+                case "SPAM" -> "[Gmail]/Spam";
+                case "TRASH" -> "[Gmail]/Trash";
+                case "SENT" -> "[Gmail]/Sent Mail";
+                case "DRAFT", "DRAFTS" -> "[Gmail]/Drafts";
+                default -> "INBOX";
+            };
+        }
+
+        return switch (normalized) {
+            case "SPAM" -> "Spam";
+            case "TRASH" -> "Trash";
+            case "SENT" -> "Sent";
+            case "DRAFT", "DRAFTS" -> "Drafts";
+            default -> "INBOX";
+        };
     }
 }

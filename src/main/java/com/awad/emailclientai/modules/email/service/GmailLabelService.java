@@ -14,6 +14,7 @@ import com.google.api.services.gmail.model.ListMessagesResponse;
 import com.google.api.services.gmail.model.ModifyMessageRequest;
 import com.google.api.services.gmail.model.Label;
 import com.google.api.services.gmail.model.ListLabelsResponse;
+import com.google.api.services.gmail.model.Message;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -94,6 +95,20 @@ public class GmailLabelService {
         modifyMessageLabelsByMessageIdInternal(account, rawMessageId, addLabelIds, removeLabelIds, true);
     }
 
+    /**
+     * Modifies labels using Gmail message id when available, with RFC822 Message-ID fallback.
+     */
+    public void modifyMessageLabels(EmailAccount account, String rawMessageId, String gmailMessageId, List<String> addLabelIds, List<String> removeLabelIds) {
+        modifyMessageLabelsInternal(account, rawMessageId, gmailMessageId, addLabelIds, removeLabelIds, true);
+    }
+
+    /**
+     * Restores a trashed Gmail message using Gmail native untrash API.
+     */
+    public void untrashMessage(EmailAccount account, String rawMessageId, String rawGmailMessageId) {
+        untrashMessageInternal(account, rawMessageId, rawGmailMessageId, true);
+    }
+
     private Map<String, String> createLabelInternal(EmailAccount account, String labelName, boolean retryOnAuthFailure) {
         try {
             Gmail gmail = getGmailService(account);
@@ -160,6 +175,78 @@ public class GmailLabelService {
             log.error("Failed to modify Gmail message labels for {}: {}", account.getEmailAddress(), e.getMessage());
             throw new RuntimeException("Failed to modify Gmail message labels: " + e.getMessage());
         }
+    }
+
+    private void modifyMessageLabelsInternal(EmailAccount account, String rawMessageId, String rawGmailMessageId, List<String> addLabelIds, List<String> removeLabelIds, boolean retryOnAuthFailure) {
+        try {
+            Gmail gmail = getGmailService(account);
+            String gmailMessageId = resolveGmailMessageId(gmail, rawMessageId, rawGmailMessageId);
+
+            ModifyMessageRequest request = new ModifyMessageRequest();
+            if (addLabelIds != null) request.setAddLabelIds(addLabelIds);
+            if (removeLabelIds != null) request.setRemoveLabelIds(removeLabelIds);
+
+            gmail.users().messages().modify("me", gmailMessageId, request).execute();
+            log.info("Modified Gmail message labels for {} (gmailMessageId={}, rfc822MessageId={})",
+                    account.getEmailAddress(), gmailMessageId, normalizeMessageId(rawMessageId));
+        } catch (GoogleJsonResponseException e) {
+            if (retryOnAuthFailure && e.getStatusCode() == 401) {
+                log.info("Gmail message modify auth failed for {}, attempting token refresh...", account.getEmailAddress());
+                if (googleTokenService.refreshAccessToken(account) != null) {
+                    modifyMessageLabelsInternal(account, rawMessageId, rawGmailMessageId, addLabelIds, removeLabelIds, false);
+                    return;
+                }
+            }
+            log.error("Failed to modify Gmail message labels for {}: {}", account.getEmailAddress(), e.getMessage());
+            throw new RuntimeException("Failed to modify Gmail message labels: " + e.getMessage());
+        } catch (Exception e) {
+            log.error("Failed to modify Gmail message labels for {}: {}", account.getEmailAddress(), e.getMessage());
+            throw new RuntimeException("Failed to modify Gmail message labels: " + e.getMessage());
+        }
+    }
+
+    private void untrashMessageInternal(EmailAccount account, String rawMessageId, String rawGmailMessageId, boolean retryOnAuthFailure) {
+        try {
+            Gmail gmail = getGmailService(account);
+            String gmailMessageId = resolveGmailMessageId(gmail, rawMessageId, rawGmailMessageId);
+
+            Message response = gmail.users().messages().untrash("me", gmailMessageId).execute();
+            log.info("Untrashed Gmail message for {} (gmailMessageId={}, rfc822MessageId={}, responseId={})",
+                    account.getEmailAddress(), gmailMessageId, normalizeMessageId(rawMessageId), response != null ? response.getId() : "null");
+        } catch (GoogleJsonResponseException e) {
+            if (retryOnAuthFailure && e.getStatusCode() == 401) {
+                log.info("Gmail untrash auth failed for {}, attempting token refresh...", account.getEmailAddress());
+                if (googleTokenService.refreshAccessToken(account) != null) {
+                    untrashMessageInternal(account, rawMessageId, rawGmailMessageId, false);
+                    return;
+                }
+            }
+            log.error("Failed to untrash Gmail message for {}: {}", account.getEmailAddress(), e.getMessage());
+            throw new RuntimeException("Failed to untrash Gmail message: " + e.getMessage());
+        } catch (Exception e) {
+            log.error("Failed to untrash Gmail message for {}: {}", account.getEmailAddress(), e.getMessage());
+            throw new RuntimeException("Failed to untrash Gmail message: " + e.getMessage());
+        }
+    }
+
+    private String resolveGmailMessageId(Gmail gmail, String rawMessageId, String rawGmailMessageId) throws IOException {
+        String gmailMessageId = normalizeMessageId(rawGmailMessageId);
+        if (gmailMessageId != null && !gmailMessageId.isBlank()) {
+            return gmailMessageId;
+        }
+
+        String normalizedMessageId = normalizeMessageId(rawMessageId);
+        if (normalizedMessageId == null || normalizedMessageId.isBlank()) {
+            throw new RuntimeException("Missing both messageId and gmailMessageId for Gmail operation");
+        }
+
+        String query = "rfc822msgid:" + quoteIfNeeded(normalizedMessageId);
+        ListMessagesResponse response = gmail.users().messages().list("me").setQ(query).setMaxResults(10L).execute();
+        if (response.getMessages() == null || response.getMessages().isEmpty()) {
+            throw new RuntimeException("No Gmail message found for rfc822 message-id: " + normalizedMessageId);
+        }
+
+        return response.getMessages().get(0).getId();
     }
 
     private String normalizeMessageId(String rawMessageId) {
