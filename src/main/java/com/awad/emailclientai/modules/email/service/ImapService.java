@@ -153,6 +153,33 @@ public class ImapService {
     }
 
     /**
+     * Resolves the actual physical (possibly localized) folder name for a given standard type (e.g., "TRASH").
+     */
+    public String findPhysicalFolderByType(EmailAccount account, String type) {
+        if (type == null || "INBOX".equalsIgnoreCase(type)) return "INBOX";
+        try (Store store = connectToStore(account)) {
+            Folder[] allFolders = store.getDefaultFolder().list("*");
+            for (Folder folder : allFolders) {
+                if ((folder.getType() & Folder.HOLDS_MESSAGES) != 0) {
+                    if (type.equalsIgnoreCase(determineFolderType(folder.getFullName()))) {
+                        return folder.getFullName();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to dynamically resolve folder type {}: {}", type, e.getMessage());
+        }
+        // Fallback to English defaults
+        if ("TRASH".equalsIgnoreCase(type)) {
+            return account.getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL ? "[Gmail]/Trash" : "Trash";
+        }
+        if ("SPAM".equalsIgnoreCase(type)) {
+            return account.getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL ? "[Gmail]/Spam" : "Spam";
+        }
+        return "INBOX";
+    }
+
+    /**
      * Retrieves messages from a specific folder with pagination.
      *
      * @param account    The email account
@@ -1246,11 +1273,11 @@ public class ImapService {
     private String determineFolderType(String folderName) {
         String lower = folderName.toLowerCase();
         if (lower.equals("inbox")) return "INBOX";
-        if (lower.contains("sent")) return "SENT";
-        if (lower.contains("draft")) return "DRAFTS";
-        if (lower.contains("trash") || lower.contains("deleted")) return "TRASH";
-        if (lower.contains("spam") || lower.contains("junk")) return "SPAM";
-        if (lower.contains("archive")) return "ARCHIVE";
+        if (lower.contains("sent") || lower.contains("đã gửi")) return "SENT";
+        if (lower.contains("draft") || lower.contains("thư nháp")) return "DRAFTS";
+        if (lower.contains("trash") || lower.contains("deleted") || lower.contains("thùng rác")) return "TRASH";
+        if (lower.contains("spam") || lower.contains("junk") || lower.contains("thư rác")) return "SPAM";
+        if (lower.contains("archive") || lower.contains("lưu trữ")) return "ARCHIVE";
         return "CUSTOM";
     }
 

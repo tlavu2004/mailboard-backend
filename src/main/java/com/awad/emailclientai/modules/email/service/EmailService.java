@@ -185,6 +185,7 @@ public class EmailService {
                 .snippet(entity.getSnippet())
                 .body(body)
                 .status(entity.getStatus())
+                .mailboxId(entity.getStatus() != null ? entity.getStatus() : "INBOX")
                 .receivedDate(entity.getReceivedDate())
                 .receivedAt(entity.getReceivedDate() != null ? entity.getReceivedDate().atZone(ZoneId.systemDefault()).toInstant().toString() : null)
                 .snoozedUntil(entity.getSnoozedUntil())
@@ -483,6 +484,7 @@ public class EmailService {
         return "<div class=\"mb-plain-text-body\">" + escaped + "</div>";
     }
 
+    @org.springframework.scheduling.annotation.Async
     public void syncStatusToProvider(EmailEntity email, String previousStatus, String newStatus) {
         if (previousStatus == null) previousStatus = "INBOX";
         if (newStatus == null) newStatus = "INBOX";
@@ -532,6 +534,63 @@ public class EmailService {
             }
         } catch (Exception e) {
             log.error("Failed to sync status {} to {} for email {}: {}", previousStatus, newStatus, email.getUid(), e.getMessage());
+        }
+    }
+
+    @org.springframework.scheduling.annotation.Async
+    public void syncFlagsAndLabelsToProvider(EmailEntity email, String previousStatus, List<String> normalizedAdd, List<String> normalizedRemove) {
+        try {
+            boolean isGmail = email.getAccount().getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL;
+            String sourceFolder = resolveFolderForStatus(previousStatus, email.getAccount().getProvider());
+
+            if (normalizedRemove.contains("UNREAD")) {
+                imapService.setMessageRead(email.getAccount(), sourceFolder, email.getUid(), true);
+            } else if (normalizedAdd.contains("UNREAD")) {
+                imapService.setMessageRead(email.getAccount(), sourceFolder, email.getUid(), false);
+            }
+
+            if (normalizedAdd.contains("STARRED")) {
+                imapService.setMessageStarred(email.getAccount(), sourceFolder, email.getUid(), true);
+            } else if (normalizedRemove.contains("STARRED")) {
+                imapService.setMessageStarred(email.getAccount(), sourceFolder, email.getUid(), false);
+            }
+
+            if (normalizedAdd.contains("TRASH")) {
+                if (isGmail) {
+                    gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("TRASH"), List.of("INBOX", "SPAM"));
+                } else {
+                    String trashFolder = resolveFolderForStatus("TRASH", email.getAccount().getProvider());
+                    imapService.moveMessageByMessageId(email.getAccount(), sourceFolder, trashFolder, email.getMessageId());
+                }
+                log.info("Successfully trashed email (UID: {}) from Gmail", email.getUid());
+            } else if (normalizedAdd.contains("SPAM")) {
+                if (isGmail) {
+                    gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("SPAM"), List.of("INBOX", "TRASH"));
+                } else {
+                    String spamFolder = resolveFolderForStatus("SPAM", email.getAccount().getProvider());
+                    imapService.moveMessageByMessageId(email.getAccount(), sourceFolder, spamFolder, email.getMessageId());
+                }
+                log.info("Successfully moved email (UID: {}) to SPAM", email.getUid());
+            } else if (normalizedAdd.contains("INBOX") && normalizedRemove.contains("TRASH")) {
+                if (isGmail) {
+                    gmailLabelService.untrashMessage(email.getAccount(), email.getMessageId(), email.getGmailMessageId());
+                    gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("INBOX"), List.of("SPAM"));
+                } else {
+                    String trashFolder = resolveFolderForStatus("TRASH", email.getAccount().getProvider());
+                    imapService.moveMessageByMessageId(email.getAccount(), trashFolder, "INBOX", email.getMessageId());
+                }
+                log.info("Successfully restored email (UID: {}) from TRASH to INBOX", email.getUid());
+            } else if (normalizedAdd.contains("INBOX") && normalizedRemove.contains("SPAM")) {
+                if (isGmail) {
+                    gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("INBOX"), List.of("SPAM", "TRASH"));
+                } else {
+                    String spamFolder = resolveFolderForStatus("SPAM", email.getAccount().getProvider());
+                    imapService.moveMessageByMessageId(email.getAccount(), spamFolder, "INBOX", email.getMessageId());
+                }
+                log.info("Successfully moved email (UID: {}) from SPAM to INBOX", email.getUid());
+            }
+        } catch (Exception e) {
+            log.error("Failed to sync flags/deletion to Gmail for email {}: {}", email.getUid(), e.getMessage());
         }
     }
 

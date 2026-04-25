@@ -25,6 +25,7 @@ public class GmailPubSubController {
 
     private final EmailAccountRepository accountRepository;
     private final EmailSyncService emailSyncService;
+    private final com.awad.emailclientai.modules.email.service.ImapService imapService;
     private final ObjectMapper objectMapper;
 
     @org.springframework.beans.factory.annotation.Value("${app.mail.sync.batch-size:20}")
@@ -61,14 +62,29 @@ public class GmailPubSubController {
                 // Trigger sync in a separate thread (non-blocking for Google)
                 new Thread(() -> {
                     try {
-                        // Sync key system folders so label moves (e.g. Gmail delete -> TRASH)
-                        // are reflected back to local status promptly.
-                        List<String> foldersToSync = List.of("INBOX", "[Gmail]/Trash", "[Gmail]/Spam");
-                        for (String folder : foldersToSync) {
-                            try {
-                                emailSyncService.syncEmailsForAccount(account.getId(), folder, batchSize, 0);
-                            } catch (Exception folderEx) {
-                                log.warn("Triggered sync failed for {} folder {}: {}", emailAddress, folder, folderEx.getMessage());
+                        // Use efficient Gmail History API to find exactly what changed (Labels, Moves, etc.)
+                        try {
+                            emailSyncService.syncEmailsByHistory(account, historyId);
+                        } catch (Exception historyEx) {
+                            log.warn("History sync failed for {}: {}. Falling back to folder sync.", emailAddress, historyEx.getMessage());
+                            
+                            // Fallback: Sync key system folders so label moves (e.g. Gmail delete -> TRASH)
+                            // are reflected back to local status promptly.
+                            String physicalTrash = imapService.findPhysicalFolderByType(account, "TRASH");
+                            String physicalSpam = imapService.findPhysicalFolderByType(account, "SPAM");
+                            List<String> foldersToSync = List.of("INBOX", physicalTrash, physicalSpam);
+                            
+                            // Deduplicate in case localized fallback matched INBOX
+                            foldersToSync = foldersToSync.stream().distinct().toList();
+                            
+                            log.info("Resolving physical folders to sync for webhook on {}: {}", emailAddress, foldersToSync);
+                            
+                            for (String folder : foldersToSync) {
+                                try {
+                                    emailSyncService.syncEmailsForAccount(account.getId(), folder, batchSize, 0);
+                                } catch (Exception folderEx) {
+                                    log.warn("Triggered sync failed for {} folder {}: {}", emailAddress, folder, folderEx.getMessage());
+                                }
                             }
                         }
                     } catch (Exception e) {

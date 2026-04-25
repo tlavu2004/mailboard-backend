@@ -43,6 +43,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v1/emails")
 @Tag(name = "Emails (Kanban)", description = "Manage persisted emails for Kanban workflow")
+@org.springframework.transaction.annotation.Transactional(readOnly = true)
 public class EmailController {
     private static final Logger log = LoggerFactory.getLogger(EmailController.class);
 
@@ -225,6 +226,7 @@ public class EmailController {
     }
 
     @PostMapping("/{id}/refresh")
+    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<ApiResponse<String>> refreshEmail(@PathVariable Long id) {
         emailSyncService.refreshEmail(id);
         return ResponseEntity.ok(ApiResponse.success("Email refreshed successfully"));
@@ -303,6 +305,7 @@ public class EmailController {
     }
 
     @PutMapping("/{id}/status")
+    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<ApiResponse<EmailEntityDto>> updateStatus(@PathVariable Long id, @RequestParam String status) {
         EmailEntity email = emailRepository.findById(id).orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_NOT_FOUND));
         String previousStatus = email.getStatus();
@@ -316,6 +319,7 @@ public class EmailController {
     }
 
     @PutMapping("/{id}/snooze")
+    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<ApiResponse<EmailEntityDto>> snoozeEmail(
             @PathVariable Long id,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime until) {

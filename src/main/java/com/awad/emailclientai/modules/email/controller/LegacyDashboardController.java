@@ -43,6 +43,7 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/v1")
 @RequiredArgsConstructor
 @Slf4j
+@org.springframework.transaction.annotation.Transactional
 public class LegacyDashboardController {
 
     private final EmailAccountRepository emailAccountRepository;
@@ -422,89 +423,17 @@ public class LegacyDashboardController {
         }
         
         if (changed) {
-            emailRepository.save(email);
+            emailRepository.saveAndFlush(email);
             
-            // Sync to Gmail
-            try {
-                boolean isGmail = email.getAccount().getProvider() == EmailProvider.GMAIL;
-                String sourceFolder = resolveFolderForStatus(previousStatus, email.getAccount().getProvider());
-
-                if (normalizedRemove.contains("UNREAD")) {
-                    imapService.setMessageRead(email.getAccount(), sourceFolder, email.getUid(), true);
-                } else if (normalizedAdd.contains("UNREAD")) {
-                    imapService.setMessageRead(email.getAccount(), sourceFolder, email.getUid(), false);
-                }
-
-                if (normalizedAdd.contains("STARRED")) {
-                    imapService.setMessageStarred(email.getAccount(), sourceFolder, email.getUid(), true);
-                } else if (normalizedRemove.contains("STARRED")) {
-                    imapService.setMessageStarred(email.getAccount(), sourceFolder, email.getUid(), false);
-                }
-
-                if (normalizedAdd.contains("TRASH")) {
-                    if (isGmail) {
-                        gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("TRASH"), List.of("INBOX", "SPAM"));
-                    } else {
-                        String trashFolder = resolveFolderForStatus("TRASH", email.getAccount().getProvider());
-                        imapService.moveMessageByMessageId(email.getAccount(), sourceFolder, trashFolder, email.getMessageId());
-                    }
-                    log.info("Successfully trashed email (UID: {}) from Gmail", email.getUid());
-                } else if (normalizedAdd.contains("SPAM")) {
-                    if (isGmail) {
-                        gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("SPAM"), List.of("INBOX", "TRASH"));
-                    } else {
-                        String spamFolder = resolveFolderForStatus("SPAM", email.getAccount().getProvider());
-                        imapService.moveMessageByMessageId(email.getAccount(), sourceFolder, spamFolder, email.getMessageId());
-                    }
-                    log.info("Successfully moved email (UID: {}) to SPAM", email.getUid());
-                } else if (normalizedAdd.contains("INBOX") && normalizedRemove.contains("TRASH")) {
-                    if (isGmail) {
-                        gmailLabelService.untrashMessage(email.getAccount(), email.getMessageId(), email.getGmailMessageId());
-                        gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("INBOX"), List.of("SPAM"));
-                    } else {
-                        String trashFolder = resolveFolderForStatus("TRASH", email.getAccount().getProvider());
-                        imapService.moveMessageByMessageId(email.getAccount(), trashFolder, "INBOX", email.getMessageId());
-                    }
-                    log.info("Successfully restored email (UID: {}) from TRASH to INBOX", email.getUid());
-                } else if (normalizedAdd.contains("INBOX") && normalizedRemove.contains("SPAM")) {
-                    if (isGmail) {
-                        gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("INBOX"), List.of("SPAM", "TRASH"));
-                    } else {
-                        String spamFolder = resolveFolderForStatus("SPAM", email.getAccount().getProvider());
-                        imapService.moveMessageByMessageId(email.getAccount(), spamFolder, "INBOX", email.getMessageId());
-                    }
-                    log.info("Successfully moved email (UID: {}) from SPAM to INBOX", email.getUid());
-                }
-            } catch (Exception e) {
-                log.error("Failed to sync flags/deletion to Gmail for email {}: {}", email.getUid(), e.getMessage());
-                throw new RuntimeException("Failed to sync mailbox state to Gmail: " + e.getMessage(), e);
-            }
+            // Sync to Gmail asynchronously to prevent 504 Gateway Timeouts
+            emailService.syncFlagsAndLabelsToProvider(email, previousStatus, normalizedAdd, normalizedRemove);
         }
         
         EmailAccount account = getPrimaryAccount(principal);
         return ResponseEntity.ok(ApiResponse.success(mapToFrontendEmail(email, account)));
     }
 
-    private String resolveFolderForStatus(String status, EmailProvider provider) {
-        String normalized = status == null ? "INBOX" : status.toUpperCase(Locale.ROOT);
-        if (provider == EmailProvider.GMAIL) {
-            return switch (normalized) {
-                case "SPAM" -> "[Gmail]/Spam";
-                case "TRASH" -> "[Gmail]/Trash";
-                case "SENT" -> "[Gmail]/Sent Mail";
-                case "DRAFT", "DRAFTS" -> "[Gmail]/Drafts";
-                default -> "INBOX";
-            };
-        }
 
-        return switch (normalized) {
-            case "SPAM" -> "Spam";
-            case "TRASH" -> "Trash";
-            case "SENT" -> "Sent";
-            case "DRAFT", "DRAFTS" -> "Drafts";
-            default -> "INBOX";
-        };
-    }
 
 
     @GetMapping("/gmail/labels")
@@ -640,25 +569,14 @@ public class LegacyDashboardController {
             m.put("isRead", entity.isRead());
             m.put("isStarred", entity.isStarred());
             
-            // V10.36: Use mapToDto's comprehensive logic to calculate correct flags and cloud links
-                com.awad.emailclientai.modules.email.dto.response.EmailEntityDto dto = emailService.mapToDto(entity);
-
-                // Populate recipient lists for list-view to avoid requiring an extra detail fetch
-                java.util.List<String> toList = (dto.getRecipientTo() != null && !dto.getRecipientTo().isEmpty()) ? dto.getRecipientTo()
-                    : (dto.getTo() != null ? dto.getTo().stream().map(a -> a.getEmail()).collect(Collectors.toList()) : new java.util.ArrayList<>());
-                java.util.List<String> ccList = (dto.getRecipientCc() != null && !dto.getRecipientCc().isEmpty()) ? dto.getRecipientCc()
-                    : (dto.getCc() != null ? dto.getCc().stream().map(a -> a.getEmail()).collect(Collectors.toList()) : new java.util.ArrayList<>());
-
-                m.put("to", toList);
-                m.put("cc", ccList);
-                m.put("bcc", new java.util.ArrayList<>());
-
-                // Include attachments metadata so the UI can show download/open buttons without extra fetch
-                m.put("attachments", dto.getAttachments() != null ? dto.getAttachments() : new java.util.ArrayList<>());
-
-                m.put("hasAttachments", dto.isHasAttachments());
-                m.put("hasCloudLinks", dto.isHasCloudLinks());
-                m.put("hasPhysicalAttachments", dto.isHasPhysicalAttachments());
+            // Optimization: Avoid calling mapToDto() here as it's too heavy and causes state corruption in some Hibernate versions
+            m.put("to", entity.getRecipientTo() != null ? java.util.Arrays.asList(entity.getRecipientTo().split(",\\s*")) : new ArrayList<>());
+            m.put("cc", entity.getRecipientCc() != null ? java.util.Arrays.asList(entity.getRecipientCc().split(",\\s*")) : new ArrayList<>());
+            m.put("bcc", new java.util.ArrayList<>());
+            m.put("attachments", new java.util.ArrayList<>()); // Placeholder for legacy compat
+            m.put("hasAttachments", entity.isHasAttachments());
+            m.put("hasCloudLinks", false); // Default for legacy
+            m.put("hasPhysicalAttachments", entity.isHasAttachments());
             
             String dateStr;
             if (entity.getReceivedDate() != null) {
@@ -669,6 +587,8 @@ public class LegacyDashboardController {
             m.put("receivedAt", dateStr);
             m.put("createdAt", dateStr);
             m.put("summary", entity.getSummary());
+            m.put("status", entity.getStatus());
+            m.put("mailboxId", entity.getStatus() != null ? entity.getStatus() : "INBOX");
             
             return m;
         } catch (Exception e) {

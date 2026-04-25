@@ -280,6 +280,54 @@ public class GmailLabelService {
         return labels;
     }
 
+    public List<com.google.api.services.gmail.model.History> getHistory(EmailAccount account, Long startHistoryId) {
+        return getHistoryInternal(account, startHistoryId, true);
+    }
+
+    private List<com.google.api.services.gmail.model.History> getHistoryInternal(EmailAccount account, Long startHistoryId, boolean retryOnAuthFailure) {
+        try {
+            Gmail gmail = getGmailService(account);
+            var response = gmail.users().history().list("me")
+                .setStartHistoryId(java.math.BigInteger.valueOf(startHistoryId))
+                .execute();
+            
+            return response.getHistory();
+        } catch (GoogleJsonResponseException e) {
+            if (retryOnAuthFailure && e.getStatusCode() == 401) {
+                if (googleTokenService.refreshAccessToken(account) != null) {
+                    return getHistoryInternal(account, startHistoryId, false);
+                }
+            }
+            log.error("Failed to fetch Gmail history for {}: {}", account.getEmailAddress(), e.getMessage());
+            return null;
+        } catch (Exception e) {
+            log.error("Failed to fetch Gmail history for {}: {}", account.getEmailAddress(), e.getMessage());
+            return null;
+        }
+    }
+
+    public com.google.api.services.gmail.model.Message getMessage(EmailAccount account, String gmailMessageId) {
+        return getMessageInternal(account, gmailMessageId, true);
+    }
+
+    private com.google.api.services.gmail.model.Message getMessageInternal(EmailAccount account, String gmailMessageId, boolean retryOnAuthFailure) {
+        try {
+            Gmail gmail = getGmailService(account);
+            return gmail.users().messages().get("me", gmailMessageId).execute();
+        } catch (GoogleJsonResponseException e) {
+            if (retryOnAuthFailure && e.getStatusCode() == 401) {
+                if (googleTokenService.refreshAccessToken(account) != null) {
+                    return getMessageInternal(account, gmailMessageId, false);
+                }
+            }
+            log.error("Failed to fetch Gmail message {} for {}: {}", gmailMessageId, account.getEmailAddress(), e.getMessage());
+            return null;
+        } catch (Exception e) {
+            log.error("Failed to fetch Gmail message {} for {}: {}", gmailMessageId, account.getEmailAddress(), e.getMessage());
+            return null;
+        }
+    }
+
     private Gmail getGmailService(EmailAccount account) throws GeneralSecurityException, IOException {
         String accessToken = encryptionService.decrypt(account.getEncryptedPassword());
 
@@ -289,7 +337,11 @@ public class GmailLabelService {
         return new Gmail.Builder(
                 GoogleNetHttpTransport.newTrustedTransport(),
                 GsonFactory.getDefaultInstance(),
-                credential)
+                request -> {
+                    credential.initialize(request);
+                    request.setConnectTimeout(10000); // 10 seconds
+                    request.setReadTimeout(10000);    // 10 seconds
+                })
                 .setApplicationName("Email Client AI")
                 .build();
     }

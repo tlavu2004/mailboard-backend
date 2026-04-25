@@ -42,6 +42,7 @@ public class EmailSyncService {
     private final KanbanColumnRepository kanbanColumnRepository;
     private final KanbanService kanbanService;
     private final NotificationWebSocketHandler notificationWebSocketHandler;
+    private final GmailLabelService gmailLabelService;
 
     @org.springframework.beans.factory.annotation.Value("${app.mail.sync.batch-size:20}")
     private int batchSize;
@@ -68,6 +69,118 @@ public class EmailSyncService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_ACCOUNT_NOT_FOUND));
 
         syncAccount(account, folderName, limit, page);
+    }
+
+    /**
+     * Gmail History-based sync (V13.8)
+     * Responds to Google Push notifications by fetching exactly what changed
+     * since the last known history ID.
+     */
+    @Transactional
+    public void syncEmailsByHistory(EmailAccount account, Long newHistoryId) {
+        if (account.getProvider() != EmailProvider.GMAIL || account.getWatchHistoryId() == null) {
+            // Fallback to full system folder sync if no history tracking yet
+            syncAccount(account, "INBOX", batchSize, 0);
+            return;
+        }
+
+        Long startHistoryId = account.getWatchHistoryId();
+        log.info("[GmailHistory] Syncing changes for {} from {} to {}", 
+            account.getEmailAddress(), startHistoryId, newHistoryId);
+
+        var historyList = gmailLabelService.getHistory(account, startHistoryId);
+        if (historyList == null || historyList.isEmpty()) {
+            log.info("[GmailHistory] No history records found since {}", startHistoryId);
+            // Even if history is empty, update the ID to avoid re-syncing old history later
+            account.setWatchHistoryId(newHistoryId);
+            accountRepository.save(account);
+            return;
+        }
+
+        Set<String> affectedGmailMsgIds = new java.util.HashSet<>();
+        for (var history : historyList) {
+            if (history.getMessages() != null) {
+                for (var msg : history.getMessages()) {
+                    affectedGmailMsgIds.add(msg.getId());
+                }
+            }
+            if (history.getMessagesAdded() != null) {
+                for (var added : history.getMessagesAdded()) {
+                    if (added.getMessage() != null) affectedGmailMsgIds.add(added.getMessage().getId());
+                }
+            }
+        }
+
+        log.info("[GmailHistory] Found {} unique Gmail message IDs affected", affectedGmailMsgIds.size());
+        
+        List<Long> updatedDbIds = new ArrayList<>();
+        List<Long> newDbIds = new ArrayList<>();
+
+        // Efficient Refresh: For each affected message, refresh its state from Gmail API
+        for (String gmailId : affectedGmailMsgIds) {
+            try {
+                var gmailMsg = gmailLabelService.getMessage(account, gmailId);
+                if (gmailMsg == null) continue;
+
+                // Find local email by gmailMessageId
+                var existingOpt = emailRepository.findByGmailMessageId(gmailId);
+                if (existingOpt.isPresent()) {
+                    EmailEntity existing = existingOpt.get();
+                    
+                    // Update labels/status
+                    String newStatus = determineStatusFromGmailLabels(gmailMsg.getLabelIds(), account.getId());
+                    boolean changed = false;
+                    
+                    if (!newStatus.equals(existing.getStatus())) {
+                        log.info("[GmailHistory] Updating status for {} from {} to {} based on Gmail history",
+                            existing.getId(), existing.getStatus(), newStatus);
+                        existing.setStatus(newStatus);
+                        changed = true;
+                    }
+                    
+                    // Also sync Read status from labels
+                    boolean isRead = !gmailMsg.getLabelIds().contains("UNREAD");
+                    if (isRead != existing.isRead()) {
+                        existing.setRead(isRead);
+                        changed = true;
+                    }
+                    
+                    if (changed) {
+                        emailRepository.save(existing);
+                        updatedDbIds.add(existing.getId());
+                    }
+                } else {
+                    // It's a truly new email that's not in our DB yet.
+                    // Sync INBOX page 0 to discover it.
+                    syncAccount(account, "INBOX", 1, 0);
+                }
+            } catch (Exception e) {
+                log.warn("[GmailHistory] Failed to process change for Gmail ID {}: {}", gmailId, e.getMessage());
+            }
+        }
+
+        // Save progress
+        account.setWatchHistoryId(newHistoryId);
+        accountRepository.save(account);
+
+        // Notify UI
+        notifyBulk(account.getId(), newDbIds, updatedDbIds);
+    }
+
+    private void notifyBulk(Long accountId, List<Long> newIds, List<Long> updatedIds) {
+        ObjectMapper mapper = new ObjectMapper();
+        try {
+            if (!newIds.isEmpty()) {
+                notificationWebSocketHandler.sendRawNotification(accountId, 
+                    mapper.writeValueAsString(Map.of("type", "NEW_EMAILS", "emailIds", newIds)));
+            }
+            if (!updatedIds.isEmpty()) {
+                notificationWebSocketHandler.sendRawNotification(accountId, 
+                    mapper.writeValueAsString(Map.of("type", "UPDATED_EMAILS", "emailIds", updatedIds)));
+            }
+        } catch (Exception e) {
+            log.warn("Failed to send bulk sync notifications: {}", e.getMessage());
+        }
     }
 
     @Transactional
@@ -205,8 +318,9 @@ public class EmailSyncService {
             log.info("[V11-SYNC] Starting sync for account: {} (Folder: {}, Initial Page: {})", 
                 account.getEmailAddress(), folderName, currentPage);
 
-            // Collect newly created email IDs so we can notify frontend with exact items
+            // Collect newly created or updated email IDs to notify frontend
             List<Long> newEmailIds = new ArrayList<>();
+            List<Long> updatedEmailIds = new ArrayList<>();
 
             while (totalNewFound < currentLimit && (currentPage - page) < maxPagesToTry) {
                 List<MailMessageDto> messages = imapService.getMessages(account, folderName, currentPage, currentLimit);
@@ -216,7 +330,7 @@ public class EmailSyncService {
                 }
 
                 for (MailMessageDto msg : messages) {
-                    processMessage(msg, account, accountId, folderName, newEmailIds);
+                    processMessage(msg, account, accountId, folderName, newEmailIds, updatedEmailIds);
                     
                     // Count how many are new for "Smart Sync" quota
                     if (!emailRepository.existsByMessageId(msg.getMessageId())) {
@@ -227,29 +341,35 @@ public class EmailSyncService {
                 
                 currentPage++;
             }
-            // After finishing the sync batch, if we created new emails, notify frontend with their IDs
-            if (!newEmailIds.isEmpty()) {
-                try {
-                    ObjectMapper mapper = new ObjectMapper();
-                    Map<String, Object> payload = Map.of(
+            // After finishing the sync batch, notify frontend
+            try {
+                ObjectMapper mapper = new ObjectMapper();
+                if (!newEmailIds.isEmpty()) {
+                    Map<String, Object> payloadNew = Map.of(
                             "type", "NEW_EMAILS",
                             "emailIds", newEmailIds
                     );
-                    String payloadJson = mapper.writeValueAsString(payload);
-                    // Send the serialized payload directly so the frontend receives
-                    // a top-level object with `emailIds` instead of a nested string.
-                    notificationWebSocketHandler.sendRawNotification(account.getId(), payloadJson);
+                    notificationWebSocketHandler.sendRawNotification(account.getId(), mapper.writeValueAsString(payloadNew));
                     log.info("[V11-SYNC] Sent NEW_EMAILS notification with {} ids for account {}", newEmailIds.size(), account.getId());
-                } catch (Exception e) {
-                    log.warn("[V11-SYNC] Failed to send detailed NEW_EMAILS notification: {}", e.getMessage());
                 }
+                
+                if (!updatedEmailIds.isEmpty()) {
+                    Map<String, Object> payloadUpdated = Map.of(
+                            "type", "UPDATED_EMAILS",
+                            "emailIds", updatedEmailIds
+                    );
+                    notificationWebSocketHandler.sendRawNotification(account.getId(), mapper.writeValueAsString(payloadUpdated));
+                    log.info("[V11-SYNC] Sent UPDATED_EMAILS notification with {} ids for account {}", updatedEmailIds.size(), account.getId());
+                }
+            } catch (Exception e) {
+                log.warn("[V11-SYNC] Failed to send WS notification: {}", e.getMessage());
             }
         } catch (jakarta.mail.MessagingException e) {
             log.error("Failed to fetch messages for account: " + account.getEmailAddress(), e);
         }
     }
 
-    private void processMessage(MailMessageDto msg, EmailAccount account, Long accountId, String folderName, List<Long> newEmailIds) {
+    private void processMessage(MailMessageDto msg, EmailAccount account, Long accountId, String folderName, List<Long> newEmailIds, List<Long> updatedEmailIds) {
         log.info("[SYNC-TRACE] Processing message: messageId={}, uid={}, gmailMessageId={}, hasAttachments={}, attachmentsCount={}, folder={}",
             msg.getMessageId(), msg.getUid(), msg.getGmailMessageId(), msg.isHasAttachments(), (msg.getAttachments() != null ? msg.getAttachments().size() : 0), folderName);
 
@@ -341,7 +461,7 @@ public class EmailSyncService {
 
             if (changed) {
                 emailRepository.save(existing);
-                log.info("Updated email ID: {} (Body/Embedding)", existing.getId());
+                log.info("Updated email ID: {} (Body/Embedding/Status etc)", existing.getId());
             }
 
             // Update read status if changed
@@ -422,6 +542,11 @@ public class EmailSyncService {
 
             if (changed) {
                 emailRepository.save(existing);
+                try {
+                    if (updatedEmailIds != null && !updatedEmailIds.contains(existing.getId())) {
+                        updatedEmailIds.add(existing.getId());
+                    }
+                } catch (Exception ignored) {}
             }
             return;
         }
@@ -583,35 +708,33 @@ public class EmailSyncService {
             return folderStatus;
         }
 
-        if (msg.getLabels() == null || msg.getLabels().isEmpty()) {
-            return folderStatus != null ? folderStatus : EmailStatus.INBOX;
+        return determineStatusFromGmailLabels(msg.getLabels(), accountId);
+    }
+
+    private String determineStatusFromGmailLabels(List<String> labels, Long accountId) {
+        if (labels == null || labels.isEmpty()) {
+            return EmailStatus.INBOX;
         }
 
-        if (containsSystemLabel(msg.getLabels(), "TRASH") || containsSystemLabel(msg.getLabels(), "\\\\TRASH")) {
+        if (containsSystemLabel(labels, "TRASH") || containsSystemLabel(labels, "\\\\TRASH")) {
             return "TRASH";
         }
-        if (containsSystemLabel(msg.getLabels(), "SPAM") || containsSystemLabel(msg.getLabels(), "\\\\SPAM") || containsSystemLabel(msg.getLabels(), "JUNK")) {
+        if (containsSystemLabel(labels, "SPAM") || containsSystemLabel(labels, "\\\\SPAM") || containsSystemLabel(labels, "JUNK")) {
             return "SPAM";
         }
 
         // Filter out system labels (case-insensitive)
-        List<String> customLabels = msg.getLabels().stream()
+        List<String> customLabels = labels.stream()
                 .filter(label -> !SYSTEM_LABELS.contains(label.toUpperCase()))
                 .collect(Collectors.toList());
 
         if (customLabels.size() != 1) {
-            if (customLabels.size() > 1) {
-                log.info("Email '{}' has {} custom labels {} -> keeping in INBOX",
-                        msg.getSubject(), customLabels.size(), customLabels);
-            }
-            return folderStatus != null ? folderStatus : EmailStatus.INBOX;
+            return EmailStatus.INBOX;
         }
 
         // Exactly 1 custom label -> find or create column
         String labelName = customLabels.get(0);
         KanbanColumn column = findOrCreateColumn(accountId, labelName);
-        log.info("Auto-mapping email '{}' to column '{}' (status: {}) based on label '{}'",
-                msg.getSubject(), column.getName(), column.getLinkedStatus(), labelName);
         return column.getLinkedStatus();
     }
 
