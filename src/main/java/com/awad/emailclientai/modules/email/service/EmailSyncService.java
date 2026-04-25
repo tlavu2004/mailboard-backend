@@ -163,8 +163,17 @@ public class EmailSyncService {
         account.setWatchHistoryId(newHistoryId);
         accountRepository.save(account);
 
-        // Notify UI
-        notifyBulk(account.getId(), newDbIds, updatedDbIds);
+        // Notify UI AFTER transaction commit to ensure frontend sees latest DB state
+        if (!newDbIds.isEmpty() || !updatedDbIds.isEmpty()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        notifyBulk(account.getId(), newDbIds, updatedDbIds);
+                    }
+                }
+            );
+        }
     }
 
     private void notifyBulk(Long accountId, List<Long> newIds, List<Long> updatedIds) {

@@ -34,10 +34,15 @@ public class EmailEntityDto {
     private OffsetDateTime snoozedUntil;
     private String summary;
     private String summarySource;
+    @com.fasterxml.jackson.annotation.JsonProperty("isRead")
     private boolean isRead;
+    @com.fasterxml.jackson.annotation.JsonProperty("isStarred")
     private boolean isStarred;
+    @com.fasterxml.jackson.annotation.JsonProperty("hasAttachments")
     private boolean hasAttachments;
+    @com.fasterxml.jackson.annotation.JsonProperty("hasCloudLinks")
     private boolean hasCloudLinks; // V10.35
+    @com.fasterxml.jackson.annotation.JsonProperty("hasPhysicalAttachments")
     private boolean hasPhysicalAttachments; // V10.35
     private String gmailLink;
     private String accountEmail;
