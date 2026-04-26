@@ -151,6 +151,43 @@ public class EmailController {
             }
         }).start();
         
+        // Cleanup draft if it exists
+        String draftId = request.getGmailDraftId();
+        Long localEmailId = request.getLocalEmailId();
+        log.info("[CLEANUP] Send success, checking for draft cleanup: gmailDraftId={}, localEmailId={}, inReplyTo={}", 
+            draftId, localEmailId, request.getInReplyTo());
+
+        if (draftId != null && !draftId.isEmpty() && !draftId.equals("undefined")) {
+            try {
+                emailAccountService.deleteDraft(principal.getId(), account.getId(), draftId);
+                emailRepository.findByGmailDraftId(draftId).ifPresent(d -> {
+                    emailRepository.delete(d);
+                    log.info("[CLEANUP] Deleted draft record by gmailDraftId: {}", draftId);
+                });
+            } catch (Exception e) {
+                log.warn("[CLEANUP] Failed to delete draft on Gmail: {}", e.getMessage());
+            }
+        } else if (localEmailId != null) {
+            emailRepository.findById(localEmailId).ifPresent(d -> {
+                log.info("[CLEANUP] Found local record {}, status={}, gmailMsgId={}", d.getId(), d.getStatus(), d.getGmailMessageId());
+                if ("DRAFTS".equalsIgnoreCase(d.getStatus())) {
+                    emailRepository.delete(d);
+                    log.info("[CLEANUP] Deleted local draft record by localEmailId: {}", localEmailId);
+                }
+            });
+        }
+
+        // Aggressive cleanup by gmailMessageId to remove any ghost duplicates
+        if (entity.getGmailMessageId() != null) {
+            String gmMsgId = entity.getGmailMessageId();
+            emailRepository.findByGmailMessageId(gmMsgId).ifPresent(d -> {
+                if (!d.getId().equals(entity.getId()) && "DRAFTS".equalsIgnoreCase(d.getStatus())) {
+                    emailRepository.delete(d);
+                    log.info("[CLEANUP] Deleted ghost duplicate draft record by gmailMessageId: {}", gmMsgId);
+                }
+            });
+        }
+        
         return ResponseEntity.ok(ApiResponse.success("Email sent successfully", emailService.mapToDto(entity)));
     }
 
@@ -165,11 +202,15 @@ public class EmailController {
             @RequestParam(value = "bcc", required = false) String bccString,
             @RequestParam(value = "subject", required = false) String subject,
             @RequestParam(value = "body", required = false) String body,
-            @RequestParam(value = "threadId", required = false) String threadId
+            @RequestParam(value = "threadId", required = false) String threadId,
+            @RequestParam(value = "gmailDraftId", required = false) String gmailDraftId,
+            @RequestParam(value = "localEmailId", required = false) Long localEmailId
     ) throws MessagingException, IOException {
         log.info("Bridge Send Email (Multipart): Request from user {}", principal.getId());
         EmailAccount account = fetchPrimaryAccount(principal);
         SendEmailRequestDto request = new SendEmailRequestDto();
+        request.setGmailDraftId(gmailDraftId);
+        request.setLocalEmailId(localEmailId);
 
         if (toString != null) request.setTo(parseEmailList(toString, objectMapper));
         if (ccString != null) request.setCc(parseEmailList(ccString, objectMapper));
@@ -198,6 +239,42 @@ public class EmailController {
                 log.warn("Post-send Sent sync failed for account {}: {}", acctIdMulti, e.getMessage());
             }
         }).start();
+        
+        // Cleanup draft if it exists
+        String dId = request.getGmailDraftId();
+        Long lId = request.getLocalEmailId();
+        log.info("[CLEANUP-MULTI] Send success, checking for draft cleanup: gmailDraftId={}, localEmailId={}", dId, lId);
+
+        if (dId != null && !dId.isEmpty() && !dId.equals("undefined")) {
+            try {
+                emailAccountService.deleteDraft(principal.getId(), account.getId(), dId);
+                emailRepository.findByGmailDraftId(dId).ifPresent(d -> {
+                    emailRepository.delete(d);
+                    log.info("[CLEANUP-MULTI] Deleted draft record by gmailDraftId: {}", dId);
+                });
+            } catch (Exception e) {
+                log.warn("[CLEANUP-MULTI] Failed to delete multipart draft on Gmail: {}", e.getMessage());
+            }
+        } else if (lId != null) {
+            emailRepository.findById(lId).ifPresent(d -> {
+                log.info("[CLEANUP-MULTI] Found local record {}, status={}, gmailMsgId={}", d.getId(), d.getStatus(), d.getGmailMessageId());
+                if ("DRAFTS".equalsIgnoreCase(d.getStatus())) {
+                    emailRepository.delete(d);
+                    log.info("[CLEANUP-MULTI] Deleted local draft record by localEmailId: {}", lId);
+                }
+            });
+        }
+
+        // Aggressive cleanup by gmailMessageId to remove any ghost duplicates
+        if (entity.getGmailMessageId() != null) {
+            String gmMsgId = entity.getGmailMessageId();
+            emailRepository.findByGmailMessageId(gmMsgId).ifPresent(d -> {
+                if (!d.getId().equals(entity.getId()) && "DRAFTS".equalsIgnoreCase(d.getStatus())) {
+                    emailRepository.delete(d);
+                    log.info("[CLEANUP-MULTI] Deleted ghost duplicate draft record by gmailMessageId: {}", gmMsgId);
+                }
+            });
+        }
         
         return ResponseEntity.ok(ApiResponse.success("Email sent successfully", emailService.mapToDto(entity)));
     }

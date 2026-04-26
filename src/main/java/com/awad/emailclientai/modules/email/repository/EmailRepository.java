@@ -24,6 +24,7 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
 
     
     List<EmailEntity> findByStatus(String status);
+    List<EmailEntity> findAllByAccountIdAndStatus(Long accountId, String status);
 
     List<EmailEntity> findBySnoozedUntilBeforeAndStatus(OffsetDateTime now, String status);
     

@@ -68,17 +68,27 @@ public class LegacyDashboardController {
         List<Map<String, Object>> mailboxes = new ArrayList<>();
         
         int unreadCount = 0;
+        int draftsCount = 0;
         try {
             EmailAccount account = getPrimaryAccount(principal);
             unreadCount = (int) emailRepository.countUnreadByAccountId(account.getId(), LocalDateTime.of(1970, 1, 1, 0, 0));
+            
+            // Debug: count drafts and log them
+            List<EmailEntity> dbDrafts = emailRepository.findAllByAccountIdAndStatus(account.getId(), "DRAFTS");
+            draftsCount = dbDrafts.size();
+            if (draftsCount > 0) {
+                log.info("[INVESTIGATION] Found {} drafts in DB for account {}:", draftsCount, account.getEmailAddress());
+                dbDrafts.forEach(d -> log.info("  - ID: {}, Subject: {}, GmailDraftId: {}, MsgId: {}, Created: {}", 
+                    d.getId(), d.getSubject(), d.getGmailDraftId(), d.getGmailMessageId(), d.getReceivedDate()));
+            }
         } catch (Exception e) {
-            log.warn("Could not get unread count for mailbox list: {}", e.getMessage());
+            log.warn("Could not get counts for mailbox list: {}", e.getMessage());
         }
 
         mailboxes.add(createMailbox("INBOX", "Inbox", "InboxOutlined", unreadCount, "system"));
         mailboxes.add(createMailbox("STARRED", "Starred", "StarOutlined", 0, "system"));
         mailboxes.add(createMailbox("SENT", "Sent", "SendOutlined", 0, "system"));
-        mailboxes.add(createMailbox("DRAFTS", "Drafts", "FileOutlined", 0, "system"));
+        mailboxes.add(createMailbox("DRAFTS", "Drafts", "FileOutlined", draftsCount, "system"));
         mailboxes.add(createMailbox("TRASH", "Trash", "DeleteOutlined", 0, "system"));
         mailboxes.add(createMailbox("SPAM", "Spam", "FolderOutlined", 0, "system"));
 
