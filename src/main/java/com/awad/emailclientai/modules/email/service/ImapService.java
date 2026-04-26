@@ -935,8 +935,7 @@ public class ImapService {
                 String[] gmLabels = gmailMsg.getLabels();
                 if (gmLabels != null && gmLabels.length > 0) {
                     for (String label : gmLabels) {
-                        // Filter out Gmail system labels (start with \)
-                        if (label != null && !label.startsWith("\\")) {
+                        if (label != null) {
                             labels.add(label);
                         }
                     }

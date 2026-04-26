@@ -45,6 +45,7 @@ public class EmailSyncService {
     private final KanbanService kanbanService;
     private final NotificationWebSocketHandler notificationWebSocketHandler;
     private final GmailLabelService gmailLabelService;
+    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     @org.springframework.beans.factory.annotation.Value("${app.mail.sync.batch-size:20}")
     private int batchSize;
@@ -57,7 +58,6 @@ public class EmailSyncService {
             "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS"
     );
 
-    @Transactional
     public void syncEmailsForAccount(Long accountId, String folderName, int limit, int page) {
         EmailAccount account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_ACCOUNT_NOT_FOUND));
@@ -65,7 +65,6 @@ public class EmailSyncService {
         syncAccount(account, folderName, limit, page);
     }
 
-    @Transactional
     public void syncEmailsForAccount(Long accountId, Long userId, String folderName, int limit, int page) {
         EmailAccount account = accountRepository.findByIdAndUserId(accountId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_ACCOUNT_NOT_FOUND));
@@ -201,7 +200,6 @@ public class EmailSyncService {
         }
     }
 
-    @Transactional
     public void syncEmailsForUser(Long userId, String folderName, int limit, int page) {
         List<EmailAccount> accounts = accountRepository.findByUserIdAndActiveTrue(userId);
         if (accounts.isEmpty()) {
@@ -403,6 +401,9 @@ public class EmailSyncService {
             List<Long> newEmailIds = new ArrayList<>();
             List<Long> updatedEmailIds = new ArrayList<>();
 
+            // Collect message IDs seen on server for reconciliation (especially for DRAFTS)
+            java.util.Set<String> serverMessageIds = new java.util.HashSet<>();
+
             while (totalNewFound < currentLimit && (currentPage - page) < maxPagesToTry) {
                 List<MailMessageDto> messages = imapService.getMessages(account, folderName, currentPage, currentLimit);
                 if (messages.isEmpty()) {
@@ -411,16 +412,32 @@ public class EmailSyncService {
                 }
 
                 for (MailMessageDto msg : messages) {
+                    serverMessageIds.add(msg.getMessageId());
                     processMessage(msg, account, accountId, folderName, newEmailIds, updatedEmailIds);
                     
                     // Count how many are new for "Smart Sync" quota
                     if (!emailRepository.existsByMessageId(msg.getMessageId())) {
                         totalNewFound++;
                     }
-
                 }
-                
                 currentPage++;
+            }
+
+            // RECONCILIATION: For DRAFTS folder, delete local records not seen on server
+            if (folderName.toLowerCase().contains("draft") && !serverMessageIds.isEmpty()) {
+                log.info("[RECONCILE] Checking for orphaned local drafts in account {}", accountId);
+                List<EmailEntity> localDrafts = emailRepository.findAllByAccountIdAndStatus(accountId, "DRAFTS");
+                for (EmailEntity localDraft : localDrafts) {
+                    // Only delete if it's older than 5 minutes to avoid race conditions with proactive saves
+                    if (localDraft.getReceivedDate() != null && 
+                        localDraft.getReceivedDate().isBefore(java.time.LocalDateTime.now().minusMinutes(5))) {
+                        
+                        if (!serverMessageIds.contains(localDraft.getMessageId())) {
+                            log.info("[RECONCILE] Deleting orphaned local draft ID: {} (MessageId: {})", localDraft.getId(), localDraft.getMessageId());
+                            emailRepository.delete(localDraft);
+                        }
+                    }
+                }
             }
             // After finishing the sync batch, notify frontend
             try {
@@ -492,11 +509,15 @@ public class EmailSyncService {
                 log.warn("[SYNC-TRACE] Pre-save IMAP detail fetch failed for messageId={}: {}", msg.getMessageId(), e.getMessage());
             }
         }
+        // Determine target status (Folder priority for system labels, Gmail labels for Kanban)
         String targetStatus = determineStatusFromLabels(msg, accountId, folderName);
         String messageId = msg.getMessageId();
         String gmailMessageId = msg.getGmailMessageId();
         
-        Optional<EmailEntity> existingOpt = Optional.empty();
+        // MOVED synchronized and transaction block to AFTER heavy IMAP calls
+        synchronized (accountId.toString().intern()) {
+            transactionTemplate.execute(txStatus -> {
+                Optional<EmailEntity> existingOpt = Optional.empty();
         if (messageId != null && !messageId.isBlank()) {
             existingOpt = emailRepository.findByMessageId(messageId);
         }
@@ -506,6 +527,75 @@ public class EmailSyncService {
             existingOpt = emailRepository.findByGmailMessageId(gmailMessageId);
             if (existingOpt.isPresent()) {
                 log.info("[SYNC-MATCH] Found existing email by gmailMessageId fallback: {}", gmailMessageId);
+            }
+        }
+        
+        // Final fallback for DRAFTS: match by threadId AND subject if status is DRAFTS
+        if (existingOpt.isEmpty() && "DRAFTS".equalsIgnoreCase(targetStatus)) {
+            if (msg.getThreadId() != null) {
+                existingOpt = emailRepository.findFirstByAccountIdAndThreadIdAndStatusOrderByReceivedDateDesc(accountId, msg.getThreadId(), "DRAFTS");
+            }
+            if (existingOpt.isEmpty() && msg.getSubject() != null && !msg.getSubject().isBlank()) {
+                // Fuzzy match for draft by subject in the last 10 minutes
+                LocalDateTime threshold = LocalDateTime.now().minusMinutes(10);
+                existingOpt = emailRepository.findRecentEmailBySubject(accountId, msg.getSubject(), threshold);
+            }
+            if (existingOpt.isPresent()) {
+                log.info("[SYNC-MATCH] Found existing draft fallback for merging (ID: {}, Status: {})", 
+                    existingOpt.get().getId(), existingOpt.get().getStatus());
+            }
+        }
+        
+        // Fuzzy match for recently SENT emails (Because Gmail completely changes both Message-ID and GmailMessageId when sending)
+        if (existingOpt.isEmpty() && ("SENT".equalsIgnoreCase(targetStatus) || "INBOX".equalsIgnoreCase(targetStatus))) {
+            if (msg.getSubject() != null && !msg.getSubject().isBlank()) {
+                // Look for an email with matching subject in the last 10 minutes
+                LocalDateTime threshold = LocalDateTime.now().minusMinutes(10);
+                existingOpt = emailRepository.findRecentEmailBySubject(accountId, msg.getSubject(), threshold);
+                if (existingOpt.isPresent()) {
+                    log.info("[SYNC-MATCH] Found existing email by fuzzy match: subject='{}' (ID: {}, Status: {})", 
+                        msg.getSubject(), existingOpt.get().getId(), existingOpt.get().getStatus());
+                }
+            }
+        }
+        
+        // SELF-SEND PROTECTION: If syncing INBOX and sender is the account's own email,
+        // and we already have a SENT record for this email, SKIP creating an INBOX duplicate.
+        if (existingOpt.isPresent() && "INBOX".equalsIgnoreCase(targetStatus) 
+                && "SENT".equalsIgnoreCase(existingOpt.get().getStatus())) {
+            // Just update IDs if needed, but do NOT change status from SENT to INBOX
+            EmailEntity existing = existingOpt.get();
+            boolean changed = false;
+            if (existing.getGmailMessageId() == null && msg.getGmailMessageId() != null) {
+                existing.setGmailMessageId(msg.getGmailMessageId());
+                changed = true;
+            }
+            if (existing.getMessageId() == null || existing.getMessageId().startsWith("DRAFT-") || existing.getMessageId().startsWith("TEMP-")) {
+                if (messageId != null && !messageId.isBlank()) {
+                    existing.setMessageId(messageId);
+                    changed = true;
+                }
+            }
+            if (changed) emailRepository.save(existing);
+            log.info("[SYNC-PROTECT] Skipping INBOX creation for self-sent email (existing SENT ID: {})", existing.getId());
+            return null;
+        }
+        
+        // Also skip if syncing INBOX and sender matches account email and no existing record
+        if (existingOpt.isEmpty() && "INBOX".equalsIgnoreCase(targetStatus)) {
+            String senderEmail = msg.getFrom();
+            String accountEmail = account.getEmailAddress();
+            if (senderEmail != null && accountEmail != null 
+                    && senderEmail.toLowerCase().contains(accountEmail.toLowerCase())) {
+                // Check if we have any SENT record with the same subject recently
+                if (msg.getSubject() != null) {
+                    LocalDateTime threshold = LocalDateTime.now().minusMinutes(30);
+                    var sentRecord = emailRepository.findRecentEmailBySubject(accountId, msg.getSubject(), threshold);
+                    if (sentRecord.isPresent() && "SENT".equalsIgnoreCase(sentRecord.get().getStatus())) {
+                        log.info("[SYNC-PROTECT] Skipping INBOX creation for self-sent email by sender match (subject: '{}')", msg.getSubject());
+                        return null;
+                    }
+                }
             }
         }
         
@@ -587,10 +677,18 @@ public class EmailSyncService {
                 log.info("Migrating legacy STARRED status to {} and setting isStarred={}", 
                     targetStatus, msg.isStarred());
             } else if (!existing.getStatus().equals(targetStatus)) {
-                log.info("Updating status for email ID {} from {} to {} based on labels",
-                    existing.getId(), existing.getStatus(), targetStatus);
-                existing.setStatus(targetStatus);
-                changed = true;
+                // PROTECTION: Never change status FROM SENT to anything else.
+                // This prevents sent emails from being reclassified by IMAP sync (e.g. SENT→INBOX for self-sent, SENT→DRAFTS for race conditions)
+                if ("SENT".equalsIgnoreCase(existing.getStatus())) {
+                    log.info("[SYNC-PROTECT] Blocking status change from SENT to {} for email ID {}", targetStatus, existing.getId());
+                } else if ("DRAFTS".equalsIgnoreCase(existing.getStatus()) && "INBOX".equalsIgnoreCase(targetStatus)) {
+                    log.info("[SYNC-PROTECT] Blocking status change from DRAFTS to INBOX for email ID {} (Preventing draft jump to Inbox)", existing.getId());
+                } else {
+                    log.info("Updating status for email ID {} from {} to {} based on labels",
+                        existing.getId(), existing.getStatus(), targetStatus);
+                    existing.setStatus(targetStatus);
+                    changed = true;
+                }
             }
 
             if (existing.isHasAttachments() != msg.isHasAttachments()) {
@@ -651,7 +749,7 @@ public class EmailSyncService {
                     }
                 } catch (Exception ignored) {}
             }
-            return;
+            return null;
         }
 
         // New Email Creation
@@ -703,9 +801,12 @@ public class EmailSyncService {
                     log.warn("Failed to refresh details for email ID {}: {}", entity.getId(), e.getMessage());
                 }
             }
-        } catch (DataIntegrityViolationException e) {
-            log.warn("Duplicate email detected during sync (messageId: {}), skipping.", msg.getMessageId());
-        }
+            } catch (DataIntegrityViolationException e) {
+                log.warn("Duplicate email detected during sync (messageId: {}), skipping.", msg.getMessageId());
+            }
+            return null;
+        }); // End transactionTemplate.execute
+        } // End synchronized
     }
 
     /**
@@ -806,12 +907,19 @@ public class EmailSyncService {
      *   - If 0 or >1 custom labels -> default to INBOX
      */
     private String determineStatusFromLabels(MailMessageDto msg, Long accountId, String folderName) {
+        // PRIORITY 1: IMAP Folder Name (Most reliable for system states like SENT, DRAFTS, TRASH)
         String folderStatus = determineStatusFromFolder(folderName);
         if (folderStatus != null && !EmailStatus.INBOX.equalsIgnoreCase(folderStatus)) {
             return folderStatus;
         }
 
-        return determineStatusFromGmailLabels(msg.getLabels(), accountId);
+        // PRIORITY 2: Gmail Labels (Used for custom Kanban columns)
+        String gmailStatus = determineStatusFromGmailLabels(msg.getLabels(), accountId);
+        if (gmailStatus != null && !EmailStatus.INBOX.equalsIgnoreCase(gmailStatus)) {
+            return gmailStatus;
+        }
+
+        return EmailStatus.INBOX;
     }
 
     private String determineStatusFromGmailLabels(List<String> labels, Long accountId) {

@@ -25,6 +25,14 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     
     List<EmailEntity> findByStatus(String status);
     List<EmailEntity> findAllByAccountIdAndStatus(Long accountId, String status);
+    java.util.Optional<EmailEntity> findFirstByAccountIdAndThreadIdAndStatusOrderByReceivedDateDesc(Long accountId, String threadId, String status);
+    
+    @Query(value = "SELECT * FROM emails WHERE account_id = :accountId AND " +
+           "subject = :subject AND received_date >= :timeThreshold " +
+           "ORDER BY received_date DESC LIMIT 1", nativeQuery = true)
+    java.util.Optional<EmailEntity> findRecentEmailBySubject(@Param("accountId") Long accountId, @Param("subject") String subject, @Param("timeThreshold") java.time.LocalDateTime timeThreshold);
+
+
 
     List<EmailEntity> findBySnoozedUntilBeforeAndStatus(OffsetDateTime now, String status);
     

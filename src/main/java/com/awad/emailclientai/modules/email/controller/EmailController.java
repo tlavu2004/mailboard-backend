@@ -161,8 +161,13 @@ public class EmailController {
             try {
                 emailAccountService.deleteDraft(principal.getId(), account.getId(), draftId);
                 emailRepository.findByGmailDraftId(draftId).ifPresent(d -> {
-                    emailRepository.delete(d);
-                    log.info("[CLEANUP] Deleted draft record by gmailDraftId: {}", draftId);
+                    // CRITICAL: Only delete if it's NOT the same record we just updated to SENT
+                    if (!d.getId().equals(entity.getId())) {
+                        emailRepository.delete(d);
+                        log.info("[CLEANUP] Deleted duplicate draft record by gmailDraftId: {} (Previous status: {})", draftId, d.getStatus());
+                    } else {
+                        log.info("[CLEANUP] Skipping deletion because draft was successfully merged into SENT record ID: {}", d.getId());
+                    }
                 });
             } catch (Exception e) {
                 log.warn("[CLEANUP] Failed to delete draft on Gmail: {}", e.getMessage());
@@ -249,16 +254,19 @@ public class EmailController {
             try {
                 emailAccountService.deleteDraft(principal.getId(), account.getId(), dId);
                 emailRepository.findByGmailDraftId(dId).ifPresent(d -> {
-                    emailRepository.delete(d);
-                    log.info("[CLEANUP-MULTI] Deleted draft record by gmailDraftId: {}", dId);
+                    if (!d.getId().equals(entity.getId())) {
+                        emailRepository.delete(d);
+                        log.info("[CLEANUP-MULTI] Deleted duplicate draft record by gmailDraftId: {} (Previous status: {})", dId, d.getStatus());
+                    } else {
+                        log.info("[CLEANUP-MULTI] Skipping deletion because draft was successfully merged into SENT record ID: {}", d.getId());
+                    }
                 });
             } catch (Exception e) {
                 log.warn("[CLEANUP-MULTI] Failed to delete multipart draft on Gmail: {}", e.getMessage());
             }
         } else if (lId != null) {
             emailRepository.findById(lId).ifPresent(d -> {
-                log.info("[CLEANUP-MULTI] Found local record {}, status={}, gmailMsgId={}", d.getId(), d.getStatus(), d.getGmailMessageId());
-                if ("DRAFTS".equalsIgnoreCase(d.getStatus())) {
+                if (!d.getId().equals(entity.getId())) {
                     emailRepository.delete(d);
                     log.info("[CLEANUP-MULTI] Deleted local draft record by localEmailId: {}", lId);
                 }
@@ -409,6 +417,12 @@ public class EmailController {
             request.setSubject((String) jsonBody.get("subject"));
             request.setBodyText((String) jsonBody.get("body"));
             request.setInReplyTo((String) jsonBody.get("threadId"));
+            request.setGmailDraftId((String) jsonBody.get("gmailDraftId"));
+            Object localId = jsonBody.get("localEmailId");
+            if (localId != null) {
+                if (localId instanceof Number) request.setLocalEmailId(((Number) localId).longValue());
+                else if (localId instanceof String) request.setLocalEmailId(Long.parseLong((String) localId));
+            }
         }
         return request;
     }

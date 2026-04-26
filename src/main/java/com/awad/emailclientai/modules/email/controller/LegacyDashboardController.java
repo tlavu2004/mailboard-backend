@@ -159,9 +159,13 @@ public class LegacyDashboardController {
                     if ("STARRED".equalsIgnoreCase(finalStatus)) {
                         match = e.isStarred();
                     } else if ("INBOX".equalsIgnoreCase(finalStatus)) {
-                        // Show ALL emails except TRASH and SPAM — same as Kanban view
+                        // Only show emails with INBOX status or custom Kanban statuses
+                        // (anything that is NOT a system folder like SENT, DRAFTS, TRASH, SPAM)
                         String s = e.getStatus();
-                        match = s == null || (!s.equalsIgnoreCase("TRASH") && !s.equalsIgnoreCase("SPAM"));
+                        match = s != null && !s.equalsIgnoreCase("SENT") 
+                                && !s.equalsIgnoreCase("DRAFTS") 
+                                && !s.equalsIgnoreCase("TRASH") 
+                                && !s.equalsIgnoreCase("SPAM");
                     } else {
                         match = finalStatus.equalsIgnoreCase(e.getStatus());
                     }
