@@ -15,6 +15,11 @@ import com.google.api.services.gmail.model.ModifyMessageRequest;
 import com.google.api.services.gmail.model.Label;
 import com.google.api.services.gmail.model.ListLabelsResponse;
 import com.google.api.services.gmail.model.Message;
+import com.google.api.services.gmail.model.Draft;
+import java.util.Base64;
+import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.MessagingException;
+import java.io.ByteArrayOutputStream;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -203,6 +208,104 @@ public class GmailLabelService {
             log.error("Failed to modify Gmail message labels for {}: {}", account.getEmailAddress(), e.getMessage());
             throw new RuntimeException("Failed to modify Gmail message labels: " + e.getMessage());
         }
+    }
+
+    public Map<String, String> createDraft(EmailAccount account, MimeMessage mimeMessage) throws IOException, MessagingException {
+        try {
+            return createDraftInternal(account, mimeMessage, true);
+        } catch (GeneralSecurityException e) {
+            throw new IOException("Security error", e);
+        }
+    }
+
+    public Map<String, String> updateDraft(EmailAccount account, String draftId, MimeMessage mimeMessage) throws IOException, MessagingException {
+        try {
+            return updateDraftInternal(account, draftId, mimeMessage, true);
+        } catch (GeneralSecurityException e) {
+            throw new IOException("Security error", e);
+        }
+    }
+
+    public void deleteDraft(EmailAccount account, String draftId) throws IOException {
+        try {
+            deleteDraftInternal(account, draftId, true);
+        } catch (GeneralSecurityException e) {
+            throw new IOException("Security error", e);
+        }
+    }
+
+    private Map<String, String> createDraftInternal(EmailAccount account, MimeMessage mimeMessage, boolean retryOnAuthFailure) throws IOException, MessagingException, GeneralSecurityException {
+        try {
+            Gmail gmail = getGmailService(account);
+            Message message = createGmailMessage(mimeMessage);
+            Draft draft = new Draft();
+            draft.setMessage(message);
+            
+            Draft created = gmail.users().drafts().create("me", draft).execute();
+            log.info("Created Gmail draft {} for {}", created.getId(), account.getEmailAddress());
+            
+            Map<String, String> result = new HashMap<>();
+            result.put("draftId", created.getId());
+            result.put("messageId", created.getMessage().getId());
+            return result;
+        } catch (GoogleJsonResponseException e) {
+            if (retryOnAuthFailure && e.getStatusCode() == 401) {
+                if (googleTokenService.refreshAccessToken(account) != null) {
+                    return createDraftInternal(account, mimeMessage, false);
+                }
+            }
+            throw e;
+        }
+    }
+
+    private Map<String, String> updateDraftInternal(EmailAccount account, String draftId, MimeMessage mimeMessage, boolean retryOnAuthFailure) throws IOException, MessagingException, GeneralSecurityException {
+        try {
+            Gmail gmail = getGmailService(account);
+            Message message = createGmailMessage(mimeMessage);
+            Draft draft = new Draft();
+            draft.setMessage(message);
+            
+            Draft updated = gmail.users().drafts().update("me", draftId, draft).execute();
+            log.info("Updated Gmail draft {} for {}", draftId, account.getEmailAddress());
+            
+            Map<String, String> result = new HashMap<>();
+            result.put("draftId", updated.getId());
+            result.put("messageId", updated.getMessage().getId());
+            return result;
+        } catch (GoogleJsonResponseException e) {
+            if (retryOnAuthFailure && e.getStatusCode() == 401) {
+                if (googleTokenService.refreshAccessToken(account) != null) {
+                    return updateDraftInternal(account, draftId, mimeMessage, false);
+                }
+            }
+            throw e;
+        }
+    }
+
+    private void deleteDraftInternal(EmailAccount account, String draftId, boolean retryOnAuthFailure) throws IOException, GeneralSecurityException {
+        try {
+            Gmail gmail = getGmailService(account);
+            gmail.users().drafts().delete("me", draftId).execute();
+            log.info("Deleted Gmail draft {} for {}", draftId, account.getEmailAddress());
+        } catch (GoogleJsonResponseException e) {
+            if (retryOnAuthFailure && e.getStatusCode() == 401) {
+                if (googleTokenService.refreshAccessToken(account) != null) {
+                    deleteDraftInternal(account, draftId, false);
+                    return;
+                }
+            }
+            throw e;
+        }
+    }
+
+    private Message createGmailMessage(MimeMessage mimeMessage) throws IOException, MessagingException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        mimeMessage.writeTo(buffer);
+        byte[] bytes = buffer.toByteArray();
+        String encodedEmail = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        Message message = new Message();
+        message.setRaw(encodedEmail);
+        return message;
     }
 
     private void untrashMessageInternal(EmailAccount account, String rawMessageId, String rawGmailMessageId, boolean retryOnAuthFailure) {

@@ -215,7 +215,7 @@ public class SmtpService {
         return props;
     }
 
-    private MimeMessage createMimeMessage(Session session, EmailAccount account, 
+    public MimeMessage createMimeMessage(Session session, EmailAccount account, 
                                            SendEmailRequestDto request) throws MessagingException {
         MimeMessage message = new MimeMessage(session);
         

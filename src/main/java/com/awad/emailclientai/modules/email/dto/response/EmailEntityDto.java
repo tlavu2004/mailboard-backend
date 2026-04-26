@@ -16,6 +16,7 @@ public class EmailEntityDto {
     private String messageId;
     private String threadId;
     private String gmailMessageId;
+    private String gmailDraftId;
     private Long uid;
     private String subject;
     private EmailAddressDto from;

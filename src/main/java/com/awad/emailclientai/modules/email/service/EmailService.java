@@ -197,6 +197,7 @@ public class EmailService {
                 .hasPhysicalAttachments(hasPhysical)
                 .accountEmail(entity.getAccount().getEmailAddress())
                 .attachments(attachments)
+                .gmailDraftId(entity.getGmailDraftId())
                 .gmailLink(entity.getGmailMessageId() != null ?
                     // Use u/0 plus authuser param to allow Gmail to open the correct signed-in account
                     String.format("https://mail.google.com/mail/u/0/?authuser=%s#inbox/%s",

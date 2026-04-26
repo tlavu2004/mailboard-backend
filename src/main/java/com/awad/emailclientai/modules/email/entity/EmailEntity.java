@@ -27,6 +27,7 @@ public class EmailEntity {
 
     private String threadId; // Gmail Thread ID (hex)
     private String gmailMessageId; // Gmail Message ID (hex)
+    private String gmailDraftId; // Gmail Draft ID (hex)
 
     private Long uid; // IMAP UID
 

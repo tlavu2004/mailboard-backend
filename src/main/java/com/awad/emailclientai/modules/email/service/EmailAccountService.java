@@ -1,5 +1,7 @@
 package com.awad.emailclientai.modules.email.service;
 
+import java.util.Map;
+
 import com.awad.emailclientai.modules.email.dto.request.*;
 import com.awad.emailclientai.modules.email.dto.response.*;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
@@ -36,6 +38,7 @@ public class EmailAccountService {
     private final ImapService imapService;
     private final SmtpService smtpService;
     private final GmailWatchService gmailWatchService;
+    private final GmailLabelService gmailLabelService;
 
     /**
      * Connects a new email account for the user.
@@ -197,6 +200,43 @@ public class EmailAccountService {
         }
         
         return message.getMessageID();
+    }
+
+    /**
+     * Saves a draft to the provider (e.g. Gmail Drafts).
+     */
+    public Map<String, String> saveDraft(Long userId, Long accountId, SendEmailRequestDto request) throws MessagingException, IOException {
+        EmailAccount account = getAccountForUser(userId, accountId);
+        // Create a dummy session for building the MimeMessage
+        jakarta.mail.Session session = jakarta.mail.Session.getInstance(new java.util.Properties());
+        jakarta.mail.internet.MimeMessage message = smtpService.createMimeMessage(session, account, request);
+        
+        if (account.getProvider() == EmailProvider.GMAIL) {
+            return gmailLabelService.createDraft(account, message);
+        }
+        return null; // Not implemented for other providers yet
+    }
+
+    /**
+     * Updates an existing draft on the provider.
+     */
+    public Map<String, String> updateDraft(Long userId, Long accountId, String draftId, SendEmailRequestDto request) throws MessagingException, IOException {
+        EmailAccount account = getAccountForUser(userId, accountId);
+        // Create a dummy session for building the MimeMessage
+        jakarta.mail.Session session = jakarta.mail.Session.getInstance(new java.util.Properties());
+        jakarta.mail.internet.MimeMessage message = smtpService.createMimeMessage(session, account, request);
+        
+        if (account.getProvider() == EmailProvider.GMAIL) {
+            return gmailLabelService.updateDraft(account, draftId, message);
+        }
+        return null;
+    }
+
+    public void deleteDraft(Long userId, Long accountId, String draftId) throws IOException {
+        EmailAccount account = getAccountForUser(userId, accountId);
+        if (account.getProvider() == EmailProvider.GMAIL) {
+            gmailLabelService.deleteDraft(account, draftId);
+        }
     }
 
     /**

@@ -55,6 +55,12 @@ public class SendEmailRequestDto {
      * References chain (for threading).
      */
     private List<String> references;
+
+    /**
+     * Gmail draft ID if this is an update to an existing draft.
+     */
+    private String gmailDraftId;
+    private Long localEmailId;
     
     // Note: Attachments would be handled separately via multipart upload
 }

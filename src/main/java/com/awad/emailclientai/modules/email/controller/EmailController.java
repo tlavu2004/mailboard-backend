@@ -17,7 +17,6 @@ import com.awad.emailclientai.modules.email.service.EmailService;
 import com.awad.emailclientai.shared.exception.BusinessException;
 import com.awad.emailclientai.shared.exception.ErrorCode;
 import com.awad.emailclientai.modules.email.dto.request.SendEmailRequestDto;
-import com.awad.emailclientai.modules.email.entity.EmailProvider;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import org.springframework.web.multipart.MultipartFile;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
@@ -35,6 +34,8 @@ import org.springframework.web.bind.annotation.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 
+import org.springframework.transaction.annotation.Transactional;
+
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -43,7 +44,6 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v1/emails")
 @Tag(name = "Emails (Kanban)", description = "Manage persisted emails for Kanban workflow")
-@org.springframework.transaction.annotation.Transactional(readOnly = true)
 public class EmailController {
     private static final Logger log = LoggerFactory.getLogger(EmailController.class);
 
@@ -127,7 +127,8 @@ public class EmailController {
 
     @PostMapping(value = "/send", consumes = MediaType.APPLICATION_JSON_VALUE)
     @Operation(summary = "Bridge: Send Email (JSON)")
-        public ResponseEntity<ApiResponse<String>> sendEmailBridgeJson(
+    @Transactional
+    public ResponseEntity<ApiResponse<EmailEntityDto>> sendEmailBridgeJson(
             @AuthenticationPrincipal UserPrincipal principal,
             @RequestBody Map<String, Object> jsonBody
     ) throws MessagingException {
@@ -135,24 +136,28 @@ public class EmailController {
         EmailAccount account = fetchPrimaryAccount(principal);
         SendEmailRequestDto request = mapJsonToDto(jsonBody);
         String messageId = emailAccountService.sendEmail(principal.getId(), account.getId(), request);
-        // Trigger background sync for Sent folder so the new message appears in the app quickly
+        
+        // Proactively save to local DB
+        EmailEntity entity = emailSyncService.saveLocalOutgoingEmail(account, request, messageId, "SENT", null);
+        
+        // Trigger background sync for Sent folder so the new message appears in the app exactly with provider data
         final Long acctIdJson = account.getId();
         new Thread(() -> {
             try {
-                String sentFolderName = "Sent";
-                if (account.getProvider() == EmailProvider.GMAIL) sentFolderName = "[Gmail]/Sent Mail";
+                String sentFolderName = "[Gmail]/Sent Mail";
                 emailSyncService.syncEmailsForAccount(acctIdJson, sentFolderName, 10, 0);
-                // Detailed NEW_EMAILS notifications (with emailIds) are emitted by EmailSyncService
             } catch (Exception e) {
                 log.warn("Post-send Sent sync failed for account {}: {}", acctIdJson, e.getMessage());
             }
         }).start();
-        return ResponseEntity.ok(ApiResponse.success("Email sent successfully", messageId));
+        
+        return ResponseEntity.ok(ApiResponse.success("Email sent successfully", emailService.mapToDto(entity)));
     }
 
     @PostMapping(value = "/send", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Bridge: Send Email (Multipart)")
-        public ResponseEntity<ApiResponse<String>> sendEmailBridgeMultipart(
+    @Transactional
+    public ResponseEntity<ApiResponse<EmailEntityDto>> sendEmailBridgeMultipart(
             @AuthenticationPrincipal UserPrincipal principal,
             @RequestParam(value = "attachments", required = false) List<MultipartFile> attachments,
             @RequestParam(value = "to", required = false) String toString,
@@ -179,19 +184,125 @@ public class EmailController {
         } else {
             messageId = emailAccountService.sendEmail(principal.getId(), account.getId(), request);
         }
-        // Trigger background sync for Sent folder so the new message appears in the app quickly
+        
+        // Proactively save to local DB
+        EmailEntity entity = emailSyncService.saveLocalOutgoingEmail(account, request, messageId, "SENT", null);
+
+        // Trigger background sync for Sent folder
         final Long acctIdMulti = account.getId();
         new Thread(() -> {
             try {
-                String sentFolderName = "Sent";
-                if (account.getProvider() == EmailProvider.GMAIL) sentFolderName = "[Gmail]/Sent Mail";
+                String sentFolderName = "[Gmail]/Sent Mail";
                 emailSyncService.syncEmailsForAccount(acctIdMulti, sentFolderName, 10, 0);
-                // Detailed NEW_EMAILS notifications (with emailIds) are emitted by EmailSyncService
             } catch (Exception e) {
                 log.warn("Post-send Sent sync failed for account {}: {}", acctIdMulti, e.getMessage());
             }
         }).start();
-        return ResponseEntity.ok(ApiResponse.success("Email sent successfully", messageId));
+        
+        return ResponseEntity.ok(ApiResponse.success("Email sent successfully", emailService.mapToDto(entity)));
+    }
+
+    @PostMapping("/draft")
+    @Operation(summary = "Save or Update Draft")
+    @Transactional
+    public ResponseEntity<ApiResponse<EmailEntityDto>> saveDraft(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestBody SendEmailRequestDto request) throws MessagingException, IOException {
+        EmailAccount account = fetchPrimaryAccount(principal);
+        String draftId = request.getGmailDraftId();
+        Map<String, String> draftData = null;
+        
+        // 1. Try to recover draftId from local emailId if not provided in request
+        String recoveredDraftId = draftId;
+        if ((recoveredDraftId == null || recoveredDraftId.isEmpty()) && request.getLocalEmailId() != null) {
+            var existingOpt = emailRepository.findById(request.getLocalEmailId());
+            if (existingOpt.isPresent() && existingOpt.get().getGmailDraftId() != null) {
+                recoveredDraftId = existingOpt.get().getGmailDraftId();
+                request.setGmailDraftId(recoveredDraftId);
+            }
+        }
+        final String finalDraftIdForGmail = recoveredDraftId;
+
+        // 2. Perform Save or Update on Gmail
+        boolean isNewDraft = (finalDraftIdForGmail == null || finalDraftIdForGmail.isEmpty());
+        if (!isNewDraft) {
+            draftData = emailAccountService.updateDraft(principal.getId(), account.getId(), finalDraftIdForGmail, request);
+        } else {
+            draftData = emailAccountService.saveDraft(principal.getId(), account.getId(), request);
+        }
+        
+        final String finalDraftId = draftData != null ? draftData.get("draftId") : finalDraftIdForGmail;
+        final String gmMsgId = draftData != null ? draftData.get("messageId") : null;
+        
+        // Proactively save to local DB
+        EmailEntity entity;
+        try {
+            entity = emailSyncService.saveLocalOutgoingEmail(account, request, "DRAFT-" + finalDraftId, "DRAFTS", gmMsgId);
+            entity.setGmailDraftId(finalDraftId);
+            if (gmMsgId != null) {
+                entity.setGmailMessageId(gmMsgId);
+            }
+            entity = emailRepository.save(entity);
+            
+            // 3. CRITICAL: If we just created a NEW draft for an EXISTING local record,
+            // we must delete the old record to prevent duplicates.
+            if (isNewDraft && request.getLocalEmailId() != null) {
+                Long oldId = request.getLocalEmailId();
+                if (!entity.getId().equals(oldId)) {
+                    emailRepository.deleteById(oldId);
+                    log.info("Deleted old duplicate draft record {} after creating new draft {}", oldId, entity.getId());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Conflict or error during proactive draft save, attempting fallback lookup: {}", e.getMessage());
+            entity = emailRepository.findByGmailDraftId(finalDraftId)
+                    .orElseGet(() -> emailRepository.findByMessageId("DRAFT-" + finalDraftId).orElse(new EmailEntity()));
+            
+            entity.setAccount(account);
+            entity.setGmailDraftId(finalDraftId);
+            entity.setGmailMessageId(gmMsgId);
+            entity.setStatus("DRAFTS");
+            entity.setSubject(request.getSubject());
+            entity.setBody(request.getBodyHtml() != null ? request.getBodyHtml() : request.getBodyText());
+            entity = emailRepository.save(entity);
+        }
+        
+        return ResponseEntity.ok(ApiResponse.success("Draft saved", emailService.mapToDto(entity)));
+    }
+
+    @DeleteMapping("/draft/{draftId}")
+    @Operation(summary = "Discard and Delete Draft")
+    @Transactional
+    public ResponseEntity<ApiResponse<Void>> deleteDraft(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable String draftId,
+            @RequestParam(required = false) Long emailId) throws IOException {
+        EmailAccount account = fetchPrimaryAccount(principal);
+        
+        // 1. Delete from Gmail if we have a valid Gmail Draft ID
+        if (draftId != null && !draftId.isEmpty() && !draftId.equals("undefined")) {
+            try {
+                emailAccountService.deleteDraft(principal.getId(), account.getId(), draftId);
+            } catch (Exception e) {
+                log.warn("Failed to delete draft from Gmail (id: {}): {}", draftId, e.getMessage());
+            }
+        }
+        
+        // 2. Delete from local repository by local ID (most reliable)
+        if (emailId != null) {
+            emailRepository.findById(emailId).ifPresent(entity -> {
+                emailRepository.delete(entity);
+                log.info("Deleted local draft record by local emailId: {}", emailId);
+            });
+        } else if (draftId != null && !draftId.isEmpty() && !draftId.equals("undefined")) {
+            // Fallback: Delete by gmailDraftId
+            emailRepository.findByGmailDraftId(draftId).ifPresent(entity -> {
+                emailRepository.delete(entity);
+                log.info("Deleted local draft record by gmailDraftId fallback: {}", draftId);
+            });
+        }
+        
+        return ResponseEntity.ok(ApiResponse.success("Draft discarded"));
     }
 
     // RENAMED from getPrimaryAccount to fetchPrimaryAccount to avoid any resolution conflicts

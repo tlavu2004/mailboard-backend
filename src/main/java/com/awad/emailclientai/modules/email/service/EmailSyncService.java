@@ -29,6 +29,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.awad.emailclientai.modules.email.entity.EmailProvider;
 import java.util.stream.Collectors;
 import org.springframework.dao.DataIntegrityViolationException;
+import com.awad.emailclientai.modules.email.dto.request.SendEmailRequestDto;
+import java.time.LocalDateTime;
 
 @Service
 @RequiredArgsConstructor
@@ -120,7 +122,14 @@ public class EmailSyncService {
         for (String gmailId : affectedGmailMsgIds) {
             try {
                 var gmailMsg = gmailLabelService.getMessage(account, gmailId);
-                if (gmailMsg == null) continue;
+                if (gmailMsg == null) {
+                    // Message deleted from Gmail, delete locally too
+                    emailRepository.findByGmailMessageId(gmailId).ifPresent(entity -> {
+                        emailRepository.delete(entity);
+                        log.info("[GmailHistory] Deleted local record for {} as it is missing on Gmail", gmailId);
+                    });
+                    continue;
+                }
 
                 // Find local email by gmailMessageId
                 var existingOpt = emailRepository.findByGmailMessageId(gmailId);
@@ -310,6 +319,69 @@ public class EmailSyncService {
         }
     }
 
+    /**
+     * Proactively saves an outgoing email (Sent or Draft) to the local database.
+     * This avoids having to wait for IMAP synchronization to show the email in the UI.
+     */
+    @Transactional
+    public EmailEntity saveLocalOutgoingEmail(EmailAccount account, SendEmailRequestDto request, String messageId, String status, String gmailMessageId) {
+        log.info("[PROACTIVE-SAVE] Saving outgoing email (status={}): messageId={}, gmailMessageId={}", status, messageId, gmailMessageId);
+        
+        String cleanMessageId = messageId != null ? messageId.replaceAll("[<>]", "").trim() : null;
+        
+        EmailEntity entity = null;
+
+        // 1. Primary check: gmailMessageId (Most reliable for Gmail)
+        if (gmailMessageId != null && !gmailMessageId.isBlank()) {
+            entity = emailRepository.findByGmailMessageId(gmailMessageId).orElse(null);
+        }
+        
+        // 2. Secondary check: gmailDraftId
+        if (entity == null && request.getGmailDraftId() != null && !request.getGmailDraftId().isEmpty()) {
+            entity = emailRepository.findByGmailDraftId(request.getGmailDraftId()).orElse(null);
+        }
+
+        // 3. Tertiary check: messageId
+        if (entity == null && cleanMessageId != null) {
+            entity = emailRepository.findByMessageId(cleanMessageId).orElse(null);
+        }
+
+        if (entity == null) {
+            entity = EmailEntity.builder()
+                    .messageId(cleanMessageId != null ? cleanMessageId : "TEMP-" + System.currentTimeMillis())
+                    .account(account)
+                    .build();
+        } else if (entity.getAccount() == null) {
+            entity.setAccount(account);
+        }
+        
+        if (gmailMessageId != null) {
+            entity.setGmailMessageId(gmailMessageId);
+        }
+
+        entity.setAccount(account);
+        entity.setSubject(request.getSubject());
+        entity.setSender(account.getEmailAddress());
+        entity.setFromName(account.getDisplayName());
+        entity.setRecipientTo(request.getTo() != null ? String.join(", ", request.getTo()) : "");
+        entity.setRecipientCc(request.getCc() != null ? String.join(", ", request.getCc()) : "");
+        
+        String body = request.getBodyHtml() != null && !request.getBodyHtml().isEmpty() ? request.getBodyHtml() : request.getBodyText();
+        entity.setBody(body);
+        
+        String cleanSnippet = (body != null ? body.replaceAll("<[^>]*>", " ") : "").trim();
+        entity.setSnippet(cleanSnippet.substring(0, Math.min(cleanSnippet.length(), 200)));
+        
+        entity.setStatus(status.toUpperCase());
+        entity.setReceivedDate(LocalDateTime.now());
+        entity.setRead(true); // Sent/Drafts are generally considered read
+        
+        EmailEntity saved = emailRepository.save(entity);
+        log.info("[PROACTIVE-SAVE] Successfully saved email ID: {} with status: {}", saved.getId(), status);
+        
+        return saved;
+    }
+
     private void syncAccount(EmailAccount account, String folderName, int limit, int page) {
         if (!imapService.testConnection(account)) {
             log.info("Cannot connect to account: " + account.getEmailAddress());
@@ -421,7 +493,21 @@ public class EmailSyncService {
             }
         }
         String targetStatus = determineStatusFromLabels(msg, accountId, folderName);
-        Optional<EmailEntity> existingOpt = emailRepository.findByMessageId(msg.getMessageId());
+        String messageId = msg.getMessageId();
+        String gmailMessageId = msg.getGmailMessageId();
+        
+        Optional<EmailEntity> existingOpt = Optional.empty();
+        if (messageId != null && !messageId.isBlank()) {
+            existingOpt = emailRepository.findByMessageId(messageId);
+        }
+        
+        // Fallback: search by gmailMessageId if not found by RFC822 Message-ID
+        if (existingOpt.isEmpty() && gmailMessageId != null && !gmailMessageId.isBlank()) {
+            existingOpt = emailRepository.findByGmailMessageId(gmailMessageId);
+            if (existingOpt.isPresent()) {
+                log.info("[SYNC-MATCH] Found existing email by gmailMessageId fallback: {}", gmailMessageId);
+            }
+        }
         
         if (existingOpt.isPresent()) {
             EmailEntity existing = existingOpt.get();
@@ -437,7 +523,15 @@ public class EmailSyncService {
                 changed = true;
             }
 
-            // If body is missing or looks corrupted (starts with CSS after the stripping bug), update it
+            // CRITICAL: If we matched by gmailMessageId but the messageId is a temporary one (DRAFT-...)
+            // update it to the REAL RFC822 Message-ID so future lookups are fast and stable.
+            if (messageId != null && !messageId.isBlank() && 
+                (existing.getMessageId() == null || existing.getMessageId().startsWith("DRAFT-") || existing.getMessageId().startsWith("TEMP-"))) {
+                log.info("[SYNC-MATCH] Updating temporary messageId '{}' to real ID '{}'", existing.getMessageId(), messageId);
+                existing.setMessageId(messageId);
+                changed = true;
+            }
+            
             boolean isCorrupted = existing.getBody() != null && 
                                   (existing.getBody().contains("body {") || 
                                    existing.getBody().contains(".ie-browser") ||
@@ -731,6 +825,12 @@ public class EmailSyncService {
         if (containsSystemLabel(labels, "SPAM") || containsSystemLabel(labels, "\\\\SPAM") || containsSystemLabel(labels, "JUNK")) {
             return "SPAM";
         }
+        if (containsSystemLabel(labels, "SENT")) {
+            return "SENT";
+        }
+        if (containsSystemLabel(labels, "DRAFT") || containsSystemLabel(labels, "DRAFTS")) {
+            return "DRAFTS";
+        }
 
         // Filter out system labels (case-insensitive)
         List<String> customLabels = labels.stream()
@@ -763,7 +863,7 @@ public class EmailSyncService {
         if (lower.contains("spam") || lower.contains("junk") || lower.contains("thư rác")) {
             return "SPAM";
         }
-        if (lower.contains("draft")) {
+        if (lower.contains("draft") || lower.contains("bản nháp")) {
             return "DRAFTS";
         }
         if (lower.contains("sent")) {
