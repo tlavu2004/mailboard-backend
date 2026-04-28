@@ -5,6 +5,9 @@ import com.awad.emailclientai.modules.email.entity.EmailAttachment;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.repository.EmailAttachmentRepository;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
+import com.awad.emailclientai.modules.email.repository.EmailSenderRepository;
+import com.awad.emailclientai.modules.email.entity.EmailAccount;
+import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.shared.exception.BusinessException;
 import com.awad.emailclientai.shared.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import java.time.ZoneId;
 
@@ -35,6 +39,8 @@ public class EmailService {
     private final ImapService imapService;
     private final EmailSyncService emailSyncService;
     private final GmailLabelService gmailLabelService;
+    private final EmailSenderRepository emailSenderRepository;
+    private final EmailAccountRepository emailAccountRepository;
 
     @PostConstruct
     public void init() {
@@ -163,25 +169,100 @@ public class EmailService {
         boolean hasCloud = attachments.stream().anyMatch(a -> a.getExternalUrl() != null);
         boolean hasPhysical = attachments.stream().anyMatch(a -> a.getExternalUrl() == null);
 
+        // V41: Universal Account Branding & Aggressive Discovery
+        String rawSender = entity.getSender();
+        String senderEmail = cleanEmail(rawSender);
+        String currentName = entity.getFromName();
+        Long userId = (entity.getAccount() != null && entity.getAccount().getUser() != null) ? entity.getAccount().getUser().getId() : null;
+        com.awad.emailclientai.modules.email.entity.EmailAccount account = entity.getAccount();
+        
+        // 1. Priority: If this sender matches ANY of the user's connected accounts or main profile, use "You" logic
+        boolean fromMe = false;
+        if (senderEmail != null && account != null && account.getUser() != null) {
+            List<EmailAccount> userAccounts = emailAccountRepository.findByUserId(userId);
+            
+            String primaryEmail = entity.getAccount().getUser().getEmail();
+            boolean isUserAccount = userAccounts.stream()
+                .anyMatch(acc -> senderEmail.equalsIgnoreCase(acc.getEmailAddress()));
+            
+            if (isUserAccount || senderEmail.equalsIgnoreCase(primaryEmail)) {
+                fromMe = true;
+                currentName = entity.getAccount().getDisplayName();
+                if (currentName == null || currentName.isBlank() || currentName.equalsIgnoreCase(senderEmail)) {
+                    currentName = entity.getAccount().getUser().getName();
+                }
+            }
+        }
+
+        boolean nameIsRaw = currentName == null || currentName.isBlank() || currentName.equalsIgnoreCase(senderEmail) || currentName.contains("@");
+        
+        // V41: Self-Healing - If name is missing/raw, try to extract from rawSender "Name <email>"
+        if (nameIsRaw && rawSender != null && rawSender.contains("<") && rawSender.contains(">")) {
+            int start = rawSender.indexOf("<");
+            String extracted = rawSender.substring(0, start).trim();
+            extracted = extracted.replaceAll("^\"|\"$", "").trim();
+            String username = senderEmail != null && senderEmail.contains("@") ? senderEmail.split("@")[0] : "";
+            
+            if (!extracted.isEmpty() && !extracted.equalsIgnoreCase(senderEmail) && !extracted.equalsIgnoreCase(username) && !extracted.contains("@")) {
+                currentName = extracted;
+                nameIsRaw = false;
+            }
+        }
+
+        if (nameIsRaw && senderEmail != null) {
+            // 1. Try Smart Directory (Fast)
+            currentName = emailSenderRepository.findByEmail(senderEmail.toLowerCase())
+                .map(com.awad.emailclientai.modules.email.entity.EmailSender::getBestKnownName)
+                .orElse(currentName);
+                
+            // 2. Fallback: Search DB for ANY other email from this sender that HAS a real name
+            if (currentName == null || currentName.equalsIgnoreCase(senderEmail) || currentName.contains("@") || currentName.equalsIgnoreCase(senderEmail.split("@")[0])) {
+                List<String> names = emailRepository.findDistinctFromNamesBySender(senderEmail.trim());
+                String bestFound = null;
+                for (String n : names) {
+                    if (n != null && !n.isBlank()) {
+                        String cleanedN = n;
+                        if (cleanedN.contains("<") && cleanedN.contains(">")) {
+                            cleanedN = cleanedN.substring(0, cleanedN.indexOf("<")).trim();
+                        }
+                        cleanedN = cleanedN.replaceAll("^\"|\"$", "").trim();
+                        
+                        String username = senderEmail.split("@")[0];
+                        boolean isRealName = !cleanedN.isBlank() 
+                            && !cleanedN.equalsIgnoreCase(senderEmail.trim()) 
+                            && !cleanedN.equalsIgnoreCase(username)
+                            && !cleanedN.contains("@");
+                        
+                        if (isRealName) {
+                            // Prioritize names with spaces (likely Full Names)
+                            if (cleanedN.contains(" ")) {
+                                bestFound = cleanedN;
+                                break; 
+                            }
+                            bestFound = cleanedN;
+                        }
+                    }
+                }
+                if (bestFound != null) currentName = bestFound;
+            }
+        }
+        final String bestName = currentName;
+
         return EmailEntityDto.builder()
                 .id(entity.getId())
                 .messageId(entity.getMessageId())
                 .uid(entity.getUid())
                 .subject(entity.getSubject())
                 .from(EmailEntityDto.EmailAddressDto.builder()
-                        .name(entity.getFromName())
-                        .email(entity.getSender())
+                        .name(bestName)
+                        .email(senderEmail)
                         .build())
-                .to(entity.getRecipientTo() != null ? java.util.Arrays.stream(entity.getRecipientTo().split(",\\s*"))
-                        .map(email -> EmailEntityDto.EmailAddressDto.builder().email(email.trim()).build())
-                        .collect(java.util.stream.Collectors.toList()) : java.util.Collections.emptyList())
-                .cc(entity.getRecipientCc() != null ? java.util.Arrays.stream(entity.getRecipientCc().split(",\\s*"))
-                    .map(email -> EmailEntityDto.EmailAddressDto.builder().email(email.trim()).build())
-                    .collect(java.util.stream.Collectors.toList()) : java.util.Collections.emptyList())
-                .sender(entity.getSender()) // Legacy fallback
-                .fromName(entity.getFromName()) // Legacy fallback
-                .recipientTo(entity.getRecipientTo() != null ? java.util.Arrays.asList(entity.getRecipientTo().split(",\\s*")) : java.util.Collections.emptyList()) // Legacy fallback
-                .recipientCc(entity.getRecipientCc() != null ? java.util.Arrays.asList(entity.getRecipientCc().split(",\\s*")) : java.util.Collections.emptyList()) // Legacy fallback
+                .to(parseRecipientString(entity.getRecipientTo(), account))
+                .cc(parseRecipientString(entity.getRecipientCc(), account))
+                .sender(senderEmail) 
+                .fromName(bestName) 
+                .recipientTo(entity.getRecipientTo() != null ? java.util.Arrays.asList(entity.getRecipientTo().split(",\\s*")) : java.util.Collections.emptyList()) 
+                .recipientCc(entity.getRecipientCc() != null ? java.util.Arrays.asList(entity.getRecipientCc().split(",\\s*")) : java.util.Collections.emptyList()) 
                 .snippet(entity.getSnippet())
                 .body(body)
                 .status(entity.getStatus())
@@ -192,6 +273,7 @@ public class EmailService {
                 .summary(entity.getSummary())
                 .summarySource(entity.getSummarySource() != null ? entity.getSummarySource().name() : null)
                 .isRead(entity.isRead())
+                .isFromMe(fromMe)
                 .hasAttachments(hasCloud || hasPhysical)
                 .hasCloudLinks(hasCloud)
                 .hasPhysicalAttachments(hasPhysical)
@@ -207,6 +289,96 @@ public class EmailService {
                         URLEncoder.encode(entity.getAccount().getEmailAddress(), StandardCharsets.UTF_8),
                         URLEncoder.encode(entity.getMessageId(), StandardCharsets.UTF_8)))
                 .build();
+    }
+
+    private java.util.List<EmailEntityDto.EmailAddressDto> parseRecipientString(String recipientString, com.awad.emailclientai.modules.email.entity.EmailAccount account) {
+        Long userId = account != null && account.getUser() != null ? account.getUser().getId() : null;
+        if (recipientString == null || recipientString.isBlank()) {
+            return java.util.Collections.emptyList();
+        }
+        return java.util.Arrays.stream(recipientString.split(",\\s*"))
+                .map(part -> {
+                    String name = "";
+                    String email = part.trim();
+
+                    // V41: Robust parsing using split or index
+                    if (email.contains("<") && email.contains(">")) {
+                        int start = email.indexOf("<");
+                        int end = email.indexOf(">");
+                        name = email.substring(0, start).trim();
+                        email = email.substring(start + 1, end).trim();
+                    }
+                    
+                    // Clean quotes from name and email (Java-compliant)
+                    name = name.replaceAll("^\"|\"$", "").trim();
+                    email = email.replaceAll("^\"|\"$", "").trim();
+                    
+                    // V42: Aggressive Recipient Name Discovery
+                    String finalName = name;
+                    String finalEmail = email;
+
+                    // 1. Check EmailSender table
+                    if (finalName.isBlank() || finalName.equalsIgnoreCase(finalEmail) || finalName.contains("@")) {
+                        finalName = emailSenderRepository.findByEmail(finalEmail.toLowerCase())
+                                .map(com.awad.emailclientai.modules.email.entity.EmailSender::getBestKnownName)
+                                .orElse(finalName);
+                    }
+
+                    // 2. Check EmailAccount table (User's other accounts)
+                    String localToMatch = finalEmail.contains("@") ? finalEmail.split("@")[0].toLowerCase().trim() : "";
+                    
+                    if (finalName.isBlank() || finalName.equalsIgnoreCase(finalEmail) || finalName.equals("You")) {
+                        if (userId != null) {
+                            String emailToMatch = finalEmail.toLowerCase().trim();
+                            List<EmailAccount> userAccs = emailAccountRepository.findByUserId(userId);
+                            
+                            // Exact Match
+                            Optional<EmailAccount> matchedAcc = userAccs.stream()
+                                    .filter(acc -> acc.getEmailAddress().equalsIgnoreCase(emailToMatch))
+                                    .findFirst();
+                            
+                            if (matchedAcc.isPresent()) {
+                                finalName = matchedAcc.get().getDisplayName();
+                            } 
+                            // Fuzzy Match by local part (for multi-provider accounts)
+                            else if (localToMatch.length() > 3) {
+                                finalName = userAccs.stream()
+                                        .filter(acc -> {
+                                            String alp = acc.getEmailAddress().split("@")[0].toLowerCase();
+                                            boolean prefixMatch = localToMatch.length() > 10 && alp.length() > 10 && 
+                                                                 (localToMatch.startsWith(alp.substring(0, 10)) || alp.startsWith(localToMatch.substring(0, 10)));
+                                            return alp.equalsIgnoreCase(localToMatch) || prefixMatch;
+                                        })
+                                        .map(EmailAccount::getDisplayName)
+                                        .filter(n -> n != null && !n.isBlank())
+                                        .findFirst()
+                                        .orElse(finalName);
+                            }
+                        }
+                    }
+                    
+                    // 3. Last Resort: User profile name fallback
+                    if ((finalName.isBlank() || finalName.equalsIgnoreCase(finalEmail) || finalName.equals("You")) && account != null) {
+                        com.awad.emailclientai.modules.user.entity.User u = account.getUser();
+                        if (u != null) {
+                            String userPrimaryEmail = u.getEmail().toLowerCase().trim();
+                            if (finalEmail.equalsIgnoreCase(userPrimaryEmail) || (localToMatch.length() > 3 && userPrimaryEmail.contains("@") && userPrimaryEmail.split("@")[0].equalsIgnoreCase(localToMatch))) {
+                                finalName = u.getName();
+                            }
+                        }
+                    }
+
+                    if (log.isDebugEnabled() && !finalName.equalsIgnoreCase(name)) {
+                        log.debug("[RECIPIENT-DISCOVERY] Discovered name '{}' for email '{}' (User ID: {})", 
+                                finalName, finalEmail, userId);
+                    }
+
+                    return EmailEntityDto.EmailAddressDto.builder()
+                            .name(finalName.isBlank() || finalName.equalsIgnoreCase(finalEmail) ? null : finalName)
+                            .email(finalEmail)
+                            .build();
+                })
+                .collect(java.util.stream.Collectors.toList());
     }
 
     public String processEmailBody(String html, Long emailId, List<EmailAttachment> attachments) {
@@ -614,5 +786,16 @@ public class EmailService {
             case "DRAFT", "DRAFTS" -> "Drafts";
             default -> "INBOX";
         };
+    }
+    private String cleanEmail(String input) {
+        if (input == null) return null;
+        if (input.contains("<") && input.contains(">")) {
+            int start = input.indexOf("<");
+            int end = input.indexOf(">");
+            if (start < end) {
+                return input.substring(start + 1, end).trim();
+            }
+        }
+        return input.trim();
     }
 }

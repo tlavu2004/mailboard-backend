@@ -7,11 +7,14 @@ import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.entity.EmailStatus;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
+import com.awad.emailclientai.modules.email.repository.EmailSenderRepository;
+import com.awad.emailclientai.modules.email.entity.EmailSender;
 import com.awad.emailclientai.modules.kanban.entity.KanbanColumn;
 import com.awad.emailclientai.modules.kanban.repository.KanbanColumnRepository;
 import com.awad.emailclientai.modules.kanban.service.KanbanService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import com.awad.emailclientai.shared.exception.BusinessException;
 import com.awad.emailclientai.shared.exception.ErrorCode;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -33,7 +36,6 @@ import com.awad.emailclientai.modules.email.dto.request.SendEmailRequestDto;
 import java.time.LocalDateTime;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class EmailSyncService {
 
@@ -45,7 +47,31 @@ public class EmailSyncService {
     private final KanbanService kanbanService;
     private final NotificationWebSocketHandler notificationWebSocketHandler;
     private final GmailLabelService gmailLabelService;
-    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+    private final TransactionTemplate transactionTemplate;
+    private final EmailSenderRepository emailSenderRepository;
+
+    public EmailSyncService(
+            EmailRepository emailRepository,
+            EmailAccountRepository accountRepository,
+            ImapService imapService,
+            EmbeddingService embeddingService,
+            KanbanColumnRepository kanbanColumnRepository,
+            KanbanService kanbanService,
+            NotificationWebSocketHandler notificationWebSocketHandler,
+            GmailLabelService gmailLabelService,
+            PlatformTransactionManager transactionManager,
+            EmailSenderRepository emailSenderRepository) {
+        this.emailRepository = emailRepository;
+        this.accountRepository = accountRepository;
+        this.imapService = imapService;
+        this.embeddingService = embeddingService;
+        this.kanbanColumnRepository = kanbanColumnRepository;
+        this.kanbanService = kanbanService;
+        this.notificationWebSocketHandler = notificationWebSocketHandler;
+        this.gmailLabelService = gmailLabelService;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.emailSenderRepository = emailSenderRepository;
+    }
 
     @org.springframework.beans.factory.annotation.Value("${app.mail.sync.batch-size:20}")
     private int batchSize;
@@ -603,6 +629,9 @@ public class EmailSyncService {
             EmailEntity existing = existingOpt.get();
             boolean changed = false;
 
+            // V36: Learn sender name if it's new/better
+            learnSenderName(msg.getFrom(), msg.getFromName());
+
             // Update Gmail IDs if missing
             if (existing.getGmailMessageId() == null && msg.getGmailMessageId() != null) {
                 existing.setGmailMessageId(msg.getGmailMessageId());
@@ -696,18 +725,27 @@ public class EmailSyncService {
                 changed = true;
             }
 
-            // Sync missing names/recipients for existing emails (Migration Bridge)
-            if (existing.getFromName() == null && msg.getFromName() != null) {
+            // Sync missing or raw names/recipients for existing emails (Migration Bridge)
+            boolean fromNameIsRaw = existing.getFromName() != null && existing.getFromName().equalsIgnoreCase(existing.getSender());
+            if ((existing.getFromName() == null || fromNameIsRaw) && msg.getFromName() != null && !msg.getFromName().isBlank()) {
                 existing.setFromName(msg.getFromName());
                 changed = true;
             }
-            if (existing.getRecipientTo() == null && msg.getTo() != null) {
-                existing.setRecipientTo(String.join(", ", msg.getTo()));
-                changed = true;
+
+            if (msg.getTo() != null && !msg.getTo().isEmpty()) {
+                String newTo = String.join(", ", msg.getTo());
+                if (existing.getRecipientTo() == null || !existing.getRecipientTo().contains("<")) {
+                    existing.setRecipientTo(newTo);
+                    changed = true;
+                }
             }
-            if (existing.getRecipientCc() == null && msg.getCc() != null) {
-                existing.setRecipientCc(String.join(", ", msg.getCc()));
-                changed = true;
+
+            if (msg.getCc() != null && !msg.getCc().isEmpty()) {
+                String newCc = String.join(", ", msg.getCc());
+                if (existing.getRecipientCc() == null || !existing.getRecipientCc().contains("<")) {
+                    existing.setRecipientCc(newCc);
+                    changed = true;
+                }
             }
 
             // Update attachments if missing or changed (V10.32: Smarter merging for cloud links)
@@ -753,6 +791,9 @@ public class EmailSyncService {
         }
 
         // New Email Creation
+        // V36: Learn sender name
+        learnSenderName(msg.getFrom(), msg.getFromName());
+
         EmailEntity entity = EmailEntity.builder()
                 .messageId(msg.getMessageId())
                 .threadId(msg.getThreadId())
@@ -1029,5 +1070,61 @@ public class EmailSyncService {
                 .externalUrl(dto.getExternalUrl())
                 .build())
                 .collect(Collectors.toList());
+    }
+    private void learnSenderName(String email, String name) {
+        if (email == null || email.isBlank()) return;
+        
+        final String pureEmail = cleanEmail(email);
+        if (pureEmail == null || pureEmail.isBlank()) return;
+
+        // V39: Clean the name too (remove <email> if present and quotes)
+        String pureName = name;
+        if (pureName != null) {
+            pureName = pureName.replaceAll("^\"|\"$", "").trim();
+            if (pureName.contains("<") && pureName.contains(">")) {
+                int start = pureName.indexOf("<");
+                pureName = pureName.substring(0, start).trim();
+            }
+            pureName = pureName.replaceAll("^\"|\"$", "").trim();
+        }
+        
+        String username = pureEmail.split("@")[0];
+        if (pureName == null || pureName.isBlank() || pureName.equalsIgnoreCase(pureEmail) || pureName.equalsIgnoreCase(username) || pureName.contains("@")) {
+            return;
+        }
+
+        final String canonicalEmail = pureEmail.toLowerCase();
+        final String finalName = pureName;
+        
+        emailSenderRepository.findByEmail(canonicalEmail).ifPresentOrElse(
+            existing -> {
+                if (existing.getBestKnownName() == null || existing.getBestKnownName().equalsIgnoreCase(canonicalEmail)) {
+                    existing.setBestKnownName(finalName);
+                    emailSenderRepository.save(existing);
+                    // Mass Heal: Update all existing emails from this sender in the background
+                    emailRepository.updateFromNameBySender(canonicalEmail, finalName);
+                }
+            },
+            () -> {
+                emailSenderRepository.save(EmailSender.builder()
+                    .email(canonicalEmail)
+                    .bestKnownName(finalName)
+                    .build());
+                // Mass Heal: Update all existing emails from this sender in the background
+                emailRepository.updateFromNameBySender(canonicalEmail, finalName);
+            }
+        );
+    }
+
+    private String cleanEmail(String input) {
+        if (input == null) return null;
+        if (input.contains("<") && input.contains(">")) {
+            int start = input.indexOf("<");
+            int end = input.indexOf(">");
+            if (start < end) {
+                return input.substring(start + 1, end).trim();
+            }
+        }
+        return input.trim();
     }
 }

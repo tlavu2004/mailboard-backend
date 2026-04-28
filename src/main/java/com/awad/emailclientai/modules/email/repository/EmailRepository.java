@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -130,4 +131,11 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     @Query("SELECT e FROM EmailEntity e WHERE e.account.id = :accountId AND " +
            "(e.body LIKE '%body {%' OR e.body LIKE '%.ie-browser%' OR e.body LIKE '%.mso-container%' OR e.body LIKE '%ExternalClass%')")
     List<EmailEntity> findCorruptedEmails(@Param("accountId") Long accountId);
+    @Query("SELECT DISTINCT e.fromName FROM EmailEntity e WHERE LOWER(e.sender) LIKE LOWER(CONCAT('%', :sender, '%')) AND e.fromName IS NOT NULL AND e.fromName != e.sender AND e.fromName NOT LIKE '%@%'")
+    List<String> findDistinctFromNamesBySender(@Param("sender") String sender);
+
+    @Modifying
+    @Transactional
+    @Query("UPDATE EmailEntity e SET e.fromName = :name WHERE (e.fromName IS NULL OR e.fromName = e.sender OR e.fromName LIKE '%@%') AND LOWER(e.sender) LIKE LOWER(CONCAT('%', :sender, '%'))")
+    void updateFromNameBySender(@Param("sender") String sender, @Param("name") String name);
 }

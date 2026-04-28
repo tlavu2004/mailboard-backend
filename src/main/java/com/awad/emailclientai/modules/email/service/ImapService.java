@@ -832,10 +832,44 @@ public class ImapService {
         Address[] fromAddresses = message.getFrom();
         String from = "";
         String fromName = "";
+        
+        // DEBUG: Log raw From header
+        try {
+            String[] rawFrom = message.getHeader("From");
+            if (rawFrom != null && rawFrom.length > 0) {
+                log.info("[DEBUG-SENDER] Raw From Header: {}", rawFrom[0]);
+            }
+        } catch (Exception e) {}
+
         if (fromAddresses != null && fromAddresses.length > 0) {
             InternetAddress ia = (InternetAddress) fromAddresses[0];
             from = ia.getAddress();
-            fromName = ia.getPersonal() != null ? ia.getPersonal() : from;
+            fromName = ia.getPersonal();
+            
+            // V41: Ultra-Robust Fallback - Manual Header Parsing
+            if (fromName == null || fromName.isBlank()) {
+                try {
+                    String[] rawHeaders = message.getHeader("From");
+                    if (rawHeaders != null && rawHeaders.length > 0) {
+                        String raw = rawHeaders[0];
+                        // Decipher RFC 2047 encoding (if any)
+                        try {
+                            raw = jakarta.mail.internet.MimeUtility.decodeText(raw);
+                        } catch (Exception ignore) {}
+                        
+                        if (raw.contains("<")) {
+                            String extractedName = raw.substring(0, raw.indexOf("<")).trim();
+                            extractedName = extractedName.replaceAll("^\"|\"$", "").trim();
+                            if (!extractedName.isEmpty() && !extractedName.equalsIgnoreCase(from)) {
+                                fromName = extractedName;
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("Manual name extraction failed: {}", e.getMessage());
+                }
+            }
+            log.info("[DEBUG-SENDER] Final Result -> Name: '{}', Email: '{}'", fromName, from);
         }
 
         List<String> to = extractAddresses(message.getRecipients(Message.RecipientType.TO));
@@ -1237,8 +1271,13 @@ public class ImapService {
         List<String> result = new ArrayList<>();
         if (addresses != null) {
             for (Address addr : addresses) {
-                if (addr instanceof InternetAddress) {
-                    result.add(((InternetAddress) addr).getAddress());
+                if (addr instanceof InternetAddress ia) {
+                    String personal = ia.getPersonal();
+                    if (personal != null && !personal.isBlank()) {
+                        result.add(String.format("\"%s\" <%s>", personal.replace("\"", ""), ia.getAddress()));
+                    } else {
+                        result.add(ia.getAddress());
+                    }
                 } else {
                     result.add(addr.toString());
                 }

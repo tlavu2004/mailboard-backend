@@ -100,6 +100,12 @@ public class MailMessageDto {
     private boolean hasPhysicalAttachments;
     
     /**
+     * Whether the message is from one of the user's own accounts.
+     */
+    @com.fasterxml.jackson.annotation.JsonProperty("isFromMe")
+    private boolean isFromMe;
+
+    /**
      * Gmail labels (fetched via X-GM-LABELS).
      */
     private List<String> labels;

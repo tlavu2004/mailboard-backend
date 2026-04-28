@@ -47,6 +47,8 @@ public class EmailEntityDto {
     private boolean hasPhysicalAttachments; // V10.35
     private String gmailLink;
     private String accountEmail;
+    @com.fasterxml.jackson.annotation.JsonProperty("isFromMe")
+    private boolean isFromMe;
     private List<AttachmentDto> attachments;
 
     @Data

@@ -208,7 +208,7 @@ public class LegacyDashboardController {
         }
 
         List<Map<String, Object>> mapped = filteredStream.stream()
-            .map(e -> this.mapToFrontendEmail(e, account))
+            .map(e -> this.mapToFrontendEmail(e, account, principal))
             .collect(Collectors.toList());
 
         // Apply pagination (slice the mapped list)
@@ -444,7 +444,7 @@ public class LegacyDashboardController {
         }
         
         EmailAccount account = getPrimaryAccount(principal);
-        return ResponseEntity.ok(ApiResponse.success(mapToFrontendEmail(email, account)));
+        return ResponseEntity.ok(ApiResponse.success(mapToFrontendEmail(email, account, principal)));
     }
 
 
@@ -536,7 +536,7 @@ public class LegacyDashboardController {
     }
 
 
-    private Map<String, Object> mapToFrontendEmail(EmailEntity entity, EmailAccount activeAccount) {
+    private Map<String, Object> mapToFrontendEmail(EmailEntity entity, EmailAccount activeAccount, UserPrincipal principal) {
         try {
             Map<String, Object> m = new HashMap<>();
             m.put("id", entity.getId().toString());
@@ -555,20 +555,46 @@ public class LegacyDashboardController {
                         encodedEmail, URLEncoder.encode(entity.getMessageId(), StandardCharsets.UTF_8));
             m.put("gmailLink", gmailLink);
             
-            // Map from: { name, email }
-            Map<String, String> from = new HashMap<>();
-            String sender = entity.getSender() != null ? entity.getSender() : "Unknown <unknown@example.com>";
-            if (sender.contains("<")) {
-                int open = sender.indexOf("<");
-                int close = sender.indexOf(">");
-                from.put("name", sender.substring(0, open).trim());
-                from.put("email", sender.substring(open + 1, close).trim());
+            // V42: Robust Sender Mapping
+            Map<String, Object> from = new HashMap<>();
+            String rawSender = entity.getSender() != null ? entity.getSender() : "Unknown <unknown@example.com>";
+            String senderEmail = "";
+            String senderName = entity.getFromName();
+
+            // Extract email address
+            if (rawSender.contains("<") && rawSender.contains(">")) {
+                int open = rawSender.indexOf("<");
+                int close = rawSender.indexOf(">");
+                senderEmail = rawSender.substring(open + 1, close).trim();
+                if (senderName == null || senderName.isBlank() || senderName.equalsIgnoreCase(senderEmail)) {
+                    senderName = rawSender.substring(0, open).trim();
+                    senderName = senderName.replaceAll("^\"|\"$", "").trim();
+                }
             } else {
-                from.put("name", sender);
-                from.put("email", sender);
+                senderEmail = rawSender.trim();
+                if (senderName == null || senderName.isBlank()) senderName = senderEmail;
             }
-            if (from.get("name").isEmpty()) from.put("name", from.get("email"));
+
+            // Universal "You" recognition
+            boolean isFromMe = false;
+            if (activeAccount != null && senderEmail.equalsIgnoreCase(activeAccount.getEmailAddress())) {
+                isFromMe = true;
+                senderName = activeAccount.getDisplayName();
+            } else if (principal != null && senderEmail.equalsIgnoreCase(principal.getEmail())) {
+                isFromMe = true;
+                senderName = principal.getName();
+            }
+            
+            // Final Cleanup
+            if (senderName == null || senderName.isBlank() || senderName.equalsIgnoreCase(senderEmail)) {
+                senderName = senderEmail.split("@")[0];
+            }
+
+            from.put("name", senderName);
+            from.put("email", senderEmail);
             m.put("from", from);
+            m.put("fromName", senderName);
+            m.put("isFromMe", isFromMe);
             
             // Labels placeholder; recipients and attachments populated from DTO below
             m.put("labels", new ArrayList<>());
@@ -623,6 +649,18 @@ public class LegacyDashboardController {
         card.put("thread_id", email.getThreadId());
         card.put("account_email", activeAccount != null ? activeAccount.getEmailAddress() : email.getAccount().getEmailAddress());
         card.put("sender", email.getSender());
+        
+        // Universal "You" recognition for Kanban
+        String senderEmail = email.getSender();
+        if (senderEmail != null && senderEmail.contains("<")) {
+            senderEmail = senderEmail.substring(senderEmail.indexOf("<") + 1, senderEmail.indexOf(">")).trim();
+        }
+        boolean isFromMe = false;
+        if (activeAccount != null && senderEmail != null && senderEmail.equalsIgnoreCase(activeAccount.getEmailAddress())) {
+            isFromMe = true;
+        }
+        card.put("is_from_me", isFromMe);
+
         card.put("subject", email.getSubject());
         card.put("summary", email.getSummary());
         card.put("summary_source", email.getSummarySource() != null ? email.getSummarySource().name() : null);
