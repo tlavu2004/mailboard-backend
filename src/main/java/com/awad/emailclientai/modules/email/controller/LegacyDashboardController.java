@@ -141,84 +141,67 @@ public class LegacyDashboardController {
             @RequestParam(required = false) Boolean hasAttachments,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int perPage,
-            @RequestParam(defaultValue = "date") String sortBy,
-            @RequestParam(defaultValue = "desc") String sortOrder
+            @RequestParam(required = false) List<String> sort // Format: "field,order" (e.g. "fromName,asc")
     ) {
         EmailAccount account = getPrimaryAccount(principal);
-        
-        // Map mailbox ID to status (lowercase)
         String status = id.toUpperCase();
         
         List<EmailEntity> emails = emailRepository.findAllByAccountIdOrderByKanbanOrderDescReceivedDateDesc(account.getId());
-        log.info("Bridge: Fetched {} emails from DB for account ID {}", emails.size(), account.getId());
         
+        // Final sort list construction
+        List<String> sortList = (sort == null || sort.isEmpty()) 
+            ? List.of("receivedDate:desc") 
+            : sort;
+
         String finalStatus = status;
         List<EmailEntity> filteredStream = emails.stream()
                 .filter(e -> {
                     boolean match = false;
-                    if ("STARRED".equalsIgnoreCase(finalStatus)) {
-                        match = e.isStarred();
-                    } else if ("INBOX".equalsIgnoreCase(finalStatus)) {
-                        // Only show emails with INBOX status or custom Kanban statuses
-                        // (anything that is NOT a system folder like SENT, DRAFTS, TRASH, SPAM)
+                    if ("STARRED".equalsIgnoreCase(finalStatus)) match = e.isStarred();
+                    else if ("INBOX".equalsIgnoreCase(finalStatus)) {
                         String s = e.getStatus();
-                        match = s != null && !s.equalsIgnoreCase("SENT") 
-                                && !s.equalsIgnoreCase("DRAFTS") 
-                                && !s.equalsIgnoreCase("TRASH") 
-                                && !s.equalsIgnoreCase("SPAM");
-                    } else {
-                        match = finalStatus.equalsIgnoreCase(e.getStatus());
-                    }
-                    
-                    if (!match && log.isDebugEnabled()) {
-                        log.debug("Email ID {} rejected by status filter (Status: {}, Target: {})", e.getId(), e.getStatus(), finalStatus);
-                    }
+                        match = s != null && !s.equalsIgnoreCase("SENT") && !s.equalsIgnoreCase("DRAFTS") && !s.equalsIgnoreCase("TRASH") && !s.equalsIgnoreCase("SPAM");
+                    } else match = finalStatus.equalsIgnoreCase(e.getStatus());
                     return match;
                 })
-                .filter(e -> {
-                    boolean match = unread == null || !unread || !e.isRead();
-                    if (!match && log.isDebugEnabled()) {
-                        log.debug("Email ID {} rejected by unread filter", e.getId());
-                    }
-                    return match;
-                })
-                .filter(e -> {
-                    boolean match = hasAttachments == null || !hasAttachments || e.isHasAttachments();
-                    if (!match && log.isDebugEnabled()) {
-                        log.debug("Email ID {} rejected by attachments filter", e.getId());
-                    }
-                    return match;
-                })
+                .filter(e -> unread == null || !unread || !e.isRead())
+                .filter(e -> hasAttachments == null || !hasAttachments || e.isHasAttachments())
                 .collect(Collectors.toList());
 
-        // Apply Sorting
-        if (sortBy != null) {
-            filteredStream.sort((a, b) -> {
+        // Apply Multi-Layer Sorting
+        filteredStream.sort((a, b) -> {
+            for (String s : sortList) {
+                String[] parts = s.split(":");
+                String field = parts[0];
+                String order = parts.length > 1 ? parts[1] : "desc";
+                
                 int cmp = 0;
-                if ("date".equals(sortBy)) {
+                if ("date".equals(field) || "receivedDate".equals(field)) {
                     if (a.getReceivedDate() == null || b.getReceivedDate() == null) cmp = 0;
                     else cmp = a.getReceivedDate().compareTo(b.getReceivedDate());
-                } else if ("sender".equals(sortBy)) {
-                    String s1 = a.getSender() != null ? a.getSender() : "";
-                    String s2 = b.getSender() != null ? b.getSender() : "";
-                    cmp = s1.compareToIgnoreCase(s2);
+                } else if ("fromName".equals(field) || "sender".equals(field)) {
+                    String n1 = (a.getFromName() != null && !a.getFromName().isBlank()) ? a.getFromName() : (a.getSender() != null ? a.getSender() : "");
+                    String n2 = (b.getFromName() != null && !b.getFromName().isBlank()) ? b.getFromName() : (b.getSender() != null ? b.getSender() : "");
+                    cmp = n1.compareToIgnoreCase(n2);
+                } else if ("subject".equals(field)) {
+                    String sub1 = (a.getSubject() != null ? a.getSubject() : "").replaceAll("&#039;", "\u0027").replaceAll("&quot;", "\"").replaceAll("&amp;", "&").replaceAll("^(?i)(Re|Fwd|Fw):\\s*", "").replaceAll("^[^\\p{L}\\p{N}]+", "").trim();
+                    String sub2 = (b.getSubject() != null ? b.getSubject() : "").replaceAll("&#039;", "\u0027").replaceAll("&quot;", "\"").replaceAll("&amp;", "&").replaceAll("^(?i)(Re|Fwd|Fw):\\s*", "").replaceAll("^[^\\p{L}\\p{N}]+", "").trim();
+                    cmp = sub1.compareToIgnoreCase(sub2);
                 }
-                return "desc".equalsIgnoreCase(sortOrder) ? -cmp : cmp;
-            });
-        }
+                
+                if (cmp != 0) {
+                    return "desc".equalsIgnoreCase(order) ? -cmp : cmp;
+                }
+            }
+            return 0;
+        });
 
-        List<Map<String, Object>> mapped = filteredStream.stream()
-            .map(e -> this.mapToFrontendEmail(e, account, principal))
-            .collect(Collectors.toList());
-
-        // Apply pagination (slice the mapped list)
-        int total = mapped.size();
+        // Pagination and return...
+        int total = filteredStream.size();
         int fromIndex = Math.max(0, (page - 1) * perPage);
         int toIndex = Math.min(fromIndex + perPage, total);
-        List<Map<String, Object>> pageSlice = new ArrayList<>();
-        if (fromIndex < total && fromIndex < toIndex) {
-            pageSlice = mapped.subList(fromIndex, toIndex);
-        }
+        List<Map<String, Object>> pageSlice = fromIndex < total ? filteredStream.subList(fromIndex, toIndex).stream()
+            .map(e -> this.mapToFrontendEmail(e, account, principal)).collect(Collectors.toList()) : new ArrayList<>();
 
         Map<String, Object> data = new HashMap<>();
         data.put("emails", pageSlice);
@@ -227,71 +210,75 @@ public class LegacyDashboardController {
         data.put("perPage", perPage);
         data.put("hasNextPage", toIndex < total);
 
-        log.info("Bridge: Returning paged emails {}/{} (page {}, perPage {}) for mailbox {} account {} (Filters: unread={}, hasAttachments={}, sort={} {})", 
-            pageSlice.size(), total, page, perPage, id, account.getId(), unread, hasAttachments, sortBy, sortOrder);
         return ResponseEntity.ok(ApiResponse.success(data));
     }
 
-    @GetMapping("/kanban")
+    @GetMapping("/mailboxes/{id}/kanban")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getKanban(
             @AuthenticationPrincipal UserPrincipal principal,
-            @RequestParam(required = false) Boolean unread,
-            @RequestParam(required = false) Boolean hasAttachments,
-            @RequestParam(defaultValue = "date") String sortBy,
-            @RequestParam(defaultValue = "desc") String sortOrder
+            @PathVariable String id,
+            @RequestParam(required = false) List<String> sort
     ) {
         EmailAccount account = getPrimaryAccount(principal);
+        String status = id.toUpperCase();
         List<EmailEntity> emails = emailRepository.findAllByAccountIdOrderByKanbanOrderDescReceivedDateDesc(account.getId());
         
-        // Apply Filters
+        List<String> sortList = (sort == null || sort.isEmpty()) ? List.of("receivedDate:desc") : sort;
+
+        String finalStatus = status;
         List<EmailEntity> filtered = emails.stream()
-                .filter(e -> unread == null || !unread || !e.isRead())
-                .filter(e -> hasAttachments == null || !hasAttachments || e.isHasAttachments())
+                .filter(e -> {
+                    if ("INBOX".equalsIgnoreCase(finalStatus)) {
+                        String s = e.getStatus();
+                        return s != null && !s.equalsIgnoreCase("SENT") && !s.equalsIgnoreCase("DRAFTS") && !s.equalsIgnoreCase("TRASH") && !s.equalsIgnoreCase("SPAM");
+                    }
+                    return finalStatus.equalsIgnoreCase(e.getStatus());
+                })
                 .collect(Collectors.toList());
 
-        // Apply Sorting
-        if (sortBy != null) {
-            filtered.sort((a, b) -> {
+        // Apply Multi-Layer Sorting
+        filtered.sort((a, b) -> {
+            for (String s : sortList) {
+                String[] parts = s.split(":");
+                String field = parts[0];
+                String order = parts.length > 1 ? parts[1] : "desc";
                 int cmp = 0;
-                if ("date".equals(sortBy)) {
+                if ("date".equals(field) || "receivedDate".equals(field)) {
                     if (a.getReceivedDate() == null || b.getReceivedDate() == null) cmp = 0;
                     else cmp = a.getReceivedDate().compareTo(b.getReceivedDate());
-                } else if ("sender".equals(sortBy)) {
-                    String s1 = a.getSender() != null ? a.getSender() : "";
-                    String s2 = b.getSender() != null ? b.getSender() : "";
-                    cmp = s1.compareToIgnoreCase(s2);
+                } else if ("fromName".equals(field) || "sender".equals(field)) {
+                    String n1 = (a.getFromName() != null && !a.getFromName().isBlank()) ? a.getFromName() : (a.getSender() != null ? a.getSender() : "");
+                    String n2 = (b.getFromName() != null && !b.getFromName().isBlank()) ? b.getFromName() : (b.getSender() != null ? b.getSender() : "");
+                    cmp = n1.compareToIgnoreCase(n2);
+                } else if ("subject".equals(field)) {
+                    String sub1 = (a.getSubject() != null ? a.getSubject() : "").replaceAll("&#039;", "\u0027").replaceAll("&quot;", "\"").replaceAll("&amp;", "&").replaceAll("^(?i)(Re|Fwd|Fw):\\s*", "").replaceAll("^[^\\p{L}\\p{N}]+", "").trim();
+                    String sub2 = (b.getSubject() != null ? b.getSubject() : "").replaceAll("&#039;", "\u0027").replaceAll("&quot;", "\"").replaceAll("&amp;", "&").replaceAll("^(?i)(Re|Fwd|Fw):\\s*", "").replaceAll("^[^\\p{L}\\p{N}]+", "").trim();
+                    cmp = sub1.compareToIgnoreCase(sub2);
                 }
-                return "desc".equalsIgnoreCase(sortOrder) ? -cmp : cmp;
-            });
-        }
+                if (cmp != 0) return "desc".equalsIgnoreCase(order) ? -cmp : cmp;
+            }
+            return 0;
+        });
 
+        // Map to Columns
         Map<String, List<Map<String, Object>>> columnsData = new HashMap<>();
-        
-        // Fetch dynamic columns for this account
         List<KanbanColumn> columns = kanbanService.getColumns(account.getId());
-        
-        // Initialize columns using linkedStatus
         for (KanbanColumn col : columns) {
             String statusKey = col.getLinkedStatus() != null ? col.getLinkedStatus().toUpperCase() : "INBOX";
             columnsData.put(statusKey, new ArrayList<>());
         }
 
         for (EmailEntity email : filtered) {
-            String status = email.getStatus() != null ? email.getStatus().toUpperCase() : "INBOX";
-            if (columnsData.containsKey(status)) {
-                columnsData.get(status).add(mapToKanbanCard(email, account));
-            } else {
-                // Fallback to INBOX if status doesn't match any dynamic column
-                if (columnsData.containsKey("INBOX")) {
-                    columnsData.get("INBOX").add(mapToKanbanCard(email, account));
-                }
+            String eStatus = email.getStatus() != null ? email.getStatus().toUpperCase() : "INBOX";
+            if (columnsData.containsKey(eStatus)) {
+                columnsData.get(eStatus).add(mapToKanbanCard(email, account));
+            } else if (columnsData.containsKey("INBOX")) {
+                columnsData.get("INBOX").add(mapToKanbanCard(email, account));
             }
         }
 
         Map<String, Object> result = new HashMap<>();
         result.put("columns", columnsData);
-        log.info("Bridge: Returning Dynamic Kanban board with {} columns (Filters: unread={}, hasAttachments={}, sort={} {})", 
-                columnsData.size(), unread, hasAttachments, sortBy, sortOrder);
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
