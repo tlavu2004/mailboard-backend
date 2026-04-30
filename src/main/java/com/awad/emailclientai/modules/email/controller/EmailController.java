@@ -112,7 +112,7 @@ public class EmailController {
             emailSyncService.syncEmailsForUser(principal.getId(), folderName, limit, page);
         }
         
-        return ResponseEntity.ok(ApiResponse.success("Sync completed"));
+        return ResponseEntity.ok(ApiResponse.success("Sync started in background"));
     }
 
     @PostMapping("/repair")

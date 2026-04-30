@@ -17,6 +17,7 @@ import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.scheduling.annotation.Async;
 
 import jakarta.mail.MessagingException;
 import jakarta.annotation.PostConstruct;
@@ -25,6 +26,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.Optional;
@@ -43,6 +45,8 @@ public class EmailService {
     private final GmailLabelService gmailLabelService;
     private final EmailSenderRepository emailSenderRepository;
     private final EmailAccountRepository emailAccountRepository;
+    private final NotificationWebSocketHandler notificationWebSocketHandler;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     @PostConstruct
     public void init() {
@@ -660,7 +664,7 @@ public class EmailService {
         return "<div class=\"mb-plain-text-body\">" + escaped + "</div>";
     }
 
-    @org.springframework.scheduling.annotation.Async
+    @Async
     @Transactional
     public void syncStatusToProvider(Long emailId, String previousStatus, String newStatus) {
         EmailEntity email = emailRepository.findById(emailId).orElse(null);
@@ -795,6 +799,33 @@ public class EmailService {
         } catch (Exception e) {
             log.error("Failed to sync flags/deletion to Gmail for email {}: {}", email.getUid(), e.getMessage());
         }
+
+        // Notify frontend
+        notifyUpdated(email.getAccount().getId(), emailId);
+    }
+
+    private void notifyUpdated(Long accountId, Long emailId) {
+        try {
+            Map<String, Object> payload = Map.of(
+                "type", "UPDATED_EMAILS",
+                "emailIds", List.of(emailId)
+            );
+            notificationWebSocketHandler.sendRawNotification(accountId, objectMapper.writeValueAsString(payload));
+        } catch (Exception e) {
+            log.warn("Failed to send WebSocket notification for email {}: {}", emailId, e.getMessage());
+        }
+    }
+
+    private void notifyDeleted(Long accountId, Long emailId) {
+        try {
+            Map<String, Object> payload = Map.of(
+                "type", "DELETED_EMAILS",
+                "emailIds", List.of(emailId)
+            );
+            notificationWebSocketHandler.sendRawNotification(accountId, objectMapper.writeValueAsString(payload));
+        } catch (Exception e) {
+            log.warn("Failed to send WebSocket deletion notification for email {}: {}", emailId, e.getMessage());
+        }
     }
 
     private String resolveFolderForStatus(String status, com.awad.emailclientai.modules.email.entity.EmailProvider provider) {
@@ -829,6 +860,7 @@ public class EmailService {
         return input.trim();
     }
 
+    @Async
     @Transactional
     public void emptyTrash(EmailAccount account) {
         List<EmailEntity> trashEmails = emailRepository.findAllByAccountIdAndStatus(account.getId(), "TRASH");
@@ -838,14 +870,23 @@ public class EmailService {
         try {
             boolean isGmail = account.getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL;
             if (isGmail) {
-                // For Gmail, we use batch delete or delete messages one by one
+                log.info("[EMPTY-TRASH] Bulk deleting {} Gmail messages for account {}", trashEmails.size(), account.getEmailAddress());
                 for (EmailEntity email : trashEmails) {
                     if (email.getGmailMessageId() != null) {
                         try {
                             gmailLabelService.deleteMessage(account, email.getMessageId(), email.getGmailMessageId());
+                            // After successful provider delete, we can safely delete from local DB
+                            Long deletedId = email.getId();
+                            emailRepository.delete(email);
+                            notifyDeleted(account.getId(), deletedId);
                         } catch (Exception e) {
                             log.warn("Failed to delete message {} from Gmail Trash: {}", email.getGmailMessageId(), e.getMessage());
                         }
+                    } else {
+                        // If no gmail ID but in TRASH, just delete locally to clean up
+                        Long deletedId = email.getId();
+                        emailRepository.delete(email);
+                        notifyDeleted(account.getId(), deletedId);
                     }
                 }
             } else {
@@ -882,11 +923,15 @@ public class EmailService {
                 String folder = resolveFolderForStatus(email.getStatus(), account.getProvider());
                 imapService.deleteMessage(account, folder, email.getUid());
             }
+            // Only delete locally if provider delete succeeds (or no provider ID)
+            emailRepository.delete(email);
+            notifyDeleted(account.getId(), emailId);
+            log.info("Permanently deleted email {} from local DB and provider", emailId);
         } catch (Exception e) {
             log.warn("Failed to delete email {} from provider: {}", emailId, e.getMessage());
+            // Optionally we could still delete locally if we want the app to be "clean" even if provider fails
+            emailRepository.delete(email);
+            notifyDeleted(account.getId(), emailId);
         }
-
-        emailRepository.delete(email);
-        log.info("Permanently deleted email {} from local DB and provider", emailId);
     }
 }

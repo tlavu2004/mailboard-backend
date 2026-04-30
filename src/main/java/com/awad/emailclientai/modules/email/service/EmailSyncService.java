@@ -2,6 +2,7 @@ package com.awad.emailclientai.modules.email.service;
 
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDetailDto;
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDto;
+import java.util.concurrent.ConcurrentHashMap;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.entity.EmailStatus;
@@ -13,6 +14,7 @@ import com.awad.emailclientai.modules.kanban.entity.KanbanColumn;
 import com.awad.emailclientai.modules.kanban.repository.KanbanColumnRepository;
 import com.awad.emailclientai.modules.kanban.service.KanbanService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import com.awad.emailclientai.shared.exception.BusinessException;
@@ -49,6 +51,7 @@ public class EmailSyncService {
     private final GmailLabelService gmailLabelService;
     private final TransactionTemplate transactionTemplate;
     private final EmailSenderRepository emailSenderRepository;
+    private final Set<String> activeSyncs = ConcurrentHashMap.newKeySet();
 
     public EmailSyncService(
             EmailRepository emailRepository,
@@ -84,6 +87,7 @@ public class EmailSyncService {
             "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS"
     );
 
+    @Async
     public void syncEmailsForAccount(Long accountId, String folderName, int limit, int page) {
         EmailAccount account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_ACCOUNT_NOT_FOUND));
@@ -91,6 +95,7 @@ public class EmailSyncService {
         syncAccount(account, folderName, limit, page);
     }
 
+    @Async
     public void syncEmailsForAccount(Long accountId, Long userId, String folderName, int limit, int page) {
         EmailAccount account = accountRepository.findByIdAndUserId(accountId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_ACCOUNT_NOT_FOUND));
@@ -415,14 +420,20 @@ public class EmailSyncService {
     }
 
     private void syncAccount(EmailAccount account, String folderName, int limit, int page) {
-        if (!imapService.testConnection(account)) {
-            log.info("Cannot connect to account: " + account.getEmailAddress());
+        String syncKey = account.getId() + ":" + folderName;
+        if (!activeSyncs.add(syncKey)) {
+            log.info("[V11-SYNC] Sync already in progress for key: {}. Skipping.", syncKey);
             return;
         }
 
-        Long accountId = account.getId();
-
         try {
+            if (!imapService.testConnection(account)) {
+                log.info("Cannot connect to account: " + account.getEmailAddress());
+                return;
+            }
+
+            Long accountId = account.getId();
+
             int currentLimit = limit > 0 ? limit : batchSize;
             int currentPage = page;
             int totalNewFound = 0;
@@ -496,8 +507,11 @@ public class EmailSyncService {
             } catch (Exception e) {
                 log.warn("[V11-SYNC] Failed to send WS notification: {}", e.getMessage());
             }
-        } catch (jakarta.mail.MessagingException e) {
+        } catch (Exception e) {
             log.error("Failed to fetch messages for account: " + account.getEmailAddress(), e);
+        } finally {
+            activeSyncs.remove(syncKey);
+            log.info("[V11-SYNC] Sync finished for key: {}", syncKey);
         }
     }
 
@@ -720,6 +734,19 @@ public class EmailSyncService {
                     log.info("[SYNC-PROTECT] Blocking status change from SENT to {} for email ID {}", targetStatus, existing.getId());
                 } else if ("DRAFTS".equalsIgnoreCase(existing.getStatus()) && "INBOX".equalsIgnoreCase(targetStatus)) {
                     log.info("[SYNC-PROTECT] Blocking status change from DRAFTS to INBOX for email ID {} (Preventing draft jump to Inbox)", existing.getId());
+                } else if (("TRASH".equalsIgnoreCase(existing.getStatus()) || "SPAM".equalsIgnoreCase(existing.getStatus())) && 
+                           !"TRASH".equalsIgnoreCase(targetStatus) && !"SPAM".equalsIgnoreCase(targetStatus)) {
+                    // PROTECTION: If email was recently moved to Trash/Spam (last 24 hours), don't let sync pull it back
+                    // This prevents the "mail coming back to Inbox" issue if Gmail haven't processed the label change yet
+                    LocalDateTime recentThreshold = LocalDateTime.now().minusHours(24);
+                    if (existing.getDeletedAt() != null && existing.getDeletedAt().isAfter(recentThreshold)) {
+                        log.info("[SYNC-PROTECT] Blocking provider from untrashing/unspamming recently deleted email ID {} (Provider says: {})", existing.getId(), targetStatus);
+                    } else {
+                        log.info("Updating status for email ID {} from {} to {} based on labels (Threshold passed)",
+                            existing.getId(), existing.getStatus(), targetStatus);
+                        existing.setStatus(targetStatus);
+                        changed = true;
+                    }
                 } else {
                     log.info("Updating status for email ID {} from {} to {} based on labels",
                         existing.getId(), existing.getStatus(), targetStatus);
@@ -850,9 +877,9 @@ public class EmailSyncService {
                     log.warn("Failed to refresh details for email ID {}: {}", entity.getId(), e.getMessage());
                 }
             }
-            } catch (DataIntegrityViolationException e) {
-                log.warn("Duplicate email detected during sync (messageId: {}), skipping.", msg.getMessageId());
-            }
+        } catch (DataIntegrityViolationException e) {
+            log.warn("Duplicate email detected during sync (messageId: {}), skipping.", msg.getMessageId());
+        }
             return null;
         }); // End transactionTemplate.execute
         } // End synchronized

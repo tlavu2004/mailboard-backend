@@ -507,7 +507,7 @@ public class LegacyDashboardController {
     ) {
         EmailAccount account = getPrimaryAccount(principal);
         emailService.emptyTrash(account);
-        return ResponseEntity.ok(ApiResponse.success("Trash emptied successfully"));
+        return ResponseEntity.ok(ApiResponse.success("Empty trash process started in background"));
     }
 
     @GetMapping("/gmail/labels")
