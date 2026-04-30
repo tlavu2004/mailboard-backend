@@ -298,6 +298,54 @@ public class GmailLabelService {
         }
     }
 
+    public void trashDraft(EmailAccount account, String gmailMessageId) throws IOException {
+        try {
+            trashDraftInternal(account, gmailMessageId, true);
+        } catch (GeneralSecurityException e) {
+            throw new IOException("Security error", e);
+        }
+    }
+
+    private void trashDraftInternal(EmailAccount account, String gmailMessageId, boolean retryOnAuthFailure) throws IOException, GeneralSecurityException {
+        try {
+            Gmail gmail = getGmailService(account);
+            gmail.users().messages().trash("me", gmailMessageId).execute();
+            log.info("Trashed Gmail draft message {} for {}", gmailMessageId, account.getEmailAddress());
+        } catch (GoogleJsonResponseException e) {
+            if (retryOnAuthFailure && e.getStatusCode() == 401) {
+                if (googleTokenService.refreshAccessToken(account) != null) {
+                    trashDraftInternal(account, gmailMessageId, false);
+                    return;
+                }
+            }
+            throw e;
+        }
+    }
+
+    public void deleteMessage(EmailAccount account, String messageId, String gmailMessageId) throws IOException {
+        try {
+            deleteMessageInternal(account, gmailMessageId, true);
+        } catch (GeneralSecurityException e) {
+            throw new IOException("Security error", e);
+        }
+    }
+
+    private void deleteMessageInternal(EmailAccount account, String gmailMessageId, boolean retryOnAuthFailure) throws IOException, GeneralSecurityException {
+        try {
+            Gmail gmail = getGmailService(account);
+            gmail.users().messages().delete("me", gmailMessageId).execute();
+            log.info("Permanently deleted Gmail message {} for {}", gmailMessageId, account.getEmailAddress());
+        } catch (GoogleJsonResponseException e) {
+            if (retryOnAuthFailure && e.getStatusCode() == 401) {
+                if (googleTokenService.refreshAccessToken(account) != null) {
+                    deleteMessageInternal(account, gmailMessageId, false);
+                    return;
+                }
+            }
+            throw e;
+        }
+    }
+
     private Message createGmailMessage(MimeMessage mimeMessage) throws IOException, MessagingException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         mimeMessage.writeTo(buffer);

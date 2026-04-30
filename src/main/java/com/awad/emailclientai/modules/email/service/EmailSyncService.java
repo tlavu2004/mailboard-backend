@@ -103,7 +103,6 @@ public class EmailSyncService {
      * Responds to Google Push notifications by fetching exactly what changed
      * since the last known history ID.
      */
-    @Transactional
     public void syncEmailsByHistory(EmailAccount account, Long newHistoryId) {
         if (account.getProvider() != EmailProvider.GMAIL || account.getWatchHistoryId() == null) {
             // Fallback to full system folder sync if no history tracking yet
@@ -119,8 +118,11 @@ public class EmailSyncService {
         if (historyList == null || historyList.isEmpty()) {
             log.info("[GmailHistory] No history records found since {}", startHistoryId);
             // Even if history is empty, update the ID to avoid re-syncing old history later
-            account.setWatchHistoryId(newHistoryId);
-            accountRepository.save(account);
+            transactionTemplate.execute(status -> {
+                account.setWatchHistoryId(newHistoryId);
+                accountRepository.save(account);
+                return null;
+            });
             return;
         }
 
@@ -147,66 +149,67 @@ public class EmailSyncService {
         for (String gmailId : affectedGmailMsgIds) {
             try {
                 var gmailMsg = gmailLabelService.getMessage(account, gmailId);
-                if (gmailMsg == null) {
-                    // Message deleted from Gmail, delete locally too
-                    emailRepository.findByGmailMessageId(gmailId).ifPresent(entity -> {
-                        emailRepository.delete(entity);
-                        log.info("[GmailHistory] Deleted local record for {} as it is missing on Gmail", gmailId);
-                    });
-                    continue;
-                }
+                
+                transactionTemplate.execute(txStatus -> {
+                    if (gmailMsg == null) {
+                        // Message deleted from Gmail, delete locally too
+                        emailRepository.findByGmailMessageId(gmailId).ifPresent(entity -> {
+                            emailRepository.delete(entity);
+                            log.info("[GmailHistory] Deleted local record for {} as it is missing on Gmail", gmailId);
+                        });
+                        return null;
+                    }
 
-                // Find local email by gmailMessageId
-                var existingOpt = emailRepository.findByGmailMessageId(gmailId);
-                if (existingOpt.isPresent()) {
-                    EmailEntity existing = existingOpt.get();
-                    
-                    // Update labels/status
-                    String newStatus = determineStatusFromGmailLabels(gmailMsg.getLabelIds(), account.getId());
-                    boolean changed = false;
-                    
-                    if (!newStatus.equals(existing.getStatus())) {
-                        log.info("[GmailHistory] Updating status for {} from {} to {} based on Gmail history",
-                            existing.getId(), existing.getStatus(), newStatus);
-                        existing.setStatus(newStatus);
-                        changed = true;
+                    // Find local email by gmailMessageId
+                    var existingOpt = emailRepository.findByGmailMessageId(gmailId);
+                    if (existingOpt.isPresent()) {
+                        EmailEntity existing = existingOpt.get();
+                        
+                        // Update labels/status
+                        String newStatus = determineStatusFromGmailLabels(gmailMsg.getLabelIds(), account.getId());
+                        boolean changed = false;
+                        
+                        if (!newStatus.equals(existing.getStatus())) {
+                            log.info("[GmailHistory] Updating status for {} from {} to {} based on Gmail history",
+                                existing.getId(), existing.getStatus(), newStatus);
+                            existing.setStatus(newStatus);
+                            changed = true;
+                        }
+                        
+                        // Also sync Read status from labels
+                        boolean isRead = !gmailMsg.getLabelIds().contains("UNREAD");
+                        if (isRead != existing.isRead()) {
+                            existing.setRead(isRead);
+                            changed = true;
+                        }
+                        
+                        if (changed) {
+                            emailRepository.save(existing);
+                            updatedDbIds.add(existing.getId());
+                        }
+                    } else {
+                        // It's a truly new email that's not in our DB yet.
+                        // Sync INBOX page 0 to discover it.
+                        syncAccount(account, "INBOX", 1, 0);
                     }
-                    
-                    // Also sync Read status from labels
-                    boolean isRead = !gmailMsg.getLabelIds().contains("UNREAD");
-                    if (isRead != existing.isRead()) {
-                        existing.setRead(isRead);
-                        changed = true;
-                    }
-                    
-                    if (changed) {
-                        emailRepository.save(existing);
-                        updatedDbIds.add(existing.getId());
-                    }
-                } else {
-                    // It's a truly new email that's not in our DB yet.
-                    // Sync INBOX page 0 to discover it.
-                    syncAccount(account, "INBOX", 1, 0);
-                }
+                    return null;
+                });
             } catch (Exception e) {
                 log.warn("[GmailHistory] Failed to process change for Gmail ID {}: {}", gmailId, e.getMessage());
             }
         }
 
         // Save progress
-        account.setWatchHistoryId(newHistoryId);
-        accountRepository.save(account);
+        transactionTemplate.execute(txStatus -> {
+            account.setWatchHistoryId(newHistoryId);
+            accountRepository.save(account);
+            return null;
+        });
 
         // Notify UI AFTER transaction commit to ensure frontend sees latest DB state
+        // Notify UI directly (since we are not in a long-running transaction anymore)
         if (!newDbIds.isEmpty() || !updatedDbIds.isEmpty()) {
-            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                new org.springframework.transaction.support.TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        notifyBulk(account.getId(), newDbIds, updatedDbIds);
-                    }
-                }
-            );
+            notifyBulk(account.getId(), newDbIds, updatedDbIds);
         }
     }
 
@@ -298,9 +301,8 @@ public class EmailSyncService {
     }
 
 
-    @Transactional
     public void refreshEmail(Long emailId) {
-        EmailEntity entity = emailRepository.findById(emailId).orElseThrow(() -> new RuntimeException("Email not found"));
+        EmailEntity entity = transactionTemplate.execute(status -> emailRepository.findById(emailId).orElseThrow(() -> new RuntimeException("Email not found")));
         EmailAccount account = entity.getAccount();
         
         try {
@@ -316,25 +318,31 @@ public class EmailSyncService {
                              : detail.getBodyText();
 
             if (newBody != null) {
-                entity.setBody(newBody);
-                String plainText = imapService.stripHtml(newBody);
-                entity.setSnippet(plainText.length() > 150 ? plainText.substring(0, 147) + "..." : plainText);
-                
-                // CRITICAL: Clear summary so it gets re-generated with new clean logic
-                entity.setSummary(null);
-                entity.setSummarySource(null);
-                
-                // CRITICAL: Clear and re-sync attachments to catch missing inline images (CIDs)
-                if (detail.getAttachments() != null) {
-                    if (detail.getAttachments().isEmpty() && entity.isHasAttachments()) {
-                        log.warn("[V9-SYNC-WARNING] Email ID: {} hasAttachments=true but IMAP detail returned 0 attachments!", emailId);
+                final String finalBody = newBody;
+                transactionTemplate.execute(txStatus -> {
+                    // Re-fetch within transaction to avoid detached entity issues
+                    EmailEntity activeEntity = emailRepository.findById(emailId).orElseThrow();
+                    
+                    activeEntity.setBody(finalBody);
+                    String plainText = imapService.stripHtml(finalBody);
+                    activeEntity.setSnippet(plainText.length() > 150 ? plainText.substring(0, 147) + "..." : plainText);
+                    
+                    // CRITICAL: Clear summary so it gets re-generated with new clean logic
+                    activeEntity.setSummary(null);
+                    activeEntity.setSummarySource(null);
+                    
+                    // CRITICAL: Clear and re-sync attachments to catch missing inline images (CIDs)
+                    if (detail.getAttachments() != null) {
+                        activeEntity.getAttachments().clear();
+                        activeEntity.getAttachments().addAll(mapDetailAttachments(detail.getAttachments(), activeEntity));
                     }
-                    entity.getAttachments().clear();
-                    entity.getAttachments().addAll(mapDetailAttachments(detail.getAttachments(), entity));
-                }
-                
+                    
+                    emailRepository.save(activeEntity);
+                    return null;
+                });
+
+                // Run embedding OUTSIDE transaction
                 generateAndSetEmbedding(entity, entity.getSubject(), newBody);
-                emailRepository.save(entity);
                 log.info("Successfully refreshed email ID: {} and cleared stale summary.", emailId);
             }
         } catch (Exception e) {
@@ -856,7 +864,6 @@ public class EmailSyncService {
      * Runs every minute.
      */
     @Scheduled(fixedRate = 10000)
-    @Transactional
     public void checkSnoozedEmails() {
         OffsetDateTime now = OffsetDateTime.now();
         List<EmailEntity> snoozedEmails = emailRepository.findBySnoozedUntilBeforeAndStatus(now, EmailStatus.SNOOZED);
@@ -867,16 +874,19 @@ public class EmailSyncService {
 
         java.util.Map<Long, java.util.List<Long>> unsnoozedByAccount = new java.util.HashMap<>();
 
-        for (EmailEntity email : snoozedEmails) {
-            log.info("Waking up email ID: {}", email.getId());
-            email.setStatus(EmailStatus.INBOX);
-            email.setSnoozedUntil(null);
-            emailRepository.save(email);
+        transactionTemplate.execute(txStatus -> {
+            for (EmailEntity email : snoozedEmails) {
+                log.info("Waking up email ID: {}", email.getId());
+                email.setStatus(EmailStatus.INBOX);
+                email.setSnoozedUntil(null);
+                emailRepository.save(email);
 
-            if (email.getAccount() != null && email.getAccount().getId() != null) {
-                unsnoozedByAccount.computeIfAbsent(email.getAccount().getId(), k -> new java.util.ArrayList<>()).add(email.getId());
+                if (email.getAccount() != null && email.getAccount().getId() != null) {
+                    unsnoozedByAccount.computeIfAbsent(email.getAccount().getId(), k -> new java.util.ArrayList<>()).add(email.getId());
+                }
             }
-        }
+            return null;
+        });
 
         // Notify frontend for each affected account, including explicit email IDs so FE can fetch and insert them
         if (!unsnoozedByAccount.isEmpty()) {
@@ -948,6 +958,22 @@ public class EmailSyncService {
      *   - If 0 or >1 custom labels -> default to INBOX
      */
     private String determineStatusFromLabels(MailMessageDto msg, Long accountId, String folderName) {
+        // PRIORITY 0: Gmail Labels check for critical system states (Trash/Spam must override Sent/Drafts)
+        if (msg.getLabels() != null) {
+            if (msg.getLabels().contains("TRASH")) {
+                return "TRASH";
+            }
+            if (msg.getLabels().contains("SPAM")) {
+                return "SPAM";
+            }
+            if (msg.getLabels().contains("DRAFT") || msg.getLabels().contains("DRAFTS")) {
+                return "DRAFTS";
+            }
+            if (msg.getLabels().contains("SENT")) {
+                return "SENT";
+            }
+        }
+
         // PRIORITY 1: IMAP Folder Name (Most reliable for system states like SENT, DRAFTS, TRASH)
         String folderStatus = determineStatusFromFolder(folderName);
         if (folderStatus != null && !EmailStatus.INBOX.equalsIgnoreCase(folderStatus)) {
@@ -968,10 +994,11 @@ public class EmailSyncService {
             return EmailStatus.INBOX;
         }
 
+        // V43: Prioritize TRASH and SPAM over others to prevent bouncing
         if (containsSystemLabel(labels, "TRASH") || containsSystemLabel(labels, "\\\\TRASH")) {
             return "TRASH";
         }
-        if (containsSystemLabel(labels, "SPAM") || containsSystemLabel(labels, "\\\\SPAM") || containsSystemLabel(labels, "JUNK")) {
+        if (containsSystemLabel(labels, "SPAM")) {
             return "SPAM";
         }
         if (containsSystemLabel(labels, "SENT")) {

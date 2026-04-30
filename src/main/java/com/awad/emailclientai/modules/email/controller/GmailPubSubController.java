@@ -27,6 +27,7 @@ public class GmailPubSubController {
     private final EmailSyncService emailSyncService;
     private final com.awad.emailclientai.modules.email.service.ImapService imapService;
     private final ObjectMapper objectMapper;
+    private final java.util.concurrent.Executor mailSyncExecutor;
 
     @org.springframework.beans.factory.annotation.Value("${app.mail.sync.batch-size:20}")
     private int batchSize;
@@ -59,8 +60,8 @@ public class GmailPubSubController {
             if (accountOpt.isPresent()) {
                 EmailAccount account = accountOpt.get();
                 
-                // Trigger sync in a separate thread (non-blocking for Google)
-                new Thread(() -> {
+                // Trigger sync in a managed thread pool (non-blocking for Google)
+                mailSyncExecutor.execute(() -> {
                     try {
                         // Use efficient Gmail History API to find exactly what changed (Labels, Moves, etc.)
                         try {
@@ -90,7 +91,7 @@ public class GmailPubSubController {
                     } catch (Exception e) {
                         log.error("Error during triggered sync for {}", emailAddress, e);
                     }
-                }).start();
+                });
             } else {
                 log.warn("Received notification for unknown account: {}", emailAddress);
             }

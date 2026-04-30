@@ -239,6 +239,13 @@ public class EmailAccountService {
         }
     }
 
+    public void trashDraft(Long userId, Long accountId, String gmailMessageId) throws IOException {
+        EmailAccount account = getAccountForUser(userId, accountId);
+        if (account.getProvider() == EmailProvider.GMAIL) {
+            gmailLabelService.trashDraft(account, gmailMessageId);
+        }
+    }
+
     /**
      * Downloads an attachment.
      */

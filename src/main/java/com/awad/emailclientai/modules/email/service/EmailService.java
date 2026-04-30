@@ -3,6 +3,7 @@ package com.awad.emailclientai.modules.email.service;
 import com.awad.emailclientai.modules.email.dto.response.EmailEntityDto;
 import com.awad.emailclientai.modules.email.entity.EmailAttachment;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
+import com.awad.emailclientai.modules.email.entity.EmailStatus;
 import com.awad.emailclientai.modules.email.repository.EmailAttachmentRepository;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import com.awad.emailclientai.modules.email.repository.EmailSenderRepository;
@@ -22,6 +23,7 @@ import jakarta.annotation.PostConstruct;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -280,6 +282,7 @@ public class EmailService {
                 .accountEmail(entity.getAccount().getEmailAddress())
                 .attachments(attachments)
                 .gmailDraftId(entity.getGmailDraftId())
+                .deletedAt(entity.getDeletedAt())
                 .gmailLink(entity.getGmailMessageId() != null ?
                     // Use u/0 plus authuser param to allow Gmail to open the correct signed-in account
                     String.format("https://mail.google.com/mail/u/0/?authuser=%s#inbox/%s",
@@ -658,7 +661,14 @@ public class EmailService {
     }
 
     @org.springframework.scheduling.annotation.Async
-    public void syncStatusToProvider(EmailEntity email, String previousStatus, String newStatus) {
+    @Transactional
+    public void syncStatusToProvider(Long emailId, String previousStatus, String newStatus) {
+        EmailEntity email = emailRepository.findById(emailId).orElse(null);
+        if (email == null) {
+            log.warn("Async sync failed: Email {} not found", emailId);
+            return;
+        }
+        
         if (previousStatus == null) previousStatus = "INBOX";
         if (newStatus == null) newStatus = "INBOX";
         
@@ -711,7 +721,14 @@ public class EmailService {
     }
 
     @org.springframework.scheduling.annotation.Async
-    public void syncFlagsAndLabelsToProvider(EmailEntity email, String previousStatus, List<String> normalizedAdd, List<String> normalizedRemove) {
+    @Transactional
+    public void syncFlagsAndLabelsToProvider(Long emailId, String previousStatus, List<String> normalizedAdd, List<String> normalizedRemove) {
+        EmailEntity email = emailRepository.findById(emailId).orElse(null);
+        if (email == null) {
+            log.warn("Async sync failed: Email {} not found", emailId);
+            return;
+        }
+        
         try {
             boolean isGmail = email.getAccount().getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL;
             String sourceFolder = resolveFolderForStatus(previousStatus, email.getAccount().getProvider());
@@ -744,23 +761,36 @@ public class EmailService {
                     imapService.moveMessageByMessageId(email.getAccount(), sourceFolder, spamFolder, email.getMessageId());
                 }
                 log.info("Successfully moved email (UID: {}) to SPAM", email.getUid());
-            } else if (normalizedAdd.contains("INBOX") && normalizedRemove.contains("TRASH")) {
+            } else if (normalizedAdd.contains("INBOX") && (normalizedRemove.contains("TRASH") || normalizedRemove.contains("SPAM"))) {
+                String currentStatus = email.getStatus();
+                boolean isDraftOrSent = "DRAFTS".equalsIgnoreCase(currentStatus) || "DRAFT".equalsIgnoreCase(currentStatus) || "SENT".equalsIgnoreCase(currentStatus);
+                
                 if (isGmail) {
-                    gmailLabelService.untrashMessage(email.getAccount(), email.getMessageId(), email.getGmailMessageId());
-                    gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("INBOX"), List.of("SPAM"));
+                    if (normalizedRemove.contains("TRASH")) {
+                        gmailLabelService.untrashMessage(email.getAccount(), email.getMessageId(), email.getGmailMessageId());
+                    }
+                    
+                    List<String> labelsToAdd = new ArrayList<>();
+                    List<String> labelsToRemove = new ArrayList<>(normalizedRemove);
+                    
+                    if (!isDraftOrSent) {
+                        // If it's a custom status (Kanban), add its label. Otherwise add INBOX.
+                        if (!EmailStatus.INBOX.equalsIgnoreCase(currentStatus)) {
+                            labelsToAdd.add(currentStatus);
+                        } else {
+                            labelsToAdd.add("INBOX");
+                        }
+                    }
+                    
+                    if (!labelsToAdd.isEmpty() || !labelsToRemove.isEmpty()) {
+                        gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), labelsToAdd, labelsToRemove);
+                    }
                 } else {
-                    String trashFolder = resolveFolderForStatus("TRASH", email.getAccount().getProvider());
-                    imapService.moveMessageByMessageId(email.getAccount(), trashFolder, "INBOX", email.getMessageId());
+                    String fromFolder = normalizedRemove.contains("TRASH") ? resolveFolderForStatus("TRASH", email.getAccount().getProvider()) : resolveFolderForStatus("SPAM", email.getAccount().getProvider());
+                    String targetFolder = resolveFolderForStatus(currentStatus, email.getAccount().getProvider());
+                    imapService.moveMessageByMessageId(email.getAccount(), fromFolder, targetFolder, email.getMessageId());
                 }
-                log.info("Successfully restored email (UID: {}) from TRASH to INBOX", email.getUid());
-            } else if (normalizedAdd.contains("INBOX") && normalizedRemove.contains("SPAM")) {
-                if (isGmail) {
-                    gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), List.of("INBOX"), List.of("SPAM", "TRASH"));
-                } else {
-                    String spamFolder = resolveFolderForStatus("SPAM", email.getAccount().getProvider());
-                    imapService.moveMessageByMessageId(email.getAccount(), spamFolder, "INBOX", email.getMessageId());
-                }
-                log.info("Successfully moved email (UID: {}) from SPAM to INBOX", email.getUid());
+                log.info("Successfully restored email (UID: {}) to {}", email.getUid(), currentStatus);
             }
         } catch (Exception e) {
             log.error("Failed to sync flags/deletion to Gmail for email {}: {}", email.getUid(), e.getMessage());
@@ -797,5 +827,66 @@ public class EmailService {
             }
         }
         return input.trim();
+    }
+
+    @Transactional
+    public void emptyTrash(EmailAccount account) {
+        List<EmailEntity> trashEmails = emailRepository.findAllByAccountIdAndStatus(account.getId(), "TRASH");
+        log.info("[EMPTY-TRASH] Found {} emails in TRASH for account {}", trashEmails.size(), account.getEmailAddress());
+        if (trashEmails.isEmpty()) return;
+
+        try {
+            boolean isGmail = account.getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL;
+            if (isGmail) {
+                // For Gmail, we use batch delete or delete messages one by one
+                for (EmailEntity email : trashEmails) {
+                    if (email.getGmailMessageId() != null) {
+                        try {
+                            gmailLabelService.deleteMessage(account, email.getMessageId(), email.getGmailMessageId());
+                        } catch (Exception e) {
+                            log.warn("Failed to delete message {} from Gmail Trash: {}", email.getGmailMessageId(), e.getMessage());
+                        }
+                    }
+                }
+            } else {
+                // For IMAP, we need to mark as deleted and expunge
+                String trashFolder = resolveFolderForStatus("TRASH", account.getProvider());
+                for (EmailEntity email : trashEmails) {
+                    try {
+                        imapService.deleteMessage(account, trashFolder, email.getUid());
+                    } catch (Exception e) {
+                        log.warn("Failed to delete message {} from IMAP Trash: {}", email.getUid(), e.getMessage());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error clearing provider trash for account {}: {}", account.getEmailAddress(), e.getMessage());
+        }
+
+        // Always clear from local DB
+        emailRepository.deleteAll(trashEmails);
+        log.info("Emptied TRASH for account {}: removed {} records", account.getEmailAddress(), trashEmails.size());
+    }
+
+    @Transactional
+    public void deleteEmailPermanently(Long emailId) {
+        EmailEntity email = emailRepository.findById(emailId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_NOT_FOUND, "Email not found"));
+        EmailAccount account = email.getAccount();
+
+        try {
+            boolean isGmail = account.getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL;
+            if (isGmail && email.getGmailMessageId() != null) {
+                gmailLabelService.deleteMessage(account, email.getMessageId(), email.getGmailMessageId());
+            } else if (!isGmail) {
+                String folder = resolveFolderForStatus(email.getStatus(), account.getProvider());
+                imapService.deleteMessage(account, folder, email.getUid());
+            }
+        } catch (Exception e) {
+            log.warn("Failed to delete email {} from provider: {}", emailId, e.getMessage());
+        }
+
+        emailRepository.delete(email);
+        log.info("Permanently deleted email {} from local DB and provider", emailId);
     }
 }

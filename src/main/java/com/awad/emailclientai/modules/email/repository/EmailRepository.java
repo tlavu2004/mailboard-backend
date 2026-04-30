@@ -26,6 +26,7 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     
     List<EmailEntity> findByStatus(String status);
     List<EmailEntity> findAllByAccountIdAndStatus(Long accountId, String status);
+    long countByAccountIdAndStatus(Long accountId, String status);
     java.util.Optional<EmailEntity> findFirstByAccountIdAndThreadIdAndStatusOrderByReceivedDateDesc(Long accountId, String threadId, String status);
     
     @Query(value = "SELECT * FROM emails WHERE account_id = :accountId AND " +
@@ -63,10 +64,12 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     List<Object[]> searchEmailsWithScore(@Param("accountId") Long accountId, @Param("query") String query);
 
     @Modifying
+    @Transactional
     @Query(value = "UPDATE emails SET embedding_768 = cast(:embedding as vector) WHERE id = :id", nativeQuery = true)
     void updateEmbedding768(@Param("id") Long id, @Param("embedding") String embedding);
 
     @Modifying
+    @Transactional
     @Query(value = "UPDATE emails SET embedding_384 = cast(:embedding as vector) WHERE id = :id", nativeQuery = true)
     void updateEmbedding384(@Param("id") Long id, @Param("embedding") String embedding);
 
@@ -122,11 +125,14 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.receivedDate >= :startDate")
     long countByAccountId(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
  
-    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isRead = false AND e.receivedDate >= :startDate")
+    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isRead = false AND (e.status IS NULL OR e.status NOT IN ('TRASH', 'SPAM'))")
     long countUnreadByAccountId(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
  
-    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isStarred = true AND e.receivedDate >= :startDate")
+    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isStarred = true AND (e.status IS NULL OR e.status NOT IN ('TRASH', 'SPAM'))")
     long countStarredByAccountId(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
+
+    @Query("SELECT e FROM EmailEntity e WHERE e.account.id = :accountId AND e.isStarred = true AND (e.status IS NULL OR e.status NOT IN ('TRASH', 'SPAM'))")
+    List<EmailEntity> findStarredByAccountId(@Param("accountId") Long accountId);
 
     @Query("SELECT e FROM EmailEntity e WHERE e.account.id = :accountId AND " +
            "(e.body LIKE '%body {%' OR e.body LIKE '%.ie-browser%' OR e.body LIKE '%.mso-container%' OR e.body LIKE '%ExternalClass%')")
@@ -138,4 +144,9 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     @Transactional
     @Query("UPDATE EmailEntity e SET e.fromName = :name WHERE (e.fromName IS NULL OR e.fromName = e.sender OR e.fromName LIKE '%@%') AND LOWER(e.sender) LIKE LOWER(CONCAT('%', :sender, '%'))")
     void updateFromNameBySender(@Param("sender") String sender, @Param("name") String name);
+
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM EmailEntity e WHERE e.status = 'TRASH' AND e.deletedAt < :threshold")
+    void deleteOldTrash(@Param("threshold") LocalDateTime threshold);
 }

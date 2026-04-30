@@ -23,6 +23,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -43,7 +46,6 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/v1")
 @RequiredArgsConstructor
 @Slf4j
-@org.springframework.transaction.annotation.Transactional
 public class LegacyDashboardController {
 
     private final EmailAccountRepository emailAccountRepository;
@@ -69,28 +71,35 @@ public class LegacyDashboardController {
         
         int unreadCount = 0;
         int draftsCount = 0;
+        int starredCount = 0;
+        int trashCount = 0;
+        int spamCount = 0;
+
         try {
             EmailAccount account = getPrimaryAccount(principal);
             unreadCount = (int) emailRepository.countUnreadByAccountId(account.getId(), LocalDateTime.of(1970, 1, 1, 0, 0));
+            starredCount = (int) emailRepository.countStarredByAccountId(account.getId(), LocalDateTime.of(1970, 1, 1, 0, 0));
             
-            // Debug: count drafts and log them
-            List<EmailEntity> dbDrafts = emailRepository.findAllByAccountIdAndStatus(account.getId(), "DRAFTS");
-            draftsCount = dbDrafts.size();
-            if (draftsCount > 0) {
-                log.info("[INVESTIGATION] Found {} drafts in DB for account {}:", draftsCount, account.getEmailAddress());
-                dbDrafts.forEach(d -> log.info("  - ID: {}, Subject: {}, GmailDraftId: {}, MsgId: {}, Created: {}", 
-                    d.getId(), d.getSubject(), d.getGmailDraftId(), d.getGmailMessageId(), d.getReceivedDate()));
-            }
+            draftsCount = (int) (emailRepository.countByAccountIdAndStatus(account.getId(), "DRAFTS") + 
+                               emailRepository.countByAccountIdAndStatus(account.getId(), "DRAFT"));
+            
+            trashCount = (int) emailRepository.countByAccountIdAndStatus(account.getId(), "TRASH");
+            spamCount = (int) emailRepository.countByAccountIdAndStatus(account.getId(), "SPAM");
+            long sentCount = emailRepository.countByAccountIdAndStatus(account.getId(), "SENT");
+
+            mailboxes.add(createMailbox("INBOX", "Inbox", "InboxOutlined", unreadCount, "system"));
+            mailboxes.add(createMailbox("STARRED", "Starred", "StarOutlined", starredCount, "system"));
+            mailboxes.add(createMailbox("SENT", "Sent", "SendOutlined", (int) sentCount, "system"));
+            mailboxes.add(createMailbox("DRAFTS", "Drafts", "FileOutlined", draftsCount, "system"));
+            mailboxes.add(createMailbox("TRASH", "Trash", "DeleteOutlined", trashCount, "system"));
+            mailboxes.add(createMailbox("SPAM", "Spam", "FolderOutlined", spamCount, "system"));
         } catch (Exception e) {
             log.warn("Could not get counts for mailbox list: {}", e.getMessage());
+            // Ensure we at least have basic mailboxes even on failure
+            if (mailboxes.isEmpty()) {
+                mailboxes.add(createMailbox("INBOX", "Inbox", "InboxOutlined", 0, "system"));
+            }
         }
-
-        mailboxes.add(createMailbox("INBOX", "Inbox", "InboxOutlined", unreadCount, "system"));
-        mailboxes.add(createMailbox("STARRED", "Starred", "StarOutlined", 0, "system"));
-        mailboxes.add(createMailbox("SENT", "Sent", "SendOutlined", 0, "system"));
-        mailboxes.add(createMailbox("DRAFTS", "Drafts", "FileOutlined", draftsCount, "system"));
-        mailboxes.add(createMailbox("TRASH", "Trash", "DeleteOutlined", 0, "system"));
-        mailboxes.add(createMailbox("SPAM", "Spam", "FolderOutlined", 0, "system"));
 
         Map<String, Object> data = new HashMap<>();
         data.put("mailboxes", mailboxes);
@@ -134,6 +143,7 @@ public class LegacyDashboardController {
     }
 
     @GetMapping("/mailboxes/{id}/emails")
+    @Transactional(readOnly = true)
     public ResponseEntity<ApiResponse<Map<String, Object>>> getEmailsByMailbox(
             @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable String id,
@@ -141,35 +151,46 @@ public class LegacyDashboardController {
             @RequestParam(required = false) Boolean hasAttachments,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int perPage,
-            @RequestParam(required = false) List<String> sort // Format: "field,order" (e.g. "fromName,asc")
+            @RequestParam(required = false) List<String> sort 
     ) {
         EmailAccount account = getPrimaryAccount(principal);
         String status = id.toUpperCase();
         
-        List<EmailEntity> emails = emailRepository.findAllByAccountIdOrderByKanbanOrderDescReceivedDateDesc(account.getId());
+        log.info("[API-REQUEST] getEmailsByMailbox: mailboxId={}, status={}, accountId={}", id, status, account.getId());
         
         // Final sort list construction
         List<String> sortList = (sort == null || sort.isEmpty()) 
             ? List.of("receivedDate:desc") 
             : sort;
 
-        String finalStatus = status;
-        List<EmailEntity> filteredStream = emails.stream()
+        // V43: Fetch filtered data directly from DB for performance and consistency
+        List<EmailEntity> filteredStream;
+        if ("INBOX".equalsIgnoreCase(status)) {
+            // Inbox is a special "folder" that excludes Sent, Drafts, Trash, Spam
+            filteredStream = emailRepository.findAllByAccountIdOrderByKanbanOrderDescReceivedDateDesc(account.getId()).stream()
                 .filter(e -> {
-                    boolean match = false;
-                    if ("STARRED".equalsIgnoreCase(finalStatus)) match = e.isStarred();
-                    else if ("INBOX".equalsIgnoreCase(finalStatus)) {
-                        String s = e.getStatus();
-                        match = s != null && !s.equalsIgnoreCase("SENT") && !s.equalsIgnoreCase("DRAFTS") && !s.equalsIgnoreCase("TRASH") && !s.equalsIgnoreCase("SPAM");
-                    } else match = finalStatus.equalsIgnoreCase(e.getStatus());
-                    return match;
-                })
+                    String s = e.getStatus();
+                    return s != null && !s.equalsIgnoreCase("SENT") && !s.equalsIgnoreCase("DRAFTS") && !s.equalsIgnoreCase("DRAFT") && !s.equalsIgnoreCase("TRASH") && !s.equalsIgnoreCase("SPAM");
+                }).collect(Collectors.toList());
+        } else if ("STARRED".equalsIgnoreCase(status)) {
+            filteredStream = emailRepository.findStarredByAccountId(account.getId());
+        } else if ("DRAFTS".equalsIgnoreCase(status) || "DRAFT".equalsIgnoreCase(status)) {
+            filteredStream = emailRepository.findAllByAccountIdAndStatus(account.getId(), "DRAFTS");
+            if (filteredStream.isEmpty()) {
+                filteredStream = emailRepository.findAllByAccountIdAndStatus(account.getId(), "DRAFT");
+            }
+        } else {
+            filteredStream = emailRepository.findAllByAccountIdAndStatus(account.getId(), status);
+        }
+
+        // Apply secondary filters
+        List<EmailEntity> processedList = filteredStream.stream()
                 .filter(e -> unread == null || !unread || !e.isRead())
                 .filter(e -> hasAttachments == null || !hasAttachments || e.isHasAttachments())
                 .collect(Collectors.toList());
 
         // Apply Multi-Layer Sorting
-        filteredStream.sort((a, b) -> {
+        processedList.sort((a, b) -> {
             for (String s : sortList) {
                 String[] parts = s.split(":");
                 String field = parts[0];
@@ -196,11 +217,10 @@ public class LegacyDashboardController {
             return 0;
         });
 
-        // Pagination and return...
-        int total = filteredStream.size();
+        int total = processedList.size();
         int fromIndex = Math.max(0, (page - 1) * perPage);
         int toIndex = Math.min(fromIndex + perPage, total);
-        List<Map<String, Object>> pageSlice = fromIndex < total ? filteredStream.subList(fromIndex, toIndex).stream()
+        List<Map<String, Object>> pageSlice = fromIndex < total ? processedList.subList(fromIndex, toIndex).stream()
             .map(e -> this.mapToFrontendEmail(e, account, principal)).collect(Collectors.toList()) : new ArrayList<>();
 
         Map<String, Object> data = new HashMap<>();
@@ -210,6 +230,7 @@ public class LegacyDashboardController {
         data.put("perPage", perPage);
         data.put("hasNextPage", toIndex < total);
 
+        log.info("[API-RESPONSE] getEmailsByMailbox: mailboxId={}, found={} emails, total={}", id, pageSlice.size(), total);
         return ResponseEntity.ok(ApiResponse.success(data));
     }
 
@@ -296,13 +317,22 @@ public class LegacyDashboardController {
         String previousStatus = email.getStatus();
         email.setStatus(toStatus);
         
+        // Handle Trash logic
+        if ("TRASH".equalsIgnoreCase(toStatus)) {
+            email.setPreviousStatus(previousStatus);
+            email.setDeletedAt(LocalDateTime.now());
+        } else if ("TRASH".equalsIgnoreCase(previousStatus)) {
+            // Restoring from trash
+            email.setDeletedAt(null);
+        }
+
         if (request.containsKey("kanban_order")) {
             email.setKanbanOrder(Double.parseDouble(request.get("kanban_order").toString()));
         }
         
         emailRepository.save(email);
         
-        emailService.syncStatusToProvider(email, previousStatus, toStatus);
+        emailService.syncStatusToProvider(email.getId(), previousStatus, toStatus);
         
         EmailAccount account = getPrimaryAccount(principal);
         
@@ -367,6 +397,7 @@ public class LegacyDashboardController {
     }
 
     @PostMapping("/emails/{id}/modify")
+    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<ApiResponse<Map<String, Object>>> modifyEmail(
             @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable String id,
@@ -414,28 +445,70 @@ public class LegacyDashboardController {
         }
         
         if (normalizedAdd.contains("TRASH")) {
+            email.setPreviousStatus(email.getStatus());
+            email.setDeletedAt(LocalDateTime.now());
             email.setStatus("TRASH");
             changed = true;
         }
 
         if (normalizedAdd.contains("INBOX")) {
-            email.setStatus(EmailStatus.INBOX);
+            // Restore logic: return to previous status if available (e.g. DRAFTS)
+            if (email.getPreviousStatus() != null && !email.getPreviousStatus().equalsIgnoreCase("TRASH")) {
+                email.setStatus(email.getPreviousStatus());
+            } else {
+                email.setStatus(EmailStatus.INBOX);
+            }
+            email.setDeletedAt(null);
             changed = true;
         }
         
         if (changed) {
             emailRepository.saveAndFlush(email);
             
-            // Sync to Gmail asynchronously to prevent 504 Gateway Timeouts
-            emailService.syncFlagsAndLabelsToProvider(email, previousStatus, normalizedAdd, normalizedRemove);
+            // V43: Use TransactionSynchronization to ensure async sync starts ONLY after DB commit
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        emailService.syncFlagsAndLabelsToProvider(email.getId(), previousStatus, normalizedAdd, normalizedRemove);
+                    }
+                });
+            } else {
+                emailService.syncFlagsAndLabelsToProvider(email.getId(), previousStatus, normalizedAdd, normalizedRemove);
+            }
         }
         
         EmailAccount account = getPrimaryAccount(principal);
         return ResponseEntity.ok(ApiResponse.success(mapToFrontendEmail(email, account, principal)));
     }
 
+    @DeleteMapping("/emails/{id}")
+    @org.springframework.transaction.annotation.Transactional
+    public ResponseEntity<ApiResponse<Void>> deleteEmail(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long id
+    ) {
+        EmailAccount account = getPrimaryAccount(principal);
+        EmailEntity email = emailRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Email not found"));
+        
+        if (!email.getAccount().getId().equals(account.getId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
 
+        emailService.deleteEmailPermanently(id);
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
 
+    @DeleteMapping("/mailboxes/TRASH/empty")
+    @org.springframework.transaction.annotation.Transactional
+    public ResponseEntity<ApiResponse<Void>> emptyTrash(
+            @AuthenticationPrincipal UserPrincipal principal
+    ) {
+        EmailAccount account = getPrimaryAccount(principal);
+        emailService.emptyTrash(account);
+        return ResponseEntity.ok(ApiResponse.success("Trash emptied successfully"));
+    }
 
     @GetMapping("/gmail/labels")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getGmailLabels(
@@ -616,6 +689,8 @@ public class LegacyDashboardController {
             m.put("summary", entity.getSummary());
             m.put("status", entity.getStatus());
             m.put("mailboxId", entity.getStatus() != null ? entity.getStatus() : "INBOX");
+            m.put("deletedAt", entity.getDeletedAt() != null ? entity.getDeletedAt().atZone(ZoneId.systemDefault()).toInstant().toString() : null);
+            m.put("previousStatus", entity.getPreviousStatus());
             
             return m;
         } catch (Exception e) {

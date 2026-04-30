@@ -49,6 +49,7 @@ public class EmailEntityDto {
     private String accountEmail;
     @com.fasterxml.jackson.annotation.JsonProperty("isFromMe")
     private boolean isFromMe;
+    private LocalDateTime deletedAt;
     private List<AttachmentDto> attachments;
 
     @Data

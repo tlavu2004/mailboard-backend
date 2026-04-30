@@ -33,9 +33,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
-
 import org.springframework.transaction.annotation.Transactional;
-
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -287,7 +285,7 @@ public class EmailController {
         return ResponseEntity.ok(ApiResponse.success("Email sent successfully", emailService.mapToDto(entity)));
     }
 
-    @PostMapping("/draft")
+    @PostMapping({"/draft", "/drafts"})
     @Operation(summary = "Save or Update Draft")
     @Transactional
     public ResponseEntity<ApiResponse<EmailEntityDto>> saveDraft(
@@ -364,26 +362,43 @@ public class EmailController {
             @RequestParam(required = false) Long emailId) throws IOException {
         EmailAccount account = fetchPrimaryAccount(principal);
         
-        // 1. Delete from Gmail if we have a valid Gmail Draft ID
+        // 1. Move to Trash on Gmail if we have a valid Gmail Message ID
         if (draftId != null && !draftId.isEmpty() && !draftId.equals("undefined")) {
             try {
-                emailAccountService.deleteDraft(principal.getId(), account.getId(), draftId);
+                // To trash a draft in Gmail, we should trash its associated message
+                // We fetch the entity to get the gmailMessageId
+                EmailEntity entity = emailId != null 
+                    ? emailRepository.findById(emailId).orElse(null)
+                    : emailRepository.findByGmailDraftId(draftId).orElse(null);
+                
+                if (entity != null && entity.getGmailMessageId() != null) {
+                    emailAccountService.trashDraft(principal.getId(), account.getId(), entity.getGmailMessageId());
+                    log.info("Trashed Gmail draft message: {}", entity.getGmailMessageId());
+                } else {
+                    // Fallback to permanent delete if we don't have messageId
+                    emailAccountService.deleteDraft(principal.getId(), account.getId(), draftId);
+                }
             } catch (Exception e) {
-                log.warn("Failed to delete draft from Gmail (id: {}): {}", draftId, e.getMessage());
+                log.warn("Failed to trash/delete draft from Gmail (id: {}): {}", draftId, e.getMessage());
             }
         }
         
-        // 2. Delete from local repository by local ID (most reliable)
+        // 2. Update local repository status to TRASH instead of deleting
         if (emailId != null) {
             emailRepository.findById(emailId).ifPresent(entity -> {
-                emailRepository.delete(entity);
-                log.info("Deleted local draft record by local emailId: {}", emailId);
+                entity.setPreviousStatus(entity.getStatus());
+                entity.setStatus("TRASH");
+                entity.setDeletedAt(java.time.LocalDateTime.now());
+                emailRepository.save(entity);
+                log.info("Moved local draft record to TRASH: {}", emailId);
             });
         } else if (draftId != null && !draftId.isEmpty() && !draftId.equals("undefined")) {
-            // Fallback: Delete by gmailDraftId
             emailRepository.findByGmailDraftId(draftId).ifPresent(entity -> {
-                emailRepository.delete(entity);
-                log.info("Deleted local draft record by gmailDraftId fallback: {}", draftId);
+                entity.setPreviousStatus(entity.getStatus());
+                entity.setStatus("TRASH");
+                entity.setDeletedAt(java.time.LocalDateTime.now());
+                emailRepository.save(entity);
+                log.info("Moved local draft record to TRASH by draftId: {}", draftId);
             });
         }
         
@@ -515,7 +530,7 @@ public class EmailController {
         if (!EmailStatus.SNOOZED.equals(status)) email.setSnoozedUntil(null);
         EmailEntity saved = emailRepository.save(email);
         
-        emailService.syncStatusToProvider(email, previousStatus, status);
+        emailService.syncStatusToProvider(email.getId(), previousStatus, status);
         
         return ResponseEntity.ok(ApiResponse.success(emailService.mapToDto(saved)));
     }
