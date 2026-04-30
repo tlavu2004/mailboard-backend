@@ -234,6 +234,7 @@ public class EmailSyncService {
         }
     }
 
+    @Async
     public void syncEmailsForUser(Long userId, String folderName, int limit, int page) {
         List<EmailAccount> accounts = accountRepository.findByUserIdAndActiveTrue(userId);
         if (accounts.isEmpty()) {
