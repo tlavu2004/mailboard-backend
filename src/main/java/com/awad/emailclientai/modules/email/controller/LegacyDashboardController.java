@@ -170,7 +170,9 @@ public class LegacyDashboardController {
             filteredStream = emailRepository.findAllByAccountIdOrderByKanbanOrderDescReceivedDateDesc(account.getId()).stream()
                 .filter(e -> {
                     String s = e.getStatus();
-                    return s != null && !s.equalsIgnoreCase("SENT") && !s.equalsIgnoreCase("DRAFTS") && !s.equalsIgnoreCase("DRAFT") && !s.equalsIgnoreCase("TRASH") && !s.equalsIgnoreCase("SPAM");
+                    // V43: NULL status should be treated as INBOX
+                    if (s == null) return true;
+                    return !s.equalsIgnoreCase("SENT") && !s.equalsIgnoreCase("DRAFTS") && !s.equalsIgnoreCase("DRAFT") && !s.equalsIgnoreCase("TRASH") && !s.equalsIgnoreCase("SPAM");
                 }).collect(Collectors.toList());
         } else if ("STARRED".equalsIgnoreCase(status)) {
             filteredStream = emailRepository.findStarredByAccountId(account.getId());
