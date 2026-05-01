@@ -471,28 +471,37 @@ public class LegacyDashboardController {
         if (changed) {
             emailRepository.saveAndFlush(email);
             
-            // V49: Send WebSocket notification so frontend can refresh counts immediately
-            try {
-                Map<String, Object> msg = new HashMap<>();
-                msg.put("type", "UPDATED_EMAILS");
-                msg.put("emailIds", List.of(email.getId()));
-                msg.put("accountId", email.getAccount().getId());
-                
-                String jsonPayload = objectMapper.writeValueAsString(msg);
-                notificationWebSocketHandler.sendRawNotification(email.getAccount().getId(), jsonPayload);
-            } catch (Exception e) {
-                log.warn("Failed to send WebSocket notification: {}", e.getMessage());
-            }
-
-            // V43: Use TransactionSynchronization to ensure async sync starts ONLY after DB commit
+            // V43: Use TransactionSynchronization to ensure both WebSocket notification AND async sync start ONLY after DB commit
             if (TransactionSynchronizationManager.isActualTransactionActive()) {
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override
                     public void afterCommit() {
+                        // Notify UI only after commit so re-fetch sees latest state
+                        try {
+                            Map<String, Object> msg = new HashMap<>();
+                            msg.put("type", "UPDATED_EMAILS");
+                            msg.put("emailIds", List.of(email.getId()));
+                            msg.put("accountId", email.getAccount().getId());
+                            
+                            String jsonPayload = objectMapper.writeValueAsString(msg);
+                            notificationWebSocketHandler.sendRawNotification(email.getAccount().getId(), jsonPayload);
+                            log.info("[V49-NOTIFY] Sent post-commit notification for email ID: {}", email.getId());
+                        } catch (Exception e) {
+                            log.warn("Failed to send WebSocket notification: {}", e.getMessage());
+                        }
+                        
                         emailService.syncFlagsAndLabelsToProvider(email.getId(), previousStatus, normalizedAdd, normalizedRemove);
                     }
                 });
             } else {
+                // Fallback for non-transactional (rare but safe)
+                try {
+                    Map<String, Object> msg = new HashMap<>();
+                    msg.put("type", "UPDATED_EMAILS");
+                    msg.put("emailIds", List.of(email.getId()));
+                    msg.put("accountId", email.getAccount().getId());
+                    notificationWebSocketHandler.sendRawNotification(email.getAccount().getId(), objectMapper.writeValueAsString(msg));
+                } catch (Exception e) {}
                 emailService.syncFlagsAndLabelsToProvider(email.getId(), previousStatus, normalizedAdd, normalizedRemove);
             }
         }

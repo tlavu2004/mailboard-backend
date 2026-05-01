@@ -27,6 +27,7 @@ public class EmailEntityDto {
     private List<String> recipientTo; // Legacy fallback
     private List<String> recipientCc; // Legacy fallback
     private String snippet;
+    private String preview; // Frontend alias for snippet
     private String body;
     private String status;
     private String mailboxId;

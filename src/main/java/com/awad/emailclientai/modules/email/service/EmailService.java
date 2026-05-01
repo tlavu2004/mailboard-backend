@@ -75,8 +75,8 @@ public class EmailService {
                     
                     // Also heal snippet if it was just the subject before
                     if (email.getSnippet() == null || email.getSnippet().trim().isEmpty() || email.getSnippet().equals(email.getSubject())) {
-                        String cleanSnippet = liveBody.replaceAll("<[^>]*>", " ").trim();
-                        email.setSnippet(cleanSnippet.substring(0, Math.min(cleanSnippet.length(), 200)));
+                        String cleanSnippet = imapService.stripHtml(liveBody);
+                        email.setSnippet(cleanSnippet.length() > 200 ? cleanSnippet.substring(0, 197) + "..." : cleanSnippet);
                     }
                     
                     emailRepository.save(email);
@@ -270,6 +270,7 @@ public class EmailService {
                 .recipientTo(entity.getRecipientTo() != null ? java.util.Arrays.asList(entity.getRecipientTo().split(",\\s*")) : java.util.Collections.emptyList()) 
                 .recipientCc(entity.getRecipientCc() != null ? java.util.Arrays.asList(entity.getRecipientCc().split(",\\s*")) : java.util.Collections.emptyList()) 
                 .snippet(entity.getSnippet())
+                .preview(entity.getSnippet())
                 .body(body)
                 .status(entity.getStatus())
                 .mailboxId(entity.getStatus() != null ? entity.getStatus() : "INBOX")
@@ -737,16 +738,31 @@ public class EmailService {
             boolean isGmail = email.getAccount().getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL;
             String sourceFolder = resolveFolderForStatus(previousStatus, email.getAccount().getProvider());
 
-            if (normalizedRemove.contains("UNREAD")) {
-                imapService.setMessageRead(email.getAccount(), sourceFolder, email.getUid(), true);
-            } else if (normalizedAdd.contains("UNREAD")) {
-                imapService.setMessageRead(email.getAccount(), sourceFolder, email.getUid(), false);
-            }
+            if (isGmail) {
+                List<String> gmailAdd = new ArrayList<>();
+                List<String> gmailRemove = new ArrayList<>();
+                
+                if (normalizedRemove.contains("UNREAD")) gmailRemove.add("UNREAD");
+                if (normalizedAdd.contains("UNREAD")) gmailAdd.add("UNREAD");
+                if (normalizedAdd.contains("STARRED")) gmailAdd.add("STARRED");
+                if (normalizedRemove.contains("STARRED")) gmailRemove.add("STARRED");
+                
+                if (!gmailAdd.isEmpty() || !gmailRemove.isEmpty()) {
+                    gmailLabelService.modifyMessageLabels(email.getAccount(), email.getMessageId(), email.getGmailMessageId(), gmailAdd, gmailRemove);
+                    log.info("Synced flags to Gmail via API: add={}, remove={}", gmailAdd, gmailRemove);
+                }
+            } else {
+                if (normalizedRemove.contains("UNREAD")) {
+                    imapService.setMessageRead(email.getAccount(), sourceFolder, email.getUid(), true);
+                } else if (normalizedAdd.contains("UNREAD")) {
+                    imapService.setMessageRead(email.getAccount(), sourceFolder, email.getUid(), false);
+                }
 
-            if (normalizedAdd.contains("STARRED")) {
-                imapService.setMessageStarred(email.getAccount(), sourceFolder, email.getUid(), true);
-            } else if (normalizedRemove.contains("STARRED")) {
-                imapService.setMessageStarred(email.getAccount(), sourceFolder, email.getUid(), false);
+                if (normalizedAdd.contains("STARRED")) {
+                    imapService.setMessageStarred(email.getAccount(), sourceFolder, email.getUid(), true);
+                } else if (normalizedRemove.contains("STARRED")) {
+                    imapService.setMessageStarred(email.getAccount(), sourceFolder, email.getUid(), false);
+                }
             }
 
             if (normalizedAdd.contains("TRASH")) {

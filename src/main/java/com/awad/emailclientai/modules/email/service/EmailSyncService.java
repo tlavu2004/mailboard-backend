@@ -289,7 +289,7 @@ public class EmailSyncService {
                         entity.setBody(newBody);
                         // Re-generate preview and snippet
                         String plainText = imapService.stripHtml(newBody);
-                        entity.setSnippet(plainText.length() > 150 ? plainText.substring(0, 147) + "..." : plainText);
+                        entity.setSnippet(plainText.length() > 200 ? plainText.substring(0, 197) + "..." : plainText);
                         
                         // Re-generate embedding
                         generateAndSetEmbedding(entity, entity.getSubject(), newBody);
@@ -331,8 +331,8 @@ public class EmailSyncService {
                     EmailEntity activeEntity = emailRepository.findById(emailId).orElseThrow();
                     
                     activeEntity.setBody(finalBody);
-                    String plainText = imapService.stripHtml(finalBody);
-                    activeEntity.setSnippet(plainText.length() > 150 ? plainText.substring(0, 147) + "..." : plainText);
+                    String plainText = imapService.stripHtml(activeEntity.getBody());
+                    activeEntity.setSnippet(plainText.length() > 200 ? plainText.substring(0, 197) + "..." : plainText);
                     
                     // CRITICAL: Clear summary so it gets re-generated with new clean logic
                     activeEntity.setSummary(null);
@@ -408,8 +408,8 @@ public class EmailSyncService {
         String body = request.getBodyHtml() != null && !request.getBodyHtml().isEmpty() ? request.getBodyHtml() : request.getBodyText();
         entity.setBody(body);
         
-        String cleanSnippet = (body != null ? body.replaceAll("<[^>]*>", " ") : "").trim();
-        entity.setSnippet(cleanSnippet.substring(0, Math.min(cleanSnippet.length(), 200)));
+        String cleanSnippet = imapService.stripHtml(body);
+        entity.setSnippet(cleanSnippet.length() > 200 ? cleanSnippet.substring(0, 197) + "..." : cleanSnippet);
         
         entity.setStatus(status.toUpperCase());
         entity.setReceivedDate(LocalDateTime.now());

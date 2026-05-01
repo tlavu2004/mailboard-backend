@@ -1075,8 +1075,9 @@ public class ImapService {
         String result = html.replaceAll(scriptRegex, "").replaceAll(styleRegex, "");
         // 2. Remove all other HTML tags
         result = result.replaceAll("<[^>]*>", "");
-        // 3. Unescape entities
-        return result.replaceAll("&nbsp;", " ").replaceAll("&lt;", "<").replaceAll("&gt;", ">").trim();
+        // 3. Unescape entities and collapse whitespace
+        result = result.replaceAll("&nbsp;", " ").replaceAll("&lt;", "<").replaceAll("&gt;", ">");
+        return result.replaceAll("\\s+", " ").trim();
     }
 
     private MailMessageDetailDto convertToDetailDto(Message message, long uid) 
