@@ -82,7 +82,8 @@ public class EmailSyncService {
     /** Gmail system labels to ignore when determining custom labels */
     private static final Set<String> SYSTEM_LABELS = Set.of(
             "INBOX", "SENT", "DRAFT", "DRAFTS", "SPAM", "TRASH",
-            "STARRED", "IMPORTANT", "UNREAD",
+            "STARRED", "IMPORTANT", "UNREAD", "CHAT",
+            "\\\\TRASH", "\\\\SPAM", "\\\\DRAFT", "\\\\SENT", "\\\\INBOX",
             "CATEGORY_PERSONAL", "CATEGORY_SOCIAL",
             "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS"
     );
@@ -988,16 +989,16 @@ public class EmailSyncService {
     private String determineStatusFromLabels(MailMessageDto msg, Long accountId, String folderName) {
         // PRIORITY 0: Gmail Labels check for critical system states (Trash/Spam must override Sent/Drafts)
         if (msg.getLabels() != null) {
-            if (msg.getLabels().contains("TRASH")) {
+            if (containsSystemLabel(msg.getLabels(), "TRASH") || containsSystemLabel(msg.getLabels(), "\\\\TRASH")) {
                 return "TRASH";
             }
-            if (msg.getLabels().contains("SPAM")) {
+            if (containsSystemLabel(msg.getLabels(), "SPAM")) {
                 return "SPAM";
             }
-            if (msg.getLabels().contains("DRAFT") || msg.getLabels().contains("DRAFTS")) {
+            if (containsSystemLabel(msg.getLabels(), "DRAFT") || containsSystemLabel(msg.getLabels(), "DRAFTS")) {
                 return "DRAFTS";
             }
-            if (msg.getLabels().contains("SENT")) {
+            if (containsSystemLabel(msg.getLabels(), "SENT")) {
                 return "SENT";
             }
         }

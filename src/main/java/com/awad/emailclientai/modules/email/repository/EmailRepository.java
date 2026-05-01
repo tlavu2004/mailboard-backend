@@ -125,10 +125,10 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.receivedDate >= :startDate")
     long countByAccountId(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
  
-    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isRead = false AND (e.status IS NULL OR e.status NOT IN ('TRASH', 'SPAM'))")
+    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isRead = false AND e.status = 'INBOX'")
     long countUnreadByAccountId(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
  
-    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isStarred = true AND (e.status IS NULL OR e.status NOT IN ('TRASH', 'SPAM'))")
+    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isStarred = true AND e.status = 'INBOX'")
     long countStarredByAccountId(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
 
     @Query("SELECT e FROM EmailEntity e WHERE e.account.id = :accountId AND e.isStarred = true AND (e.status IS NULL OR e.status NOT IN ('TRASH', 'SPAM'))")
