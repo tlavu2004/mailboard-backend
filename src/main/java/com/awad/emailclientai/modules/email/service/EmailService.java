@@ -1,5 +1,6 @@
 package com.awad.emailclientai.modules.email.service;
 
+import com.awad.emailclientai.modules.email.dto.response.ContactDto;
 import com.awad.emailclientai.modules.email.dto.response.EmailEntityDto;
 import com.awad.emailclientai.modules.email.entity.EmailAttachment;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
@@ -949,5 +950,13 @@ public class EmailService {
             emailRepository.delete(email);
             notifyDeleted(account.getId(), emailId);
         }
+    }
+    public List<ContactDto> getContacts() {
+        return emailSenderRepository.findAllByOrderByBestKnownNameAsc().stream()
+                .map(sender -> ContactDto.builder()
+                        .name(sender.getBestKnownName())
+                        .email(sender.getEmail())
+                        .build())
+                .collect(Collectors.toList());
     }
 }

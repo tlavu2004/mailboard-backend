@@ -411,6 +411,11 @@ public class EmailSyncService {
         String cleanSnippet = imapService.stripHtml(body);
         entity.setSnippet(cleanSnippet.length() > 200 ? cleanSnippet.substring(0, 197) + "..." : cleanSnippet);
         
+        // V44: Learn recipients as contacts
+        if (request.getTo() != null) request.getTo().forEach(t -> learnSenderName(t, null));
+        if (request.getCc() != null) request.getCc().forEach(c -> learnSenderName(c, null));
+        if (request.getBcc() != null) request.getBcc().forEach(b -> learnSenderName(b, null));
+
         entity.setStatus(status.toUpperCase());
         entity.setReceivedDate(LocalDateTime.now());
         entity.setRead(true); // Sent/Drafts are generally considered read
@@ -1127,7 +1132,7 @@ public class EmailSyncService {
                 .build())
                 .collect(Collectors.toList());
     }
-    private void learnSenderName(String email, String name) {
+    public void learnSenderName(String email, String name) {
         if (email == null || email.isBlank()) return;
         
         final String pureEmail = cleanEmail(email);
@@ -1142,19 +1147,23 @@ public class EmailSyncService {
                 pureName = pureName.substring(0, start).trim();
             }
             pureName = pureName.replaceAll("^\"|\"$", "").trim();
+            
+            // If the name is just the email itself or the local part, treat as null
+            String username = pureEmail.split("@")[0];
+            if (pureName.equalsIgnoreCase(pureEmail) || pureName.equalsIgnoreCase(username) || pureName.contains("@")) {
+                pureName = null;
+            }
         }
         
-        String username = pureEmail.split("@")[0];
-        if (pureName == null || pureName.isBlank() || pureName.equalsIgnoreCase(pureEmail) || pureName.equalsIgnoreCase(username) || pureName.contains("@")) {
-            return;
-        }
+        if (pureName != null && pureName.isBlank()) pureName = null;
 
         final String canonicalEmail = pureEmail.toLowerCase();
         final String finalName = pureName;
         
         emailSenderRepository.findByEmail(canonicalEmail).ifPresentOrElse(
             existing -> {
-                if (existing.getBestKnownName() == null || existing.getBestKnownName().equalsIgnoreCase(canonicalEmail)) {
+                // Update if we found a better name (non-null and better than just the email)
+                if (finalName != null && (existing.getBestKnownName() == null || existing.getBestKnownName().equalsIgnoreCase(canonicalEmail))) {
                     existing.setBestKnownName(finalName);
                     emailSenderRepository.save(existing);
                     // Mass Heal: Update all existing emails from this sender in the background
@@ -1166,8 +1175,10 @@ public class EmailSyncService {
                     .email(canonicalEmail)
                     .bestKnownName(finalName)
                     .build());
-                // Mass Heal: Update all existing emails from this sender in the background
-                emailRepository.updateFromNameBySender(canonicalEmail, finalName);
+                if (finalName != null) {
+                    // Mass Heal: Update all existing emails from this sender in the background
+                    emailRepository.updateFromNameBySender(canonicalEmail, finalName);
+                }
             }
         );
     }

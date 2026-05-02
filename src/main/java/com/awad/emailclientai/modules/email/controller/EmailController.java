@@ -1,5 +1,6 @@
 package com.awad.emailclientai.modules.email.controller;
 
+import com.awad.emailclientai.modules.email.dto.response.ContactDto;
 import com.awad.emailclientai.modules.email.dto.response.EmailEntityDto;
 import com.awad.emailclientai.modules.email.dto.response.SearchResultDto;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
@@ -553,5 +554,11 @@ public class EmailController {
             @RequestParam String input) {
         String suggestion = aiService.suggestSearchQuery(input, principal.getId());
         return ResponseEntity.ok(ApiResponse.success("Suggestion generated", suggestion));
+    }
+
+    @GetMapping("/contacts")
+    @Operation(summary = "Get all known email contacts for autocomplete")
+    public ResponseEntity<ApiResponse<List<ContactDto>>> getContacts() {
+        return ResponseEntity.ok(ApiResponse.success(emailService.getContacts()));
     }
 }
