@@ -461,6 +461,8 @@ public class LegacyDashboardController {
 
         log.info("[V50-BULK] Bulk modify request for {} emails. Add: {}, Remove: {}", emails.size(), normalizedAdd, normalizedRemove);
         int updatedCount = 0;
+        List<Long> updatedIds = new ArrayList<>();
+        Map<Long, String> previousStatuses = new HashMap<>();
 
         for (EmailEntity email : emails) {
             String previousStatus = email.getStatus();
@@ -494,29 +496,41 @@ public class LegacyDashboardController {
             if (changed) {
                 emailRepository.save(email);
                 updatedCount++;
-                // Sync to provider (Gmail) after DB commit
-                if (TransactionSynchronizationManager.isActualTransactionActive()) {
-                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                        @Override
-                        public void afterCommit() {
-                            emailService.syncFlagsAndLabelsToProvider(email.getId(), previousStatus, normalizedAdd, normalizedRemove);
-                        }
-                    });
-                } else {
-                    emailService.syncFlagsAndLabelsToProvider(email.getId(), previousStatus, normalizedAdd, normalizedRemove);
-                }
+                updatedIds.add(email.getId());
+                previousStatuses.put(email.getId(), previousStatus);
             }
         }
 
-        // Notify UI via WebSocket (one notification for all IDs)
+        // V51: Register a SINGLE synchronization for the entire batch
         if (updatedCount > 0) {
-            try {
-                Map<String, Object> msg = new HashMap<>();
-                msg.put("type", "UPDATED_EMAILS");
-                msg.put("emailIds", emailIds);
-                msg.put("accountId", emails.get(0).getAccount().getId());
-                notificationWebSocketHandler.sendRawNotification(emails.get(0).getAccount().getId(), objectMapper.writeValueAsString(msg));
-            } catch (Exception e) {}
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        // 1. Bulk Notify UI
+                        try {
+                            Map<String, Object> msg = new HashMap<>();
+                            msg.put("type", "UPDATED_EMAILS");
+                            msg.put("emailIds", updatedIds);
+                            msg.put("accountId", account.getId());
+                            notificationWebSocketHandler.sendRawNotification(account.getId(), objectMapper.writeValueAsString(msg));
+                            log.info("[V51-BULK-NOTIFY] Sent post-commit notification for {} emails", updatedIds.size());
+                        } catch (Exception e) {
+                            log.warn("Failed to send bulk WebSocket notification: {}", e.getMessage());
+                        }
+
+                        // 2. Trigger async sync for each email
+                        for (Long id : updatedIds) {
+                            emailService.syncFlagsAndLabelsToProvider(id, previousStatuses.get(id), normalizedAdd, normalizedRemove);
+                        }
+                    }
+                });
+            } else {
+                // Fallback for non-transactional
+                for (Long id : updatedIds) {
+                    emailService.syncFlagsAndLabelsToProvider(id, previousStatuses.get(id), normalizedAdd, normalizedRemove);
+                }
+            }
         }
 
         Map<String, Object> data = new HashMap<>();

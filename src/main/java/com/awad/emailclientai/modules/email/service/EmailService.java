@@ -729,6 +729,7 @@ public class EmailService {
     @org.springframework.scheduling.annotation.Async
     @Transactional
     public void syncFlagsAndLabelsToProvider(Long emailId, String previousStatus, List<String> normalizedAdd, List<String> normalizedRemove) {
+        log.info("[SYNC-START] Syncing flags for email {}: previousStatus={}, add={}, remove={}", emailId, previousStatus, normalizedAdd, normalizedRemove);
         EmailEntity email = emailRepository.findById(emailId).orElse(null);
         if (email == null) {
             log.warn("Async sync failed: Email {} not found", emailId);
