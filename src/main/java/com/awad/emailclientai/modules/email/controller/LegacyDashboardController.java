@@ -402,6 +402,128 @@ public class LegacyDashboardController {
         return ResponseEntity.ok(ApiResponse.success(data));
     }
 
+    @PostMapping("/emails/bulk-modify")
+    @org.springframework.transaction.annotation.Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> bulkModifyEmails(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestBody Map<String, Object> request
+    ) {
+        List<Long> emailIds = null;
+        if (request.get("ids") != null) {
+            emailIds = ((List<?>) request.get("ids")).stream()
+                    .map(id -> Long.parseLong(id.toString()))
+                    .collect(Collectors.toList());
+        }
+        
+        String mailboxId = (String) request.get("mailboxId");
+        Boolean unreadOnly = (Boolean) request.get("unread");
+        Boolean hasAttachments = (Boolean) request.get("hasAttachments");
+        
+        @SuppressWarnings("unchecked")
+        Map<String, List<String>> actions = (Map<String, List<String>>) request.get("actions");
+        List<String> addLabels = actions.getOrDefault("addLabels", new ArrayList<>());
+        List<String> removeLabels = actions.getOrDefault("removeLabels", new ArrayList<>());
+        List<String> normalizedAdd = addLabels.stream().map(v -> v == null ? "" : v.toUpperCase(Locale.ROOT)).collect(Collectors.toList());
+        List<String> normalizedRemove = removeLabels.stream().map(v -> v == null ? "" : v.toUpperCase(Locale.ROOT)).collect(Collectors.toList());
+
+        EmailAccount account = getPrimaryAccount(principal);
+        List<EmailEntity> emails;
+        
+        if (emailIds != null && !emailIds.isEmpty()) {
+            emails = emailRepository.findAllById(emailIds);
+        } else if (mailboxId != null) {
+            log.info("[V50-BULK] Processing by filter: mailbox={}, unread={}, attachments={}", mailboxId, unreadOnly, hasAttachments);
+            // Re-use logic from getEmailsByMailbox but for modification
+            String status = mailboxId.toUpperCase();
+            List<EmailEntity> stream;
+            if ("INBOX".equalsIgnoreCase(status)) {
+                stream = emailRepository.findAllByAccountIdOrderByKanbanOrderDescReceivedDateDesc(account.getId()).stream()
+                    .filter(e -> {
+                        String s = e.getStatus();
+                        if (s == null) return true;
+                        return !s.equalsIgnoreCase("SENT") && !s.equalsIgnoreCase("DRAFTS") && !s.equalsIgnoreCase("DRAFT") && !s.equalsIgnoreCase("TRASH") && !s.equalsIgnoreCase("SPAM");
+                    }).collect(Collectors.toList());
+            } else if ("STARRED".equalsIgnoreCase(status)) {
+                stream = emailRepository.findStarredByAccountId(account.getId());
+            } else if ("DRAFTS".equalsIgnoreCase(status) || "DRAFT".equalsIgnoreCase(status)) {
+                stream = emailRepository.findAllByAccountIdAndStatus(account.getId(), "DRAFTS");
+                if (stream.isEmpty()) stream = emailRepository.findAllByAccountIdAndStatus(account.getId(), "DRAFT");
+            } else {
+                stream = emailRepository.findAllByAccountIdAndStatus(account.getId(), status);
+            }
+            emails = stream.stream()
+                    .filter(e -> unreadOnly == null || !unreadOnly || !e.isRead())
+                    .filter(e -> hasAttachments == null || !hasAttachments || e.isHasAttachments())
+                    .collect(Collectors.toList());
+        } else {
+            return ResponseEntity.badRequest().body(ApiResponse.error("Either ids or mailboxId must be provided"));
+        }
+
+        log.info("[V50-BULK] Bulk modify request for {} emails. Add: {}, Remove: {}", emails.size(), normalizedAdd, normalizedRemove);
+        int updatedCount = 0;
+
+        for (EmailEntity email : emails) {
+            String previousStatus = email.getStatus();
+            boolean changed = false;
+
+            if (normalizedAdd.contains("STARRED")) { email.setStarred(true); changed = true; }
+            if (normalizedRemove.contains("STARRED")) { 
+                email.setStarred(false); 
+                if ("STARRED".equalsIgnoreCase(email.getStatus())) email.setStatus(EmailStatus.INBOX);
+                changed = true; 
+            }
+            if (normalizedRemove.contains("UNREAD")) { email.setRead(true); changed = true; }
+            if (normalizedAdd.contains("UNREAD")) { email.setRead(false); changed = true; }
+            if (normalizedAdd.contains("SPAM")) { email.setStatus("SPAM"); changed = true; }
+            if (normalizedAdd.contains("TRASH")) {
+                email.setPreviousStatus(email.getStatus());
+                email.setDeletedAt(LocalDateTime.now());
+                email.setStatus("TRASH");
+                changed = true;
+            }
+            if (normalizedAdd.contains("INBOX")) {
+                if (email.getPreviousStatus() != null && !email.getPreviousStatus().equalsIgnoreCase("TRASH")) {
+                    email.setStatus(email.getPreviousStatus());
+                } else {
+                    email.setStatus(EmailStatus.INBOX);
+                }
+                email.setDeletedAt(null);
+                changed = true;
+            }
+
+            if (changed) {
+                emailRepository.save(email);
+                updatedCount++;
+                // Sync to provider (Gmail) after DB commit
+                if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            emailService.syncFlagsAndLabelsToProvider(email.getId(), previousStatus, normalizedAdd, normalizedRemove);
+                        }
+                    });
+                } else {
+                    emailService.syncFlagsAndLabelsToProvider(email.getId(), previousStatus, normalizedAdd, normalizedRemove);
+                }
+            }
+        }
+
+        // Notify UI via WebSocket (one notification for all IDs)
+        if (updatedCount > 0) {
+            try {
+                Map<String, Object> msg = new HashMap<>();
+                msg.put("type", "UPDATED_EMAILS");
+                msg.put("emailIds", emailIds);
+                msg.put("accountId", emails.get(0).getAccount().getId());
+                notificationWebSocketHandler.sendRawNotification(emails.get(0).getAccount().getId(), objectMapper.writeValueAsString(msg));
+            } catch (Exception e) {}
+        }
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("updatedCount", updatedCount);
+        return ResponseEntity.ok(ApiResponse.success(data));
+    }
+
     @PostMapping("/emails/{id}/modify")
     @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<ApiResponse<Map<String, Object>>> modifyEmail(
@@ -508,6 +630,52 @@ public class LegacyDashboardController {
         
         EmailAccount account = getPrimaryAccount(principal);
         return ResponseEntity.ok(ApiResponse.success(mapToFrontendEmail(email, account, principal)));
+    }
+
+    @DeleteMapping("/emails/bulk-delete")
+    @org.springframework.transaction.annotation.Transactional
+    public ResponseEntity<ApiResponse<Map<String, Object>>> bulkDeleteEmails(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestBody Map<String, Object> request
+    ) {
+        List<Long> ids = null;
+        if (request.get("ids") != null) {
+            ids = ((List<?>) request.get("ids")).stream()
+                    .map(id -> Long.parseLong(id.toString()))
+                    .collect(Collectors.toList());
+        }
+        
+        String mailboxId = (String) request.get("mailboxId");
+        Boolean unreadOnly = (Boolean) request.get("unread");
+        Boolean hasAttachments = (Boolean) request.get("hasAttachments");
+        EmailAccount account = getPrimaryAccount(principal);
+
+        if (ids != null && !ids.isEmpty()) {
+            log.info("[V50-BULK] Bulk permanent delete request for {} email IDs", ids.size());
+            for (Long id : ids) {
+                emailService.deleteEmailPermanently(id);
+            }
+            Map<String, Object> data = new HashMap<>();
+            data.put("deletedCount", ids.size());
+            return ResponseEntity.ok(ApiResponse.success(data));
+        } else if (mailboxId != null) {
+            // Find all matching emails to delete permanently
+            String status = mailboxId.toUpperCase();
+            List<EmailEntity> emails = emailRepository.findAllByAccountIdAndStatus(account.getId(), status).stream()
+                    .filter(e -> unreadOnly == null || !unreadOnly || !e.isRead())
+                    .filter(e -> hasAttachments == null || !hasAttachments || e.isHasAttachments())
+                    .collect(Collectors.toList());
+            
+            log.info("[V50-BULK] Bulk permanent delete request for all {} matching emails in {}", emails.size(), mailboxId);
+            for (EmailEntity e : emails) {
+                emailService.deleteEmailPermanently(e.getId());
+            }
+            Map<String, Object> data = new HashMap<>();
+            data.put("deletedCount", emails.size());
+            return ResponseEntity.ok(ApiResponse.success(data));
+        }
+
+        return ResponseEntity.badRequest().body(ApiResponse.error("Either ids or mailboxId must be provided"));
     }
 
     @DeleteMapping("/emails/{id}")
