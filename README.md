@@ -1,4 +1,4 @@
-# MailBoard - AI-Powered Email Management Platform
+# MailBoard v1.0.0 - AI-Powered Email Management Platform
 
 MailBoard is a full-featured, AI-powered email management platform built with **Java 21** and **Spring Boot 3**. It integrates directly with **Gmail** via OAuth 2.0, IMAP, and the Gmail API, providing intelligent email triage through a dynamic **Kanban Board**, **AI Summarization** (Gemini), and **Semantic Search** (pgvector).
 
