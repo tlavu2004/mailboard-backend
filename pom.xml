@@ -10,7 +10,7 @@
 	</parent>
 	<groupId>com.awad</groupId>
 	<artifactId>email-client-ai</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
+	<version>1.0.0</version>
 	<name>Email Client AI</name>
 	<description>A smart email client that classifies emails, groups newsletters, prioritizes important messages, converts emails into tasks, and provides AI-powered summarization &amp; quick replies.</description>
 	<url/>
