@@ -28,8 +28,8 @@ public class EmailStatsService {
                         .map(row -> new DailyActivityDto(((Number) row[0]).intValue(), ((Number) row[1]).intValue(), ((Number) row[2]).longValue()))
                         .toList())
                 .totalEmails(emailRepository.countByAccountId(accountId, since))
-                .unreadCount(emailRepository.countUnreadByAccountId(accountId, since))
-                .starredCount(emailRepository.countStarredByAccountId(accountId, since))
+                .unreadCount(emailRepository.countUnreadByAccountId(accountId))
+                .starredCount(emailRepository.countStarredByAccountId(accountId))
                 .period(period)
                 .build();
     }

@@ -153,7 +153,11 @@ public class GmailLabelService {
             String normalizedMessageId = normalizeMessageId(rawMessageId);
             String query = "rfc822msgid:" + quoteIfNeeded(normalizedMessageId);
 
-            ListMessagesResponse response = gmail.users().messages().list("me").setQ(query).setMaxResults(10L).execute();
+            ListMessagesResponse response = gmail.users().messages().list("me")
+                    .setQ(query)
+                    .setIncludeSpamTrash(true)
+                    .setMaxResults(10L)
+                    .execute();
             if (response.getMessages() == null || response.getMessages().isEmpty()) {
                 log.warn("No Gmail message found for query {} on {}", query, account.getEmailAddress());
                 return;
@@ -392,7 +396,11 @@ public class GmailLabelService {
         }
 
         String query = "rfc822msgid:" + quoteIfNeeded(normalizedMessageId);
-        ListMessagesResponse response = gmail.users().messages().list("me").setQ(query).setMaxResults(10L).execute();
+        ListMessagesResponse response = gmail.users().messages().list("me")
+                .setQ(query)
+                .setIncludeSpamTrash(true)
+                .setMaxResults(10L)
+                .execute();
         if (response.getMessages() == null || response.getMessages().isEmpty()) {
             throw new RuntimeException("No Gmail message found for rfc822 message-id: " + normalizedMessageId);
         }

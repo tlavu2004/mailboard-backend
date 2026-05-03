@@ -854,7 +854,8 @@ public class EmailService {
                 case "TRASH" -> "[Gmail]/Trash";
                 case "SENT" -> "[Gmail]/Sent Mail";
                 case "DRAFT", "DRAFTS" -> "[Gmail]/Drafts";
-                default -> "INBOX";
+                case "STARRED" -> "INBOX";
+                default -> status != null ? status : "INBOX";
             };
         }
 
@@ -863,7 +864,7 @@ public class EmailService {
             case "TRASH" -> "Trash";
             case "SENT" -> "Sent";
             case "DRAFT", "DRAFTS" -> "Drafts";
-            default -> "INBOX";
+            default -> status != null ? status : "INBOX";
         };
     }
     private String cleanEmail(String input) {
@@ -935,9 +936,13 @@ public class EmailService {
 
         try {
             boolean isGmail = account.getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL;
-            if (isGmail && email.getGmailMessageId() != null) {
-                gmailLabelService.deleteMessage(account, email.getMessageId(), email.getGmailMessageId());
-            } else if (!isGmail) {
+            if (isGmail) {
+                if (email.getGmailMessageId() != null) {
+                    gmailLabelService.deleteMessage(account, email.getMessageId(), email.getGmailMessageId());
+                } else if (email.getGmailDraftId() != null) {
+                    gmailLabelService.deleteDraft(account, email.getGmailDraftId());
+                }
+            } else {
                 String folder = resolveFolderForStatus(email.getStatus(), account.getProvider());
                 imapService.deleteMessage(account, folder, email.getUid());
             }

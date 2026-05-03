@@ -81,8 +81,8 @@ public class LegacyDashboardController {
 
         try {
             EmailAccount account = getPrimaryAccount(principal);
-            unreadCount = (int) emailRepository.countUnreadByAccountId(account.getId(), LocalDateTime.of(1970, 1, 1, 0, 0));
-            starredCount = (int) emailRepository.countStarredByAccountId(account.getId(), LocalDateTime.of(1970, 1, 1, 0, 0));
+            unreadCount = (int) emailRepository.countUnreadByAccountId(account.getId());
+            starredCount = (int) emailRepository.countStarredByAccountId(account.getId());
             
             draftsCount = (int) (emailRepository.countByAccountIdAndStatus(account.getId(), "DRAFTS") + 
                                emailRepository.countByAccountIdAndStatus(account.getId(), "DRAFT"));
@@ -646,7 +646,7 @@ public class LegacyDashboardController {
         return ResponseEntity.ok(ApiResponse.success(mapToFrontendEmail(email, account, principal)));
     }
 
-    @DeleteMapping("/emails/bulk-delete")
+    @PostMapping("/emails/bulk-delete")
     @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<ApiResponse<Map<String, Object>>> bulkDeleteEmails(
             @AuthenticationPrincipal UserPrincipal principal,
