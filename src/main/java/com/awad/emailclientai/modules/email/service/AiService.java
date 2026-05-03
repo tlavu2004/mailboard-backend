@@ -6,22 +6,25 @@ import com.awad.emailclientai.modules.email.entity.SummarySource;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.HttpMethod;
-import org.springframework.core.ParameterizedTypeReference;
-
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
+
+
+
 
 @Service
 @RequiredArgsConstructor
@@ -337,8 +340,8 @@ public class AiService {
             }
         } catch (Exception e) {
             log.error("Gemini API Request Failed: {}", e.getMessage());
-            if (e instanceof org.springframework.web.client.HttpClientErrorException) {
-                log.error("Response Body: {}", ((org.springframework.web.client.HttpClientErrorException) e).getResponseBodyAsString());
+            if (e instanceof HttpClientErrorException) {
+                log.error("Response Body: {}", ((HttpClientErrorException) e).getResponseBodyAsString());
             }
             throw new RuntimeException("Gemini API call failed", e);
         }

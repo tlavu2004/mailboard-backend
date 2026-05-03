@@ -1,44 +1,53 @@
 package com.awad.emailclientai.modules.email.controller;
 
+import com.awad.emailclientai.modules.email.dto.request.SendEmailRequestDto;
 import com.awad.emailclientai.modules.email.dto.response.ContactDto;
 import com.awad.emailclientai.modules.email.dto.response.EmailEntityDto;
 import com.awad.emailclientai.modules.email.dto.response.SearchResultDto;
+import com.awad.emailclientai.modules.email.entity.EmailAccount;
+import com.awad.emailclientai.modules.email.entity.EmailAttachment;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
 import com.awad.emailclientai.modules.email.entity.EmailStatus;
-import com.awad.emailclientai.modules.email.repository.EmailRepository;
-import com.awad.emailclientai.modules.email.service.EmailSyncService;
-import com.awad.emailclientai.modules.email.service.AiService;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.repository.EmailAttachmentRepository;
-import com.awad.emailclientai.modules.user.security.UserPrincipal;
+import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import com.awad.emailclientai.modules.email.repository.EmailSpecification;
-import com.awad.emailclientai.modules.email.entity.EmailAttachment;
+import com.awad.emailclientai.modules.email.service.AiService;
 import com.awad.emailclientai.modules.email.service.EmailAccountService;
 import com.awad.emailclientai.modules.email.service.EmailService;
+import com.awad.emailclientai.modules.email.service.EmailSyncService;
+import com.awad.emailclientai.modules.user.security.UserPrincipal;
+import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import com.awad.emailclientai.shared.exception.BusinessException;
 import com.awad.emailclientai.shared.exception.ErrorCode;
-import com.awad.emailclientai.modules.email.dto.request.SendEmailRequestDto;
-import com.awad.emailclientai.shared.dto.response.ApiResponse;
-import org.springframework.web.multipart.MultipartFile;
-import com.awad.emailclientai.modules.email.entity.EmailAccount;
-import jakarta.mail.MessagingException;
-import java.io.IOException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.http.MediaType;
-import org.springframework.web.bind.annotation.*;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.core.type.TypeReference;
-import org.springframework.transaction.annotation.Transactional;
+import jakarta.mail.MessagingException;
+import java.io.IOException;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.io.Resource;
+import org.springframework.data.domain.Sort.Direction;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+
 
 @RestController
 @RequestMapping("/api/v1/emails")
@@ -389,7 +398,7 @@ public class EmailController {
             emailRepository.findById(emailId).ifPresent(entity -> {
                 entity.setPreviousStatus(entity.getStatus());
                 entity.setStatus("TRASH");
-                entity.setDeletedAt(java.time.LocalDateTime.now());
+                entity.setDeletedAt(LocalDateTime.now());
                 emailRepository.save(entity);
                 log.info("Moved local draft record to TRASH: {}", emailId);
             });
@@ -397,7 +406,7 @@ public class EmailController {
             emailRepository.findByGmailDraftId(draftId).ifPresent(entity -> {
                 entity.setPreviousStatus(entity.getStatus());
                 entity.setStatus("TRASH");
-                entity.setDeletedAt(java.time.LocalDateTime.now());
+                entity.setDeletedAt(LocalDateTime.now());
                 emailRepository.save(entity);
                 log.info("Moved local draft record to TRASH by draftId: {}", draftId);
             });
@@ -444,7 +453,7 @@ public class EmailController {
     }
 
     @PostMapping("/{id}/refresh")
-    @org.springframework.transaction.annotation.Transactional
+    @Transactional
     public ResponseEntity<ApiResponse<String>> refreshEmail(@PathVariable Long id) {
         emailSyncService.refreshEmail(id);
         return ResponseEntity.ok(ApiResponse.success("Email refreshed successfully"));
@@ -456,7 +465,7 @@ public class EmailController {
     }
 
     @GetMapping("/{id}/attachments/{atId}/download")
-    public ResponseEntity<org.springframework.core.io.Resource> downloadAttachment(
+    public ResponseEntity<Resource> downloadAttachment(
             @PathVariable Long id,
             @PathVariable Long atId) throws MessagingException, IOException {
         var resource = emailService.getInlineAttachment(id, atId);
@@ -467,12 +476,12 @@ public class EmailController {
         
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(contentType))
-                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
                 .body(resource);
     }
 
     @GetMapping("/{id}/attachments/{atId}/inline")
-    public ResponseEntity<org.springframework.core.io.Resource> getInlineAttachment(
+    public ResponseEntity<Resource> getInlineAttachment(
             @PathVariable Long id,
             @PathVariable Long atId) throws MessagingException, IOException {
         var resource = emailService.getInlineAttachment(id, atId);
@@ -497,7 +506,7 @@ public class EmailController {
             EmailEntityDto emailDto = emailService.mapToDto(emailEntity);
             return new SearchResultDto(emailDto, Math.round(score * 100.0) / 100.0);
         })
-        .filter(java.util.Objects::nonNull)
+        .filter(Objects::nonNull)
         .collect(Collectors.toList());
         return ResponseEntity.ok(ApiResponse.success(results));
     }
@@ -511,10 +520,10 @@ public class EmailController {
             @RequestParam(defaultValue = "receivedDate,desc") String sort) {
         
         String[] sortParts = sort.split(",");
-        org.springframework.data.domain.Sort.Direction direction = sortParts.length > 1 && "asc".equalsIgnoreCase(sortParts[1]) 
-                ? org.springframework.data.domain.Sort.Direction.ASC : org.springframework.data.domain.Sort.Direction.DESC;
-        org.springframework.data.domain.Sort sortObj = org.springframework.data.domain.Sort.by(direction, sortParts[0]);
-        org.springframework.data.jpa.domain.Specification<EmailEntity> spec = 
+        Direction direction = sortParts.length > 1 && "asc".equalsIgnoreCase(sortParts[1]) 
+                ? Sort.Direction.ASC : Sort.Direction.DESC;
+        Sort sortObj = Sort.by(direction, sortParts[0]);
+        Specification<EmailEntity> spec = 
             EmailSpecification.filterEmails(accountId, status, unread, hasAttachments);
 
         List<EmailEntityDto> dtos = emailRepository.findAll(spec, sortObj).stream()
@@ -523,7 +532,7 @@ public class EmailController {
     }
 
     @PutMapping("/{id}/status")
-    @org.springframework.transaction.annotation.Transactional
+    @Transactional
     public ResponseEntity<ApiResponse<EmailEntityDto>> updateStatus(@PathVariable Long id, @RequestParam String status) {
         EmailEntity email = emailRepository.findById(id).orElseThrow(() -> new BusinessException(ErrorCode.EMAIL_NOT_FOUND));
         String previousStatus = email.getStatus();
@@ -537,7 +546,7 @@ public class EmailController {
     }
 
     @PutMapping("/{id}/snooze")
-    @org.springframework.transaction.annotation.Transactional
+    @Transactional
     public ResponseEntity<ApiResponse<EmailEntityDto>> snoozeEmail(
             @PathVariable Long id,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime until) {

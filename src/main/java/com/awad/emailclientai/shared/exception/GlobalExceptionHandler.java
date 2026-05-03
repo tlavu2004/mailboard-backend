@@ -2,7 +2,11 @@ package com.awad.emailclientai.shared.exception;
 
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import com.awad.emailclientai.shared.dto.response.ValidationError;
+import jakarta.mail.AuthenticationFailedException;
+import jakarta.mail.MessagingException;
 import jakarta.servlet.http.HttpServletRequest;
+import java.util.List;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -16,9 +20,10 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
-import java.util.List;
-import java.util.stream.Collectors;
+
+
 
 /**
  * Global Exception Handler
@@ -186,9 +191,9 @@ public class GlobalExceptionHandler {
                 .body(response);
     }
 
-    @ExceptionHandler(jakarta.mail.AuthenticationFailedException.class)
+    @ExceptionHandler(AuthenticationFailedException.class)
     public ResponseEntity<ApiResponse<Void>> handleMailAuthException(
-            jakarta.mail.AuthenticationFailedException ex,
+            AuthenticationFailedException ex,
             HttpServletRequest request
     ) {
         log.warn("Mail SMTP authentication failed: {} - Path: {}",
@@ -204,9 +209,9 @@ public class GlobalExceptionHandler {
                 .body(response);
     }
 
-    @ExceptionHandler(jakarta.mail.MessagingException.class)
+    @ExceptionHandler(MessagingException.class)
     public ResponseEntity<ApiResponse<Void>> handleMessagingException(
-            jakarta.mail.MessagingException ex,
+            MessagingException ex,
             HttpServletRequest request
     ) {
         log.error("SMTP/Mail infrastructure failure: {} - Path: {}",
@@ -254,9 +259,9 @@ public class GlobalExceptionHandler {
                 .body(response);
     }
 
-    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<ApiResponse<Void>> handleNoResourceFound(
-            org.springframework.web.servlet.resource.NoResourceFoundException ex,
+            NoResourceFoundException ex,
             HttpServletRequest request
     ) {
         ApiResponse<Void> response = ApiResponse.error(

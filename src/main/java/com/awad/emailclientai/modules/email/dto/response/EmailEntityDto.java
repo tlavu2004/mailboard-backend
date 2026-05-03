@@ -1,11 +1,14 @@
 package com.awad.emailclientai.modules.email.dto.response;
 
-
-import lombok.*;
-
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.List;
+import lombok.*;
+
+
+
+
 
 @Data
 @Builder
@@ -36,19 +39,19 @@ public class EmailEntityDto {
     private OffsetDateTime snoozedUntil;
     private String summary;
     private String summarySource;
-    @com.fasterxml.jackson.annotation.JsonProperty("isRead")
+    @JsonProperty("isRead")
     private boolean isRead;
-    @com.fasterxml.jackson.annotation.JsonProperty("isStarred")
+    @JsonProperty("isStarred")
     private boolean isStarred;
-    @com.fasterxml.jackson.annotation.JsonProperty("hasAttachments")
+    @JsonProperty("hasAttachments")
     private boolean hasAttachments;
-    @com.fasterxml.jackson.annotation.JsonProperty("hasCloudLinks")
+    @JsonProperty("hasCloudLinks")
     private boolean hasCloudLinks; // V10.35
-    @com.fasterxml.jackson.annotation.JsonProperty("hasPhysicalAttachments")
+    @JsonProperty("hasPhysicalAttachments")
     private boolean hasPhysicalAttachments; // V10.35
     private String gmailLink;
     private String accountEmail;
-    @com.fasterxml.jackson.annotation.JsonProperty("isFromMe")
+    @JsonProperty("isFromMe")
     private boolean isFromMe;
     private LocalDateTime deletedAt;
     private List<AttachmentDto> attachments;

@@ -4,14 +4,17 @@ import com.awad.emailclientai.modules.email.entity.EmailAccount;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.shared.config.properties.GoogleOAuthProperties;
 import com.awad.emailclientai.shared.service.EncryptionService;
+import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
-
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestTemplate;
 
-import java.util.Map;
+
+
+
 
 @Service
 @Slf4j
@@ -21,12 +24,12 @@ public class GoogleTokenService {
     private final EncryptionService encryptionService;
     private final GoogleOAuthProperties googleOAuthProperties;
     private final RestTemplate restTemplate;
-    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+    private final TransactionTemplate transactionTemplate;
 
     public GoogleTokenService(EmailAccountRepository accountRepository, 
                              EncryptionService encryptionService, 
                              GoogleOAuthProperties googleOAuthProperties,
-                             org.springframework.transaction.support.TransactionTemplate transactionTemplate) {
+                             TransactionTemplate transactionTemplate) {
         this.accountRepository = accountRepository;
         this.encryptionService = encryptionService;
         this.googleOAuthProperties = googleOAuthProperties;

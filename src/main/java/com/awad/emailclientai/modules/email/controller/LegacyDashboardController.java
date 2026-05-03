@@ -1,44 +1,49 @@
 package com.awad.emailclientai.modules.email.controller;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.awad.emailclientai.modules.email.service.NotificationWebSocketHandler;
+
+import com.awad.emailclientai.modules.email.dto.response.EmailEntityDto;
+import com.awad.emailclientai.modules.email.dto.response.MailMessageDetailDto;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
-import com.awad.emailclientai.modules.email.entity.EmailStatus;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import com.awad.emailclientai.modules.email.service.AiService;
-import com.awad.emailclientai.modules.email.service.ImapService;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
+import com.awad.emailclientai.modules.email.entity.EmailProvider;
+import com.awad.emailclientai.modules.email.entity.EmailStatus;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
+import com.awad.emailclientai.modules.email.service.AiService;
+import com.awad.emailclientai.modules.email.service.EmailService;
 import com.awad.emailclientai.modules.email.service.EmailSyncService;
 import com.awad.emailclientai.modules.email.service.GmailLabelService;
+import com.awad.emailclientai.modules.email.service.ImapService;
+import com.awad.emailclientai.modules.email.service.NotificationWebSocketHandler;
 import com.awad.emailclientai.modules.kanban.entity.KanbanColumn;
 import com.awad.emailclientai.modules.kanban.service.KanbanService;
 import com.awad.emailclientai.modules.user.security.UserPrincipal;
-import com.awad.emailclientai.modules.email.dto.response.MailMessageDetailDto;
-import com.awad.emailclientai.modules.email.entity.EmailProvider;
-import org.springframework.http.HttpStatus;
-import org.springframework.data.domain.PageRequest;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.Operation;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.bind.annotation.*;
-
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.bind.annotation.*;
+
+
 
 /**
  * Bridge Controller for legacy/drifted frontend endpoints.
@@ -57,7 +62,7 @@ public class LegacyDashboardController {
     private final EmailSyncService emailSyncService;
     private final KanbanService kanbanService;
     private final GmailLabelService gmailLabelService;
-    private final com.awad.emailclientai.modules.email.service.EmailService emailService;
+    private final EmailService emailService;
     private final NotificationWebSocketHandler notificationWebSocketHandler;
     private final ObjectMapper objectMapper;
 
@@ -403,7 +408,7 @@ public class LegacyDashboardController {
     }
 
     @PostMapping("/emails/bulk-modify")
-    @org.springframework.transaction.annotation.Transactional
+    @Transactional
     public ResponseEntity<ApiResponse<Map<String, Object>>> bulkModifyEmails(
             @AuthenticationPrincipal UserPrincipal principal,
             @RequestBody Map<String, Object> request
@@ -539,7 +544,7 @@ public class LegacyDashboardController {
     }
 
     @PostMapping("/emails/{id}/modify")
-    @org.springframework.transaction.annotation.Transactional
+    @Transactional
     public ResponseEntity<ApiResponse<Map<String, Object>>> modifyEmail(
             @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable String id,
@@ -647,7 +652,7 @@ public class LegacyDashboardController {
     }
 
     @PostMapping("/emails/bulk-delete")
-    @org.springframework.transaction.annotation.Transactional
+    @Transactional
     public ResponseEntity<ApiResponse<Map<String, Object>>> bulkDeleteEmails(
             @AuthenticationPrincipal UserPrincipal principal,
             @RequestBody Map<String, Object> request
@@ -693,7 +698,7 @@ public class LegacyDashboardController {
     }
 
     @DeleteMapping("/emails/{id}")
-    @org.springframework.transaction.annotation.Transactional
+    @Transactional
     public ResponseEntity<ApiResponse<Void>> deleteEmail(
             @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable Long id
@@ -711,7 +716,7 @@ public class LegacyDashboardController {
     }
 
     @DeleteMapping("/mailboxes/TRASH/empty")
-    @org.springframework.transaction.annotation.Transactional
+    @Transactional
     public ResponseEntity<ApiResponse<Void>> emptyTrash(
             @AuthenticationPrincipal UserPrincipal principal
     ) {
@@ -880,10 +885,10 @@ public class LegacyDashboardController {
             m.put("isStarred", entity.isStarred());
             
             // Optimization: Avoid calling mapToDto() here as it's too heavy and causes state corruption in some Hibernate versions
-            m.put("to", entity.getRecipientTo() != null ? java.util.Arrays.asList(entity.getRecipientTo().split(",\\s*")) : new ArrayList<>());
-            m.put("cc", entity.getRecipientCc() != null ? java.util.Arrays.asList(entity.getRecipientCc().split(",\\s*")) : new ArrayList<>());
-            m.put("bcc", new java.util.ArrayList<>());
-            m.put("attachments", new java.util.ArrayList<>()); // Placeholder for legacy compat
+            m.put("to", entity.getRecipientTo() != null ? Arrays.asList(entity.getRecipientTo().split(",\\s*")) : new ArrayList<>());
+            m.put("cc", entity.getRecipientCc() != null ? Arrays.asList(entity.getRecipientCc().split(",\\s*")) : new ArrayList<>());
+            m.put("bcc", new ArrayList<>());
+            m.put("attachments", new ArrayList<>()); // Placeholder for legacy compat
             m.put("hasAttachments", entity.isHasAttachments());
             m.put("hasCloudLinks", false); // Default for legacy
             m.put("hasPhysicalAttachments", entity.isHasAttachments());
@@ -949,7 +954,7 @@ public class LegacyDashboardController {
         card.put("is_read", email.isRead());
         card.put("is_starred", email.isStarred());
         
-        com.awad.emailclientai.modules.email.dto.response.EmailEntityDto dto = emailService.mapToDto(email);
+        EmailEntityDto dto = emailService.mapToDto(email);
         card.put("has_attachments", dto.isHasAttachments());
         card.put("has_cloud_links", dto.isHasCloudLinks());
         card.put("has_physical_attachments", dto.isHasPhysicalAttachments());

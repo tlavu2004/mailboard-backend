@@ -5,12 +5,20 @@ import com.awad.emailclientai.modules.email.entity.EmailAuthType;
 import com.awad.emailclientai.modules.email.entity.EmailProvider;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.shared.service.EncryptionService;
+import com.google.api.client.auth.oauth2.BearerToken;
+import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
+import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.gmail.Gmail;
 import com.google.api.services.gmail.model.WatchRequest;
 import com.google.api.services.gmail.model.WatchResponse;
-import com.google.api.client.googleapis.json.GoogleJsonResponseException;
+import java.io.IOException;
+import java.security.GeneralSecurityException;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,12 +26,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.io.IOException;
-import java.security.GeneralSecurityException;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.util.List;
+
+
 
 @Service
 @RequiredArgsConstructor
@@ -136,8 +140,8 @@ public class GmailWatchService {
     private Gmail getGmailService(EmailAccount account) throws GeneralSecurityException, IOException {
         String accessToken = encryptionService.decrypt(account.getEncryptedPassword());
         
-        com.google.api.client.auth.oauth2.Credential credential = new com.google.api.client.auth.oauth2.Credential(
-                com.google.api.client.auth.oauth2.BearerToken.authorizationHeaderAccessMethod())
+        Credential credential = new Credential(
+                BearerToken.authorizationHeaderAccessMethod())
                 .setAccessToken(accessToken);
 
         return new Gmail.Builder(

@@ -3,19 +3,24 @@ package com.awad.emailclientai.modules.email.controller;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.service.EmailSyncService;
+import com.awad.emailclientai.modules.email.service.ImapService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.Base64;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.Executor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Base64;
-import java.util.List;
-import java.util.Optional;
+
+
 
 @RestController
 @RequestMapping("/api/v1/public/gmail")
@@ -25,11 +30,11 @@ public class GmailPubSubController {
 
     private final EmailAccountRepository accountRepository;
     private final EmailSyncService emailSyncService;
-    private final com.awad.emailclientai.modules.email.service.ImapService imapService;
+    private final ImapService imapService;
     private final ObjectMapper objectMapper;
-    private final java.util.concurrent.Executor mailSyncExecutor;
+    private final Executor mailSyncExecutor;
 
-    @org.springframework.beans.factory.annotation.Value("${app.mail.sync.batch-size:20}")
+    @Value("${app.mail.sync.batch-size:20}")
     private int batchSize;
 
     /**

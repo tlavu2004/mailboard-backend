@@ -3,14 +3,18 @@ package com.awad.emailclientai.modules.email.controller;
 import com.awad.emailclientai.modules.email.dto.request.*;
 import com.awad.emailclientai.modules.email.dto.response.*;
 import com.awad.emailclientai.modules.email.service.EmailAccountService;
+import com.awad.emailclientai.modules.user.entity.AuthProvider;
 import com.awad.emailclientai.modules.user.security.UserPrincipal;
 import com.awad.emailclientai.shared.dto.response.ApiResponse;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
 import com.awad.emailclientai.shared.exception.BusinessException;
 import com.awad.emailclientai.shared.exception.ErrorCode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.mail.MessagingException;
 import jakarta.validation.Valid;
+import java.io.IOException;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.InputStreamResource;
@@ -20,10 +24,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.io.IOException;
-import java.util.List;
+
+
 
 /**
  * REST Controller for managing linked email accounts and IMAP operations.
@@ -48,7 +51,7 @@ public class EmailAccountController {
             @Valid @RequestBody ConnectEmailAccountRequestDto request) {
         
         // Enforce Restricted Social Mode: Social users can ONLY link their PRIMARY email account
-        if (principal.getAuthProvider() != com.awad.emailclientai.modules.user.entity.AuthProvider.LOCAL) {
+        if (principal.getAuthProvider() != AuthProvider.LOCAL) {
             String primaryEmail = principal.getEmail();
             if (primaryEmail == null || !primaryEmail.equalsIgnoreCase(request.getEmailAddress())) {
                 throw new BusinessException(ErrorCode.EMAIL_LINKING_DISABLED_FOR_SOCIAL);
@@ -187,7 +190,7 @@ public class EmailAccountController {
             @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable Long accountId,
             @RequestParam("email") String emailJson,
-            @RequestPart(value = "attachments", required = false) java.util.List<MultipartFile> attachments) 
+            @RequestPart(value = "attachments", required = false) List<MultipartFile> attachments) 
             throws MessagingException, IOException {
         
         // Parse JSON string to DTO

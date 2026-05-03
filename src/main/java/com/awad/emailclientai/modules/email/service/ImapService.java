@@ -1,11 +1,10 @@
 package com.awad.emailclientai.modules.email.service;
 
 import com.awad.emailclientai.modules.email.dto.response.AttachmentResourceDto;
-import org.springframework.scheduling.annotation.Async;
+import com.awad.emailclientai.modules.email.dto.response.EmailEntityDto;
 import com.awad.emailclientai.modules.email.dto.response.MailFolderDto;
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDetailDto;
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDto;
-import com.awad.emailclientai.modules.email.dto.response.EmailEntityDto;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
 import com.awad.emailclientai.modules.email.entity.EmailAuthType;
 import com.awad.emailclientai.modules.email.entity.EmailProvider;
@@ -13,12 +12,10 @@ import com.awad.emailclientai.shared.service.EncryptionService;
 import jakarta.mail.*;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeBodyPart;
+import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.internet.MimeUtility;
 import jakarta.mail.search.HeaderTerm;
-import org.eclipse.angus.mail.imap.IMAPFolder;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URLDecoder;
@@ -28,6 +25,17 @@ import java.time.ZoneId;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.eclipse.angus.mail.gimap.GmailFolder;
+import org.eclipse.angus.mail.gimap.GmailMessage;
+import org.eclipse.angus.mail.imap.IMAPFolder;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StreamUtils;
+
+
+
 
 /**
  * Service for connecting to email servers via IMAP protocol.
@@ -171,10 +179,10 @@ public class ImapService {
         }
         // Fallback to English defaults
         if ("TRASH".equalsIgnoreCase(type)) {
-            return account.getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL ? "[Gmail]/Trash" : "Trash";
+            return account.getProvider() == EmailProvider.GMAIL ? "[Gmail]/Trash" : "Trash";
         }
         if ("SPAM".equalsIgnoreCase(type)) {
-            return account.getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL ? "[Gmail]/Spam" : "Spam";
+            return account.getProvider() == EmailProvider.GMAIL ? "[Gmail]/Spam" : "Spam";
         }
         return "INBOX";
     }
@@ -224,9 +232,9 @@ public class ImapService {
             
             // Add Gmail labels to FetchProfile using the gimap provider's FetchProfileItem
             try {
-                fetchProfile.add(org.eclipse.angus.mail.gimap.GmailFolder.FetchProfileItem.LABELS);
-                fetchProfile.add(org.eclipse.angus.mail.gimap.GmailFolder.FetchProfileItem.MSGID);
-                fetchProfile.add(org.eclipse.angus.mail.gimap.GmailFolder.FetchProfileItem.THRID);
+                fetchProfile.add(GmailFolder.FetchProfileItem.LABELS);
+                fetchProfile.add(GmailFolder.FetchProfileItem.MSGID);
+                fetchProfile.add(GmailFolder.FetchProfileItem.THRID);
                 log.info("Added Gmail LABELS, MSGID, and THRID FetchProfileItem to profile.");
             } catch (Exception e) {
                 log.warn("Failed to add Gmail labels FetchProfile item: {}", e.getMessage());
@@ -334,7 +342,7 @@ public class ImapService {
             Message[] msgs = new Message[]{message};
 
             // Use GmailFolder API to directly add/remove labels
-            if (sourceFolder instanceof org.eclipse.angus.mail.gimap.GmailFolder gmailFolder) {
+            if (sourceFolder instanceof GmailFolder gmailFolder) {
                 // 1. Remove old label first
                 if (oldLabelName != null && !oldLabelName.isBlank() && !oldLabelName.equals(newLabelName)) {
                     gmailFolder.setLabels(msgs, new String[]{oldLabelName}, false);
@@ -624,7 +632,7 @@ public class ImapService {
             byte[] contentBytes = foundPart.getInputStream().readAllBytes();
             
             AttachmentResourceDto result = AttachmentResourceDto.builder()
-                    .inputStream(new java.io.ByteArrayInputStream(contentBytes))
+                    .inputStream(new ByteArrayInputStream(contentBytes))
                     .filename(foundPart.getFileName() != null ? foundPart.getFileName() : "attachment-" + targetIndex)
                     .contentType(foundPart.getContentType())
                     .size(contentBytes.length)
@@ -704,7 +712,7 @@ public class ImapService {
      * @param message The MimeMessage that was sent
      */
     @Async
-    public void appendToSentFolder(EmailAccount account, jakarta.mail.internet.MimeMessage message) 
+    public void appendToSentFolder(EmailAccount account, MimeMessage message) 
             throws MessagingException {
         try (Store store = connectToStore(account)) {
             String sentFolderName = getSentFolderName(account.getProvider());
@@ -737,7 +745,7 @@ public class ImapService {
             return "Sent";
         }
         return switch (provider) {
-            case GMAIL -> "[Gmail]/Sent Mail";
+            case EmailProvider.GMAIL -> "[Gmail]/Sent Mail";
             case OUTLOOK -> "Sent";
             case YAHOO -> "Sent";
             default -> "Sent";
@@ -771,7 +779,7 @@ public class ImapService {
 
         Properties props = new Properties();
         
-        // Use 'gimaps' for Gmail (enables X-GM-LABELS, X-GM-MSGID, etc.), 'imaps' for others
+        // Use 'gimaps' for Gmail (enables X-GM-GmailFolder.FetchProfileItem.LABELS, X-GM-GmailFolder.FetchProfileItem.MSGID, etc.), 'imaps' for others
         boolean isGmail = account.getImapHost() != null && 
                 account.getImapHost().toLowerCase().contains("gmail");
         String protocol = isGmail ? "gimaps" : "imaps";
@@ -854,7 +862,7 @@ public class ImapService {
                         String raw = rawHeaders[0];
                         // Decipher RFC 2047 encoding (if any)
                         try {
-                            raw = jakarta.mail.internet.MimeUtility.decodeText(raw);
+                            raw = MimeUtility.decodeText(raw);
                         } catch (Exception ignore) {}
                         
                         if (raw.contains("<")) {
@@ -894,7 +902,7 @@ public class ImapService {
                 ? message.getReceivedDate().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime()
                 : sentAt;
 
-        // Fetch Gmail labels using raw IMAP FETCH X-GM-LABELS command
+        // Fetch Gmail labels using raw IMAP FETCH X-GM-GmailFolder.FetchProfileItem.LABELS command
         List<String> labels = fetchGmailLabels(message, folder);
 
         String body = fetchBodyContent(message);
@@ -965,7 +973,7 @@ public class ImapService {
         List<String> labels = new ArrayList<>();
         try {
             // With gimaps protocol, messages should be GmailMessage instances
-            if (message instanceof org.eclipse.angus.mail.gimap.GmailMessage gmailMsg) {
+            if (message instanceof GmailMessage gmailMsg) {
                 String[] gmLabels = gmailMsg.getLabels();
                 if (gmLabels != null && gmLabels.length > 0) {
                     for (String label : gmLabels) {
@@ -1221,7 +1229,7 @@ public class ImapService {
         } else if (content instanceof InputStream is) {
             if (lowerType.contains("text/html") || lowerType.contains("text/plain")) {
                 log.debug("[IMAP-XRAY] Converting InputStream body to String (Type: {})", lowerType);
-                String body = org.springframework.util.StreamUtils.copyToString(is, StandardCharsets.UTF_8);
+                String body = StreamUtils.copyToString(is, StandardCharsets.UTF_8);
                 if (lowerType.contains("text/html")) {
                     htmlBuilder.append(body);
                 } else {
@@ -1387,7 +1395,7 @@ public class ImapService {
 
     private String extractGmailMsgId(Message message) {
         try {
-            if (message instanceof org.eclipse.angus.mail.gimap.GmailMessage gmailMsg) {
+            if (message instanceof GmailMessage gmailMsg) {
                 return Long.toHexString(gmailMsg.getMsgId());
             }
         } catch (MessagingException e) {
@@ -1398,8 +1406,8 @@ public class ImapService {
 
     private String extractGmailThreadId(Message message) {
         try {
-            if (message instanceof org.eclipse.angus.mail.gimap.GmailMessage gmailMsg) {
-                // Some versions call it getThrId or similar, but MSGID is more critical
+            if (message instanceof GmailMessage gmailMsg) {
+                // Some versions call it getThrId or similar, but GmailFolder.FetchProfileItem.MSGID is more critical
                 return Long.toHexString(gmailMsg.getMsgId()); // Fallback to msgId as threadId usually contains it
             }
         } catch (MessagingException e) {

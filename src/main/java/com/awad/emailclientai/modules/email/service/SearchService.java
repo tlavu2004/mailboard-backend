@@ -4,17 +4,21 @@ import com.awad.emailclientai.modules.email.dto.response.EmailEntityDto;
 import com.awad.emailclientai.modules.email.dto.response.SemanticSearchResponse;
 import com.awad.emailclientai.modules.email.dto.response.SuggestionDto;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
-import java.time.OffsetDateTime;
-import java.time.ZoneId;
-import java.util.Collections;
-import java.util.List;
-import java.util.stream.Collectors;
+
+
 
 @Service
 @RequiredArgsConstructor
@@ -47,7 +51,7 @@ public class SearchService {
             // Convert List<Float> to pgvector string format: [0.1,0.2,...]
             String vectorString = "[" + queryEmbedding.stream()
                 .map(String::valueOf)
-                .collect(java.util.stream.Collectors.joining(",")) + "]";
+                .collect(Collectors.joining(",")) + "]";
             
             // Search the column matching the query embedding dimension
             int dimension = queryEmbedding.size();
@@ -132,8 +136,8 @@ public class SearchService {
     private EmailEntityDto mapRowToDto(Object[] row) {
         LocalDateTime receivedDate = null;
         if (row[10] != null) {
-            if (row[10] instanceof java.sql.Timestamp) {
-                receivedDate = ((java.sql.Timestamp) row[10]).toLocalDateTime();
+            if (row[10] instanceof Timestamp) {
+                receivedDate = ((Timestamp) row[10]).toLocalDateTime();
             } else if (row[10] instanceof LocalDateTime) {
                 receivedDate = (LocalDateTime) row[10];
             }
@@ -141,8 +145,8 @@ public class SearchService {
 
         OffsetDateTime snoozedUntil = null;
         if (row[11] != null) {
-            if (row[11] instanceof java.sql.Timestamp) {
-                snoozedUntil = ((java.sql.Timestamp) row[11]).toInstant().atOffset(java.time.ZoneOffset.UTC);
+            if (row[11] instanceof Timestamp) {
+                snoozedUntil = ((Timestamp) row[11]).toInstant().atOffset(ZoneOffset.UTC);
             } else if (row[11] instanceof OffsetDateTime) {
                 snoozedUntil = (OffsetDateTime) row[11];
             }

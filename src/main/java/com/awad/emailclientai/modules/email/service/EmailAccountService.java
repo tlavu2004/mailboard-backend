@@ -1,7 +1,5 @@
 package com.awad.emailclientai.modules.email.service;
 
-import java.util.Map;
-
 import com.awad.emailclientai.modules.email.dto.request.*;
 import com.awad.emailclientai.modules.email.dto.response.*;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
@@ -13,16 +11,23 @@ import com.awad.emailclientai.shared.exception.BusinessException;
 import com.awad.emailclientai.shared.exception.ErrorCode;
 import com.awad.emailclientai.shared.service.EncryptionService;
 import jakarta.mail.MessagingException;
+import jakarta.mail.Session;
+import jakarta.mail.internet.MimeMessage;
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.stream.Collectors;
+
+
+
 
 /**
  * Service for managing email accounts and coordinating IMAP/SMTP operations.
@@ -169,7 +174,7 @@ public class EmailAccountService {
     public String sendEmail(Long userId, Long accountId, 
                              SendEmailRequestDto request) throws MessagingException {
         EmailAccount account = getAccountForUser(userId, accountId);
-        jakarta.mail.internet.MimeMessage message = smtpService.sendEmail(account, request);
+        MimeMessage message = smtpService.sendEmail(account, request);
         
         // Save to Sent folder using IMAP APPEND
         try {
@@ -187,9 +192,9 @@ public class EmailAccountService {
      */
     public String sendEmailWithAttachments(Long userId, Long accountId, 
                                            SendEmailRequestDto request,
-                                           java.util.List<MultipartFile> attachments) throws MessagingException, IOException {
+                                           List<MultipartFile> attachments) throws MessagingException, IOException {
         EmailAccount account = getAccountForUser(userId, accountId);
-        jakarta.mail.internet.MimeMessage message = smtpService.sendEmailWithAttachments(account, request, attachments);
+        MimeMessage message = smtpService.sendEmailWithAttachments(account, request, attachments);
         
         // Save to Sent folder using IMAP APPEND
         try {
@@ -208,8 +213,8 @@ public class EmailAccountService {
     public Map<String, String> saveDraft(Long userId, Long accountId, SendEmailRequestDto request) throws MessagingException, IOException {
         EmailAccount account = getAccountForUser(userId, accountId);
         // Create a dummy session for building the MimeMessage
-        jakarta.mail.Session session = jakarta.mail.Session.getInstance(new java.util.Properties());
-        jakarta.mail.internet.MimeMessage message = smtpService.createMimeMessage(session, account, request);
+        Session session = Session.getInstance(new Properties());
+        MimeMessage message = smtpService.createMimeMessage(session, account, request);
         
         if (account.getProvider() == EmailProvider.GMAIL) {
             return gmailLabelService.createDraft(account, message);
@@ -223,8 +228,8 @@ public class EmailAccountService {
     public Map<String, String> updateDraft(Long userId, Long accountId, String draftId, SendEmailRequestDto request) throws MessagingException, IOException {
         EmailAccount account = getAccountForUser(userId, accountId);
         // Create a dummy session for building the MimeMessage
-        jakarta.mail.Session session = jakarta.mail.Session.getInstance(new java.util.Properties());
-        jakarta.mail.internet.MimeMessage message = smtpService.createMimeMessage(session, account, request);
+        Session session = Session.getInstance(new Properties());
+        MimeMessage message = smtpService.createMimeMessage(session, account, request);
         
         if (account.getProvider() == EmailProvider.GMAIL) {
             return gmailLabelService.updateDraft(account, draftId, message);

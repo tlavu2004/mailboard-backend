@@ -63,6 +63,9 @@ cd "$SERVICE_DIR" || {
 }
 
 # Run Flyway clean with explicit parameters from .env
-mvn flyway:clean -Dflyway.cleanDisabled=false -Dflyway.url="$DB_URL" -Dflyway.user="$DB_USERNAME" -Dflyway.password="$DB_PASSWORD"
+# Automatically replace 'postgresql' host with 'localhost' for local Maven execution
+LOCAL_DB_URL=$(echo "$DB_URL" | sed 's/\/\/postgresql:/\/\/localhost:/g')
+
+mvn flyway:clean -Dflyway.cleanDisabled=false -Dflyway.url="$LOCAL_DB_URL" -Dflyway.user="$DB_USERNAME" -Dflyway.password="$DB_PASSWORD"
 
 echo "PostgreSQL database cleaned successfully!"

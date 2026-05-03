@@ -1,12 +1,15 @@
 package com.awad.emailclientai.modules.email.dto.response;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+import java.time.LocalDateTime;
+import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
-import java.util.List;
+
+
 
 /**
  * DTO representing an email message from IMAP (list view - headers only).
@@ -102,7 +105,7 @@ public class MailMessageDto {
     /**
      * Whether the message is from one of the user's own accounts.
      */
-    @com.fasterxml.jackson.annotation.JsonProperty("isFromMe")
+    @JsonProperty("isFromMe")
     private boolean isFromMe;
 
     /**
