@@ -110,12 +110,13 @@ erDiagram
     EMAIL_ACCOUNTS ||--o{ EMAILS : synchronizes
     EMAILS ||--o{ EMAIL_ATTACHMENTS : contains
     USERS ||--o{ REFRESH_TOKENS : has
+    EMAILS }o--|| EMAIL_SENDERS : "sent by"
 
     USERS {
         bigint id PK
         string email UK
         string name
-        string role
+        string auth_provider
     }
 
     EMAIL_ACCOUNTS {
@@ -123,9 +124,12 @@ erDiagram
         bigint user_id FK
         string email_address UK
         string provider
-        string encrypted_access_token
+        string auth_type
+        string encrypted_password
         string encrypted_refresh_token
-        bigint last_synced_uid
+        bigint watch_history_id
+        timestamp watch_expiration
+        boolean active
     }
 
     EMAILS {
@@ -133,9 +137,13 @@ erDiagram
         bigint account_id FK
         string message_id UK
         string gmail_message_id
+        string gmail_draft_id
         string thread_id
         string subject
         string sender
+        string from_name
+        text recipient_to
+        text recipient_cc
         text body
         string status
         string previous_status
@@ -147,19 +155,36 @@ erDiagram
         vector embedding_768
     }
 
+    EMAIL_SENDERS {
+        bigint id PK
+        string email UK
+        string best_known_name
+    }
+
     KANBAN_COLUMNS {
         bigint id PK
-        bigint user_id FK
+        bigint account_id FK
         string name
         string color
+        string linked_status
         string gmail_label_id
-        integer display_order
+        integer position
+    }
+
+    EMAIL_ATTACHMENTS {
+        bigint id PK
+        bigint email_id FK
+        string filename
+        string content_type
+        bigint size
+        string external_url
+        boolean inline
     }
 ```
 
 - **Vector Indexes**: HNSW indexes on `embedding_768` and `embedding_384` for sub-second semantic search.
 - **Trigram Indexes**: GIN trigram indexes on `subject` and `sender` for fast fuzzy text matching.
-- **Migrations**: 7 Flyway migrations managing schema evolution from extensions to email attachments.
+- **Migrations**: 8 Flyway migrations managing consolidated schema structure from extensions to kanban columns.
 
 ---
 
