@@ -5,6 +5,7 @@ import org.springframework.scheduling.annotation.Async;
 import com.awad.emailclientai.modules.email.dto.response.MailFolderDto;
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDetailDto;
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDto;
+import com.awad.emailclientai.modules.email.dto.response.EmailEntityDto;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
 import com.awad.emailclientai.modules.email.entity.EmailAuthType;
 import com.awad.emailclientai.modules.email.entity.EmailProvider;
@@ -12,14 +13,21 @@ import com.awad.emailclientai.shared.service.EncryptionService;
 import jakarta.mail.*;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeBodyPart;
+import jakarta.mail.search.HeaderTerm;
+import org.eclipse.angus.mail.imap.IMAPFolder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Service for connecting to email servers via IMAP protocol.
@@ -32,6 +40,33 @@ public class ImapService {
 
     private final EncryptionService encryptionService;
     private final GoogleTokenService googleTokenService;
+
+    // ================== Shared Constants ==================
+
+    private static final String[] TRASH_FOLDER_NAMES = {
+            "[Gmail]/Trash", "[Gmail]/Thùng rác", "Trash", "Deleted Items", "Deleted"
+    };
+
+        private static final String[] SPAM_FOLDER_NAMES = {
+            "[Gmail]/Spam", "[Gmail]/Thư rác", "Spam", "Junk", "Junk E-mail"
+        };
+
+    private static final String[] SENT_FOLDER_NAMES = {
+            "Sent", "Sent Items", "Sent Mail",
+            "[Gmail]/Sent Mail", "INBOX.Sent", "INBOX.Sent Items"
+    };
+
+    private static final Map<String, Pattern> CLOUD_LINK_PATTERNS;
+    private static final Pattern GOOGLE_REDIRECT_PATTERN =
+            Pattern.compile("google.com/url\\?q=([^&]+)");
+
+    static {
+        Map<String, Pattern> map = new LinkedHashMap<>();
+        map.put("Google Drive", Pattern.compile("https?://(?:[a-zA-Z0-9-]+\\.)*drive\\.google\\.com/[^\\s\"'<>]+"));
+        map.put("Dropbox", Pattern.compile("https?://(?:www\\.)?dropbox\\.com/[^\\s\"'<>]+"));
+        map.put("OneDrive", Pattern.compile("https?://(?:[a-zA-Z0-9-]+\\.)*(?:onedrive\\.live\\.com|1drv\\.ms)/[^\\s\"'<>]+"));
+        CLOUD_LINK_PATTERNS = Collections.unmodifiableMap(map);
+    }
 
     /**
      * Tests the connection to an IMAP server.
@@ -51,6 +86,38 @@ public class ImapService {
     /**
      * Retrieves the list of folders/mailboxes from the email account.
      */
+    public String fetchLiveBody(EmailAccount account, String folderName, long uid) {
+        log.info("[LIVE-HEALING] Attempting to fetch live body for UID: {}", uid);
+        try {
+            Store store = connectToStore(account);
+            Folder folder = store.getFolder(folderName);
+            if (!folder.isOpen()) {
+                folder.open(Folder.READ_ONLY);
+            }
+            
+            Message message = null;
+            if (folder instanceof IMAPFolder imapFolder) {
+                message = imapFolder.getMessageByUID(uid);
+            }
+            
+            if (message == null) {
+                log.warn("[LIVE-HEALING] Message not found on server for UID: {}", uid);
+                return null;
+            }
+            
+            String body = fetchBodyContent(message);
+            folder.close(false);
+            store.close();
+            
+            log.info("[LIVE-HEALING] Successfully fetched {} bytes for UID: {}", 
+                    body != null ? body.length() : 0, uid);
+            return body;
+        } catch (Exception e) {
+            log.error("[LIVE-HEALING] Failed to fetch live body: {}", e.getMessage());
+            return null;
+        }
+    }
+
     public List<MailFolderDto> getFolders(EmailAccount account) throws MessagingException {
         List<MailFolderDto> folders = new ArrayList<>();
         
@@ -83,6 +150,33 @@ public class ImapService {
         folders.sort(Comparator.comparingInt(this::getFolderPriority));
         
         return folders;
+    }
+
+    /**
+     * Resolves the actual physical (possibly localized) folder name for a given standard type (e.g., "TRASH").
+     */
+    public String findPhysicalFolderByType(EmailAccount account, String type) {
+        if (type == null || "INBOX".equalsIgnoreCase(type)) return "INBOX";
+        try (Store store = connectToStore(account)) {
+            Folder[] allFolders = store.getDefaultFolder().list("*");
+            for (Folder folder : allFolders) {
+                if ((folder.getType() & Folder.HOLDS_MESSAGES) != 0) {
+                    if (type.equalsIgnoreCase(determineFolderType(folder.getFullName()))) {
+                        return folder.getFullName();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to dynamically resolve folder type {}: {}", type, e.getMessage());
+        }
+        // Fallback to English defaults
+        if ("TRASH".equalsIgnoreCase(type)) {
+            return account.getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL ? "[Gmail]/Trash" : "Trash";
+        }
+        if ("SPAM".equalsIgnoreCase(type)) {
+            return account.getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL ? "[Gmail]/Spam" : "Spam";
+        }
+        return "INBOX";
     }
 
     /**
@@ -166,25 +260,27 @@ public class ImapService {
         try (Store store = connectToStore(account)) {
             Folder folder = store.getFolder(folderName);
             folder.open(Folder.READ_ONLY);
-            
-            if (!(folder instanceof UIDFolder)) {
-                throw new MessagingException("Folder does not support UIDs");
-            }
-            
-            UIDFolder uidFolder = (UIDFolder) folder;
-            Message message = uidFolder.getMessageByUID(uid);
-            
-            if (message == null) {
-                folder.close(false);
-                throw new MessagingException("Message not found with UID: " + uid);
-            }
-            
-            MailMessageDetailDto detail = convertToDetailDto(message, uid);
+            MailMessageDetailDto detail = getMessageDetail(folder, uid);
             folder.close(false);
-            
             return detail;
         }
     }
+
+    public MailMessageDetailDto getMessageDetail(Folder folder, long uid) throws MessagingException, IOException {
+        if (!(folder instanceof UIDFolder)) {
+            throw new MessagingException("Folder does not support UIDs");
+        }
+        
+        UIDFolder uidFolder = (UIDFolder) folder;
+        Message message = uidFolder.getMessageByUID(uid);
+        
+        if (message == null) {
+            throw new MessagingException("Message not found with UID: " + uid);
+        }
+        
+        return convertToDetailDto(message, uid);
+    }
+
 
     /**
      * Marks a message as read/unread.
@@ -324,9 +420,8 @@ public class ImapService {
             }
 
             // Find trash folder by common names
-            String[] trashNames = {"[Gmail]/Trash", "[Gmail]/Thùng rác", "Trash", "Deleted Items", "Deleted"};
             Folder trashFolder = null;
-            for (String name : trashNames) {
+            for (String name : TRASH_FOLDER_NAMES) {
                 try {
                     Folder f = store.getFolder(name);
                     if (f.exists()) {
@@ -353,6 +448,144 @@ public class ImapService {
     }
 
     /**
+     * Moves a message between folders by RFC822 Message-ID instead of UID.
+     * This is more reliable across Gmail labels/folders where UID can differ.
+     */
+    public void moveMessageByMessageId(EmailAccount account, String fromFolderName, String toFolderName, String messageId)
+            throws MessagingException {
+        if (messageId == null || messageId.isBlank()) {
+            log.warn("moveMessageByMessageId skipped: empty messageId");
+            return;
+        }
+
+        String normalizedTarget = normalizeMessageId(messageId);
+
+        try (Store store = connectToStore(account)) {
+            Folder fromFolder = resolveExistingFolder(store, fromFolderName);
+            if (fromFolder == null) {
+                log.warn("Source folder does not exist: {}", fromFolderName);
+                return;
+            }
+
+            Folder toFolder = resolveOrCreateTargetFolder(store, toFolderName);
+            if (toFolder == null) {
+                log.warn("Target folder does not exist and was not created for system safety: {}", toFolderName);
+                return;
+            }
+
+            fromFolder.open(Folder.READ_WRITE);
+
+            Message target = null;
+
+            // Fast path: search by Message-ID header first
+            Message[] matches = fromFolder.search(new HeaderTerm("Message-ID", normalizedTarget));
+            if (matches != null && matches.length > 0) {
+                target = matches[0];
+            }
+
+            // Fallback: tolerant scan to handle <> wrappers / variants
+            if (target == null) {
+                Message[] all = fromFolder.getMessages();
+                for (int i = all.length - 1; i >= 0; i--) {
+                    if (matchesMessageId(all[i], normalizedTarget)) {
+                        target = all[i];
+                        break;
+                    }
+                }
+            }
+
+            if (target == null) {
+                log.warn("Message not found by Message-ID in folder {}: {}", fromFolderName, normalizedTarget);
+                fromFolder.close(false);
+                return;
+            }
+
+            fromFolder.copyMessages(new Message[]{target}, toFolder);
+            target.setFlag(Flags.Flag.DELETED, true);
+            fromFolder.close(true);
+
+            log.info("Moved message by Message-ID from '{}' to '{}' (messageId={})", fromFolder.getFullName(), toFolder.getFullName(), normalizedTarget);
+        }
+    }
+
+    private Folder resolveExistingFolder(Store store, String preferredName) {
+        List<String> candidates = new ArrayList<>();
+        if (preferredName != null && !preferredName.isBlank()) {
+            candidates.add(preferredName);
+        }
+        candidates.addAll(getSystemFolderAliases(preferredName));
+
+        for (String candidate : candidates) {
+            try {
+                Folder folder = store.getFolder(candidate);
+                if (folder != null && folder.exists()) {
+                    return folder;
+                }
+            } catch (Exception ignore) {
+                // try next alias
+            }
+        }
+        return null;
+    }
+
+    private Folder resolveOrCreateTargetFolder(Store store, String preferredName) throws MessagingException {
+        Folder existing = resolveExistingFolder(store, preferredName);
+        if (existing != null) {
+            return existing;
+        }
+
+        // Never create Gmail system folders when alias lookup fails,
+        // otherwise we risk creating fake user labels like "[Gmail]/Trash".
+        String lower = preferredName == null ? "" : preferredName.toLowerCase(Locale.ROOT);
+        boolean isSystemTrashOrSpam = lower.contains("trash") || lower.contains("spam") || lower.contains("junk");
+        if (isSystemTrashOrSpam) {
+            return null;
+        }
+
+        Folder folder = store.getFolder(preferredName);
+        if (!folder.exists()) {
+            folder.create(Folder.HOLDS_MESSAGES);
+        }
+        return folder;
+    }
+
+    private List<String> getSystemFolderAliases(String folderName) {
+        String lower = folderName == null ? "" : folderName.toLowerCase(Locale.ROOT);
+        if (lower.contains("trash") || lower.contains("deleted") || "trash".equals(lower)) {
+            return Arrays.asList(TRASH_FOLDER_NAMES);
+        }
+        if (lower.contains("spam") || lower.contains("junk")) {
+            return Arrays.asList(SPAM_FOLDER_NAMES);
+        }
+        return Collections.emptyList();
+    }
+
+    private boolean matchesMessageId(Message message, String normalizedTarget) {
+        try {
+            String[] headers = message.getHeader("Message-ID");
+            if (headers == null || headers.length == 0) return false;
+            for (String h : headers) {
+                String normalized = normalizeMessageId(h);
+                if (normalized.equalsIgnoreCase(normalizedTarget)) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Failed reading Message-ID header: {}", e.getMessage());
+        }
+        return false;
+    }
+
+    private String normalizeMessageId(String raw) {
+        if (raw == null) return "";
+        String s = raw.trim();
+        if (s.startsWith("<") && s.endsWith(">") && s.length() > 2) {
+            s = s.substring(1, s.length() - 1);
+        }
+        return s.trim();
+    }
+
+    /**
      * Downloads an attachment from a message.
      */
     public AttachmentResourceDto downloadAttachment(EmailAccount account, String folderName, 
@@ -366,45 +599,102 @@ public class ImapService {
             Message message = uidFolder.getMessageByUID(uid);
             
             if (message == null) {
+                folder.close(false);
                 throw new MessagingException("Message not found");
             }
             
-            // Find the attachment by ID (index)
-            int attachmentIndex = Integer.parseInt(attachmentId);
+            int targetIndex = Integer.parseInt(attachmentId);
+            int[] currentIndex = {0};
+            BodyPart foundPart = null;
+
             Object content = message.getContent();
-            
             if (content instanceof Multipart) {
-                Multipart multipart = (Multipart) content;
-                int currentIndex = 0;
-                
-                for (int i = 0; i < multipart.getCount(); i++) {
-                    BodyPart bodyPart = multipart.getBodyPart(i);
-                    String disposition = bodyPart.getDisposition();
-                    
-                    if (Part.ATTACHMENT.equalsIgnoreCase(disposition) || 
-                        Part.INLINE.equalsIgnoreCase(disposition) ||
-                        bodyPart.getFileName() != null) {
-                        
-                        if (currentIndex == attachmentIndex) {
-                            // Read stream to memory to allow closing folder/store
-                            byte[] contentBytes = bodyPart.getInputStream().readAllBytes();
-                            
-                            return AttachmentResourceDto.builder()
-                                    .inputStream(new java.io.ByteArrayInputStream(contentBytes))
-                                    .filename(bodyPart.getFileName() != null ? bodyPart.getFileName() : "attachment")
-                                    .contentType(bodyPart.getContentType())
-                                    .size(contentBytes.length)
-                                    .build();
-                        }
-                        currentIndex++;
-                    }
-                }
+                foundPart = findAttachmentPartRecursive((Multipart) content, targetIndex, currentIndex);
             }
             
+            if (foundPart == null) {
+                folder.close(false);
+                throw new MessagingException("Attachment not found at index: " + targetIndex);
+            }
+
+            log.info("[DeepDownload] Found target attachment part: {}, Type: {}", 
+                    foundPart.getFileName(), foundPart.getContentType());
+
+            // Read stream to memory to allow closing folder/store
+            byte[] contentBytes = foundPart.getInputStream().readAllBytes();
+            
+            AttachmentResourceDto result = AttachmentResourceDto.builder()
+                    .inputStream(new java.io.ByteArrayInputStream(contentBytes))
+                    .filename(foundPart.getFileName() != null ? foundPart.getFileName() : "attachment-" + targetIndex)
+                    .contentType(foundPart.getContentType())
+                    .size(contentBytes.length)
+                    .build();
+
             folder.close(false);
-            throw new MessagingException("Attachment not found");
+            return result;
         }
     }
+
+    private BodyPart findAttachmentPartRecursive(Multipart multipart, int targetIndex, int[] currentIndex) 
+            throws MessagingException, IOException {
+        for (int i = 0; i < multipart.getCount(); i++) {
+            BodyPart bodyPart = multipart.getBodyPart(i);
+            
+            // OPTIMIZATION: Check if it's an attachment BEFORE loading content
+            if (isActualAttachment(bodyPart)) {
+                if (currentIndex[0] == targetIndex) {
+                    return bodyPart;
+                }
+                currentIndex[0]++;
+            } 
+            // LIGHTWEIGHT CHECK: Only recurse if it's a multipart without downloading everything first
+            else if (bodyPart.isMimeType("multipart/*")) {
+                Object content = bodyPart.getContent();
+                if (content instanceof Multipart) {
+                    BodyPart nested = findAttachmentPartRecursive((Multipart) content, targetIndex, currentIndex);
+                    if (nested != null) return nested;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isActualAttachment(Part part) throws MessagingException {
+        if (part == null) return false; // Safety check for root part
+        String disposition = part.getDisposition();
+        String fileName = part.getFileName();
+        String contentId = null;
+        if (part instanceof BodyPart bp) {
+            contentId = getContentId(bp);
+        }
+        String contentType = part.getContentType() != null ? part.getContentType().toLowerCase() : "";
+        // 1. Explicitly marked as attachment -> Always include
+        if (Part.ATTACHMENT.equalsIgnoreCase(disposition)) {
+            return true;
+        }
+
+        // 2. If there's a filename, treat it as an attachment. This covers text/plain attachments
+        // (e.g. .txt) which are valid user attachments even though their MIME type is text/*.
+        if (fileName != null && !fileName.trim().isEmpty()) {
+            log.debug("[IMAP-XRAY] Part with filename '{}' treated as attachment.", fileName);
+            return true;
+        }
+
+        // 3. If it's a TEXT or HTML part WITHOUT a filename, it's likely the body rather than an attachment.
+        if (contentType.contains("text/html") || contentType.contains("text/plain")) {
+            log.debug("[IMAP-XRAY] Text/HTML part without filename treated as body, not attachment.");
+            return false;
+        }
+
+        // 4. Has a Content-ID but NO filename -> decorative inline element (e.g., logo)
+        if (contentId != null && fileName == null) {
+            return false;
+        }
+
+        // 5. Fallback: treat as non-attachment
+        return false;
+    }
+
 
     /**
      * Appends a sent message to the Sent folder using IMAP APPEND.
@@ -458,12 +748,7 @@ public class ImapService {
      * Attempts to find the Sent folder by common names.
      */
     private Folder findSentFolder(Store store) throws MessagingException {
-        String[] possibleNames = {
-            "Sent", "Sent Items", "Sent Mail", 
-            "[Gmail]/Sent Mail", "INBOX.Sent", "INBOX.Sent Items"
-        };
-        
-        for (String name : possibleNames) {
+        for (String name : SENT_FOLDER_NAMES) {
             try {
                 Folder folder = store.getFolder(name);
                 if (folder.exists()) {
@@ -476,13 +761,14 @@ public class ImapService {
         return null;
     }
 
-    // ================== Private Helper Methods ==================
-
-    private Store connectToStore(EmailAccount account) throws MessagingException {
+    // ================== Shared Connection Methods ==================
+    
+    public Store connectToStore(EmailAccount account) throws MessagingException {
         return connectToStoreInternal(account, true);
     }
 
     private Store connectToStoreInternal(EmailAccount account, boolean retryOnAuthFailure) throws MessagingException {
+
         Properties props = new Properties();
         
         // Use 'gimaps' for Gmail (enables X-GM-LABELS, X-GM-MSGID, etc.), 'imaps' for others
@@ -546,10 +832,44 @@ public class ImapService {
         Address[] fromAddresses = message.getFrom();
         String from = "";
         String fromName = "";
+        
+        // DEBUG: Log raw From header
+        try {
+            String[] rawFrom = message.getHeader("From");
+            if (rawFrom != null && rawFrom.length > 0) {
+                log.info("[DEBUG-SENDER] Raw From Header: {}", rawFrom[0]);
+            }
+        } catch (Exception e) {}
+
         if (fromAddresses != null && fromAddresses.length > 0) {
             InternetAddress ia = (InternetAddress) fromAddresses[0];
             from = ia.getAddress();
-            fromName = ia.getPersonal() != null ? ia.getPersonal() : from;
+            fromName = ia.getPersonal();
+            
+            // V41: Ultra-Robust Fallback - Manual Header Parsing
+            if (fromName == null || fromName.isBlank()) {
+                try {
+                    String[] rawHeaders = message.getHeader("From");
+                    if (rawHeaders != null && rawHeaders.length > 0) {
+                        String raw = rawHeaders[0];
+                        // Decipher RFC 2047 encoding (if any)
+                        try {
+                            raw = jakarta.mail.internet.MimeUtility.decodeText(raw);
+                        } catch (Exception ignore) {}
+                        
+                        if (raw.contains("<")) {
+                            String extractedName = raw.substring(0, raw.indexOf("<")).trim();
+                            extractedName = extractedName.replaceAll("^\"|\"$", "").trim();
+                            if (!extractedName.isEmpty() && !extractedName.equalsIgnoreCase(from)) {
+                                fromName = extractedName;
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("Manual name extraction failed: {}", e.getMessage());
+                }
+            }
+            log.info("[DEBUG-SENDER] Final Result -> Name: '{}', Email: '{}'", fromName, from);
         }
 
         List<String> to = extractAddresses(message.getRecipients(Message.RecipientType.TO));
@@ -577,7 +897,31 @@ public class ImapService {
         // Fetch Gmail labels using raw IMAP FETCH X-GM-LABELS command
         List<String> labels = fetchGmailLabels(message, folder);
 
-        return MailMessageDto.builder()
+        String body = fetchBodyContent(message);
+        String preview = generatePreview(message);
+
+        // Collect attachment metadata
+        List<MailMessageDto.AttachmentMetadataDto> attachments = new ArrayList<>();
+        try {
+            if (message.getContent() instanceof Multipart) {
+                collectAttachmentMetadata((Multipart) message.getContent(), attachments, new int[]{0});
+            }
+        } catch (Exception e) {
+            log.warn("Failed to extract attachment metadata for UID {}: {}", uid, e.getMessage());
+        }
+
+        // Debug logging: show what's been detected as attachment metadata
+        log.info("[IMAP-META] UID {} attachmentsCount={}", uid, attachments.size());
+        for (var at : attachments) {
+            try {
+                log.info("[IMAP-META] UID {} attachment meta: filename='{}', id='{}', contentId='{}', externalUrl='{}'",
+                        uid, at.getFilename(), at.getId(), at.getContentId(), at.getExternalUrl());
+            } catch (Exception ex) {
+                log.warn("[IMAP-META] Failed to log attachment meta for UID {}: {}", uid, ex.getMessage());
+            }
+        }
+
+        MailMessageDto dto = MailMessageDto.builder()
                 .uid(uid)
                 .messageId(getHeaderValue(message, "Message-ID"))
                 .from(from)
@@ -585,17 +929,31 @@ public class ImapService {
                 .to(to)
                 .cc(cc)
                 .subject(message.getSubject())
-                .preview(generatePreview(message)) 
-                .body(fetchBodyContent(message)) // Fetch limited body
+                .preview(preview) 
+                .body(body) 
                 .sentAt(sentAt)
                 .receivedAt(receivedAt)
                 .read(read)
                 .starred(starred)
-                .hasAttachments(hasAttachments)
+                .hasAttachments(hasAttachments || !attachments.isEmpty())
+                .attachments(attachments)
                 .labels(labels)
                 .gmailMessageId(extractGmailMsgId(message))
                 .threadId(extractGmailThreadId(message))
                 .size(message.getSize())
+                .build();
+
+        // Scan for Cloud Links in list view to ensure 'hasAttachments' icon appears
+        scanForCloudLinksMetadata(dto.getBody(), attachments, new int[]{attachments.size()});
+
+        boolean localHasCloudLinks = attachments.stream().anyMatch(a -> a.getExternalUrl() != null);
+        boolean localHasPhysicalAttachments = attachments.stream().anyMatch(a -> a.getExternalUrl() == null);
+
+        return dto.toBuilder()
+                .attachments(attachments)
+                .hasAttachments(hasAttachments || !attachments.isEmpty())
+                .hasCloudLinks(localHasCloudLinks)
+                .hasPhysicalAttachments(localHasPhysicalAttachments)
                 .build();
     }
 
@@ -611,8 +969,7 @@ public class ImapService {
                 String[] gmLabels = gmailMsg.getLabels();
                 if (gmLabels != null && gmLabels.length > 0) {
                     for (String label : gmLabels) {
-                        // Filter out Gmail system labels (start with \)
-                        if (label != null && !label.startsWith("\\")) {
+                        if (label != null) {
                             labels.add(label);
                         }
                     }
@@ -636,18 +993,65 @@ public class ImapService {
 
     private String fetchBodyContent(Message message) {
          try {
-             Object content = message.getContent();
-             log.debug("Fetching body content, content type: {}", content != null ? content.getClass().getName() : "null");
-             if (content instanceof String) {
-                 return (String) content;
-             } else if (content instanceof Multipart) {
-                 return getTextFromMultipart((Multipart) content);
+             StringBuilder textBuilder = new StringBuilder();
+             StringBuilder htmlBuilder = new StringBuilder();
+             List<MailMessageDetailDto.AttachmentDto> throwawayAttachments = new ArrayList<>();
+             
+             // Use the robust recursive parser instead of the flawed getTextFromMultipart
+             processContentRecursive(message.getContent(), message.getContentType(), 
+                     textBuilder, htmlBuilder, throwawayAttachments, new int[]{0}, message);
+                     
+             if (htmlBuilder.length() > 0) {
+                 return htmlBuilder.toString();
              }
+             
+             // Targeted Fallback: Wrap plain text in a unique container to allow isolated CSS styling
+             String plainText = textBuilder.toString();
+             if (!plainText.isEmpty()) {
+                 return convertPlainTextToHtml(plainText);
+             }
+             
+             return "";
          } catch (Exception e) {
              log.warn("Failed to fetch body content for message: {}", e.getMessage());
              return "";
          }
-         return "";
+    }
+
+    /**
+     * Converts raw plain-text email body into presentable HTML.
+     * 1. HTML-escapes special characters to prevent injection.
+     * 2. Auto-links URLs so they become clickable (target=_blank).
+     * 3. Converts newlines to br tags.
+     * 4. Wraps everything in the mb-plain-text-body container.
+     */
+    private String convertPlainTextToHtml(String plainText) {
+        // Step 1: HTML-escape to prevent XSS
+        String escaped = plainText
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
+
+        // Step 2: Auto-link URLs (must run AFTER escaping so we don't break the <a> tags we create)
+        Pattern urlPattern = Pattern.compile("(https?://[^\\s&]+)");
+        Matcher urlMatcher = urlPattern.matcher(escaped);
+        StringBuffer sb = new StringBuffer();
+        while (urlMatcher.find()) {
+            String url = urlMatcher.group(1);
+            // Trim trailing punctuation that was likely not part of the URL
+            String trimmed = url.replaceAll("[.,;:!?)]+$", "");
+            String trailing = url.substring(trimmed.length());
+            String replacement = "<a href=\"" + trimmed + "\" target=\"_blank\" rel=\"noopener noreferrer\">" + trimmed + "</a>" + trailing;
+            urlMatcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+        }
+        urlMatcher.appendTail(sb);
+        escaped = sb.toString();
+
+        // Step 3: Convert newlines to <br> tags  
+        escaped = escaped.replace("\r\n", "<br>").replace("\n", "<br>");
+
+        return "<div class=\"mb-plain-text-body\">" + escaped + "</div>";
     }
 
     private String generatePreview(Message message) {
@@ -671,29 +1075,9 @@ public class ImapService {
         String result = html.replaceAll(scriptRegex, "").replaceAll(styleRegex, "");
         // 2. Remove all other HTML tags
         result = result.replaceAll("<[^>]*>", "");
-        // 3. Unescape entities
-        return result.replaceAll("&nbsp;", " ").replaceAll("&lt;", "<").replaceAll("&gt;", ">").trim();
-    }
-
-    private String getTextFromMultipart(Multipart multipart) throws Exception {
-        String plainText = null;
-        for (int i = 0; i < multipart.getCount(); i++) {
-            BodyPart bodyPart = multipart.getBodyPart(i);
-            if (bodyPart.isMimeType("text/html")) {
-                return (String) bodyPart.getContent();
-            } else if (bodyPart.isMimeType("text/plain")) {
-                if (plainText == null) plainText = (String) bodyPart.getContent();
-            } else if (bodyPart.getContent() instanceof Multipart) {
-                String result = getTextFromMultipart((Multipart) bodyPart.getContent());
-                // If the recursive call found HTML, return it immediately
-                // We can check if it looks like HTML by seeing if it contains '<'
-                if (result != null && (result.contains("<html") || result.contains("<body") || result.contains("<div"))) {
-                    return result;
-                }
-                if (plainText == null) plainText = result;
-            }
-        }
-        return plainText;
+        // 3. Unescape entities and collapse whitespace
+        result = result.replaceAll("&nbsp;", " ").replaceAll("&lt;", "<").replaceAll("&gt;", ">");
+        return result.replaceAll("\\s+", " ").trim();
     }
 
     private MailMessageDetailDto convertToDetailDto(Message message, long uid) 
@@ -721,7 +1105,7 @@ public class ImapService {
         StringBuilder textBuilder = new StringBuilder();
         StringBuilder htmlBuilder = new StringBuilder();
         processContentRecursive(message.getContent(), message.getContentType(), 
-                textBuilder, htmlBuilder, attachments, new int[]{0});
+                textBuilder, htmlBuilder, attachments, new int[]{0}, message);
 
         LocalDateTime sentAt = message.getSentDate() != null 
                 ? message.getSentDate().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime()
@@ -730,7 +1114,7 @@ public class ImapService {
                 ? message.getReceivedDate().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime()
                 : sentAt;
 
-        return MailMessageDetailDto.builder()
+        MailMessageDetailDto detail = MailMessageDetailDto.builder()
                 .uid(uid)
                 .messageId(getHeaderValue(message, "Message-ID"))
                 .from(from)
@@ -747,6 +1131,14 @@ public class ImapService {
                 .bodyText(textBuilder.toString())
                 .bodyHtml(htmlBuilder.toString())
                 .attachments(attachments)
+                .build();
+        
+        // Scan for Cloud Links and add to detail
+        scanForCloudLinks(detail.getBodyHtml() != null ? detail.getBodyHtml() : detail.getBodyText(), 
+                attachments, new int[]{attachments.size()});
+        
+        return detail.toBuilder()
+                .attachments(attachments)
                 .gmailMessageId(extractGmailMsgId(message))
                 .threadId(extractGmailThreadId(message))
                 .inReplyTo(getHeaderValue(message, "In-Reply-To"))
@@ -757,42 +1149,103 @@ public class ImapService {
     private void processContentRecursive(Object content, String contentType,
                                           StringBuilder textBuilder, StringBuilder htmlBuilder,
                                           List<MailMessageDetailDto.AttachmentDto> attachments,
-                                          int[] attachmentIndex) throws MessagingException, IOException {
-        if (content instanceof String) {
-            if (contentType != null && contentType.toLowerCase().contains("text/html")) {
-                htmlBuilder.append((String) content);
-            } else {
-                textBuilder.append((String) content);
+                                          int[] attachmentIndex, Part part) throws MessagingException, IOException {
+        
+        String disposition = part != null ? part.getDisposition() : null;
+        String contentId = (part instanceof BodyPart bp) ? getContentId(bp) : null;
+        String fileName = part != null ? part.getFileName() : null;
+        
+        log.info("[IMAP-TRACE] Part Found - Type: {}, Disp: {}, CID: {}, FileName: {}, Class: {}", 
+                contentType != null ? contentType.split(";")[0] : "null", 
+                disposition, 
+                contentId, 
+                fileName,
+                content != null ? content.getClass().getName() : "null");
+        
+        // 1. Identify if this part should be treated as an attachment/inline resource
+        boolean isAttachment = isActualAttachment(part);
+        String lowerType = contentType != null ? contentType.toLowerCase() : "";
+
+        if (isAttachment) {
+            log.info("[IMAP-TRACE-HIT] Capturing as Attachment: {}, CID: {}", fileName, contentId);
+
+            attachments.add(MailMessageDetailDto.AttachmentDto.builder()
+                    .id(String.valueOf(attachmentIndex[0]++))
+                    .filename(fileName != null ? fileName : "attachment-" + attachmentIndex[0])
+                    .contentType(contentType)
+                    .size(part != null ? part.getSize() : 0)
+                    .inline(contentId != null)
+                    .contentId(contentId)
+                    .build());
+            
+            // Resilience Logic: 
+            // 1. If it's a MULTIPART, we MUST NOT return even if flagged as attachment. 
+            // We need to dive into it to find potentially hidden body parts (common in complex clients).
+            if (content instanceof Multipart) {
+                log.info("[IMAP-XRAY] Nested Multipart inside Attachment '{}'. Continuing recursion.", fileName);
             }
-        } else if (content instanceof Multipart) {
-            Multipart multipart = (Multipart) content;
+            // 2. High-Fidelity Bypass: If this "attachment" is actually text/html or text/plain, proceed.
+            else if (lowerType.contains("text/html") || lowerType.contains("text/plain")) {
+                log.info("[IMAP-XRAY] Text part found inside Attachment '{}'. Extracting as body.", fileName);
+            }
+            else {
+                return; // Genuine non-text attachment, safe to skip body extraction
+            }
+        }
+
+        // 2. Process content based on type
+        if (content instanceof String body) {
+            if (lowerType.contains("text/html")) {
+                htmlBuilder.append(body);
+                log.debug("[IMAP-XRAY-CONTENT] Appended HTML content (Length: {})", body.length());
+            } else if (lowerType.contains("text/plain")) {
+                textBuilder.append(body);
+                log.debug("[IMAP-XRAY-CONTENT] Appended Plain Text content (Length: {})", body.length());
+            } else {
+                log.debug("[IMAP-XRAY-CONTENT] String content with unknown type: {}", contentType);
+            }
+        } else if (content instanceof Multipart multipart) {
             for (int i = 0; i < multipart.getCount(); i++) {
-                BodyPart bodyPart = multipart.getBodyPart(i);
-                String disposition = bodyPart.getDisposition();
-                
-                if (Part.ATTACHMENT.equalsIgnoreCase(disposition) || 
-                    (bodyPart.getFileName() != null && disposition != null)) {
-                    // It's an attachment
-                    attachments.add(MailMessageDetailDto.AttachmentDto.builder()
-                            .id(String.valueOf(attachmentIndex[0]++))
-                            .filename(bodyPart.getFileName())
-                            .contentType(bodyPart.getContentType())
-                            .size(bodyPart.getSize())
-                            .inline(Part.INLINE.equalsIgnoreCase(disposition))
-                            .contentId(getContentId(bodyPart))
-                            .build());
+                BodyPart childPart = multipart.getBodyPart(i);
+                processContentRecursive(childPart.getContent(), childPart.getContentType(),
+                        textBuilder, htmlBuilder, attachments, attachmentIndex, childPart);
+            }
+        } else if (content instanceof Message nestedMessage) {
+            log.info("[IMAP-XRAY] Found nested Message (Forwarded as attachment)");
+            processContentRecursive(nestedMessage.getContent(), nestedMessage.getContentType(),
+                    textBuilder, htmlBuilder, attachments, attachmentIndex, nestedMessage);
+        } else if (content instanceof MimeBodyPart mbp) {
+            log.debug("[IMAP-XRAY-CONTENT] Processing nested MimeBodyPart: {}", contentType);
+            processContentRecursive(mbp.getContent(), mbp.getContentType(),
+                    textBuilder, htmlBuilder, attachments, attachmentIndex, mbp);
+        } else if (content instanceof InputStream is) {
+            if (lowerType.contains("text/html") || lowerType.contains("text/plain")) {
+                log.debug("[IMAP-XRAY] Converting InputStream body to String (Type: {})", lowerType);
+                String body = org.springframework.util.StreamUtils.copyToString(is, StandardCharsets.UTF_8);
+                if (lowerType.contains("text/html")) {
+                    htmlBuilder.append(body);
                 } else {
-                    // Process nested content
-                    processContentRecursive(bodyPart.getContent(), bodyPart.getContentType(),
-                            textBuilder, htmlBuilder, attachments, attachmentIndex);
+                    textBuilder.append(body);
+                }
+            } else {
+                log.debug("[IMAP-XRAY] Skipping non-text InputStream part: {}", contentType);
+            }
+        } else if (content instanceof byte[] bytes) {
+            if (lowerType.contains("text/html") || lowerType.contains("text/plain")) {
+                log.debug("[IMAP-XRAY] Converting byte[] body to String (Type: {})", lowerType);
+                String body = new String(bytes, StandardCharsets.UTF_8);
+                if (lowerType.contains("text/html")) {
+                    htmlBuilder.append(body);
+                } else {
+                    textBuilder.append(body);
                 }
             }
-        } else if (content instanceof MimeBodyPart) {
-            MimeBodyPart mbp = (MimeBodyPart) content;
-            processContentRecursive(mbp.getContent(), mbp.getContentType(),
-                    textBuilder, htmlBuilder, attachments, attachmentIndex);
+        } else {
+            log.warn("[IMAP-XRAY-CONTENT] Unexpected content type: {} (Class: {})", 
+                    contentType, content != null ? content.getClass().getName() : "null");
         }
     }
+
 
     private void processContent(Message message, String bodyText, String bodyHtml,
                                  List<MailMessageDetailDto.AttachmentDto> attachments, 
@@ -801,14 +1254,16 @@ public class ImapService {
     }
 
     private String getContentId(BodyPart bodyPart) throws MessagingException {
+        // Try Content-ID and Content-Id
         String[] headers = bodyPart.getHeader("Content-ID");
+        if (headers == null || headers.length == 0) {
+            headers = bodyPart.getHeader("Content-Id");
+        }
+        
         if (headers != null && headers.length > 0) {
-            String cid = headers[0];
-            // Remove angle brackets
-            if (cid.startsWith("<") && cid.endsWith(">")) {
-                return cid.substring(1, cid.length() - 1);
-            }
-            return cid;
+            String cid = headers[0].trim();
+            // Remove angle brackets if present
+            return cid.replaceAll("[<>]", "").trim();
         }
         return null;
     }
@@ -817,8 +1272,13 @@ public class ImapService {
         List<String> result = new ArrayList<>();
         if (addresses != null) {
             for (Address addr : addresses) {
-                if (addr instanceof InternetAddress) {
-                    result.add(((InternetAddress) addr).getAddress());
+                if (addr instanceof InternetAddress ia) {
+                    String personal = ia.getPersonal();
+                    if (personal != null && !personal.isBlank()) {
+                        result.add(String.format("\"%s\" <%s>", personal.replace("\"", ""), ia.getAddress()));
+                    } else {
+                        result.add(ia.getAddress());
+                    }
                 } else {
                     result.add(addr.toString());
                 }
@@ -852,11 +1312,11 @@ public class ImapService {
     private String determineFolderType(String folderName) {
         String lower = folderName.toLowerCase();
         if (lower.equals("inbox")) return "INBOX";
-        if (lower.contains("sent")) return "SENT";
-        if (lower.contains("draft")) return "DRAFTS";
-        if (lower.contains("trash") || lower.contains("deleted")) return "TRASH";
-        if (lower.contains("spam") || lower.contains("junk")) return "SPAM";
-        if (lower.contains("archive")) return "ARCHIVE";
+        if (lower.contains("sent") || lower.contains("đã gửi")) return "SENT";
+        if (lower.contains("draft") || lower.contains("thư nháp")) return "DRAFTS";
+        if (lower.contains("trash") || lower.contains("deleted") || lower.contains("thùng rác")) return "TRASH";
+        if (lower.contains("spam") || lower.contains("junk") || lower.contains("thư rác")) return "SPAM";
+        if (lower.contains("archive") || lower.contains("lưu trữ")) return "ARCHIVE";
         return "CUSTOM";
     }
 
@@ -883,21 +1343,46 @@ public class ImapService {
     private boolean checkMultipartAttachments(Multipart multipart) throws MessagingException, IOException {
         for (int i = 0; i < multipart.getCount(); i++) {
             BodyPart bodyPart = multipart.getBodyPart(i);
-            String disposition = bodyPart.getDisposition();
             
-            if (Part.ATTACHMENT.equalsIgnoreCase(disposition) || 
-               (Part.INLINE.equalsIgnoreCase(disposition) && bodyPart.getFileName() != null)) {
+            if (isActualAttachment(bodyPart)) {
                 return true;
             }
             
-            // Recursive check for nested multiparts
-            if (bodyPart.getContent() instanceof Multipart) {
-                if (checkMultipartAttachments((Multipart) bodyPart.getContent())) {
-                    return true;
+            // Recursive check for nested multiparts (Optimized)
+            if (bodyPart.isMimeType("multipart/*")) {
+                Object content = bodyPart.getContent();
+                if (content instanceof Multipart) {
+                    if (checkMultipartAttachments((Multipart) content)) {
+                        return true;
+                    }
                 }
             }
         }
         return false;
+    }
+
+    private void collectAttachmentMetadata(Multipart multipart, 
+                                           List<MailMessageDto.AttachmentMetadataDto> attachments,
+                                           int[] index) throws MessagingException, IOException {
+        for (int i = 0; i < multipart.getCount(); i++) {
+            BodyPart bodyPart = multipart.getBodyPart(i);
+            
+            if (isActualAttachment(bodyPart)) {
+                attachments.add(MailMessageDto.AttachmentMetadataDto.builder()
+                        .id(String.valueOf(index[0]++))
+                        .filename(bodyPart.getFileName() != null ? bodyPart.getFileName() : "attachment-" + index[0])
+                        .contentType(bodyPart.getContentType())
+                        .size(bodyPart.getSize())
+                        .contentId(getContentId(bodyPart))
+                        .inline(false)
+                        .build());
+            } else if (bodyPart.isMimeType("multipart/*")) {
+                Object content = bodyPart.getContent();
+                if (content instanceof Multipart) {
+                    collectAttachmentMetadata((Multipart) content, attachments, index);
+                }
+            }
+        }
     }
 
     private String extractGmailMsgId(Message message) {
@@ -921,5 +1406,117 @@ public class ImapService {
             log.warn("Failed to extract Gmail ThreadId: {}", e.getMessage());
         }
         return null;
+    }
+
+    /**
+     * Scans the provided HTML content for cloud storage links (Google Drive, Dropbox, OneDrive).
+     * Discovered links are added as 'External Attachments' to the provided list.
+     */
+    public void scanForCloudLinks(String html, List<MailMessageDetailDto.AttachmentDto> attachments, int[] index) {
+        if (html == null || html.isEmpty()) return;
+
+        log.info("[V10-SCANNER-DEBUG] Scanning body (Length: {}). Snippet: {}", 
+                html.length(), html.substring(0, Math.min(html.length(), 200)).replace("\n", " "));
+
+        // Big 3 Cloud Providers Regex Patterns - WIDE ANGLE
+        for (Map.Entry<String, Pattern> entry : CLOUD_LINK_PATTERNS.entrySet()) {
+            Matcher m = entry.getValue().matcher(html);
+            while (m.find()) {
+                String url = m.group(0);
+                
+                // Unwrap Google Redirects
+                if (url.contains("google.com/url?q=")) {
+                    url = unwrapGoogleRedirect(url);
+                }
+
+                String finalUrl = url;
+                boolean exists = attachments.stream().anyMatch(a -> finalUrl.equals(a.getExternalUrl()));
+                if (!exists) {
+                    attachments.add(MailMessageDetailDto.AttachmentDto.builder()
+                            .id("cloud-" + index[0]++)
+                            .filename(entry.getKey() + " Link")
+                            .contentType("text/html")
+                            .size(0)
+                            .inline(false)
+                            .externalUrl(finalUrl)
+                            .build());
+                    log.info("[V10-CLOUD-HIT] Found {} Link: {}", entry.getKey(), finalUrl);
+                }
+            }
+        }
+    }
+
+    private String unwrapGoogleRedirect(String url) {
+        try {
+            Matcher m = GOOGLE_REDIRECT_PATTERN.matcher(url);
+            if (m.find()) {
+                return URLDecoder.decode(m.group(1), StandardCharsets.UTF_8);
+            }
+        } catch (Exception e) {
+            log.warn("[V10-SCANNER-ERROR] Failed to unwrap redirect: {}", url);
+        }
+        return url;
+    }
+
+    /**
+     * Version of scanForCloudLinks for the List View DTO (Metadata).
+     */
+    public void scanForCloudLinksMetadata(String html, List<MailMessageDto.AttachmentMetadataDto> attachments, int[] index) {
+        if (html == null || html.isEmpty()) return;
+
+        for (Map.Entry<String, Pattern> entry : CLOUD_LINK_PATTERNS.entrySet()) {
+            Matcher m = entry.getValue().matcher(html);
+            while (m.find()) {
+                String url = m.group(0);
+                if (url.contains("google.com/url?q=")) {
+                    url = unwrapGoogleRedirect(url);
+                }
+                
+                String finalUrl = url;
+                boolean exists = attachments.stream().anyMatch(a -> finalUrl.equals(a.getExternalUrl()));
+                if (!exists) {
+                    attachments.add(MailMessageDto.AttachmentMetadataDto.builder()
+                            .id("cloud-" + index[0]++)
+                            .filename(entry.getKey() + " Link")
+                            .contentType("text/html")
+                            .size(0)
+                            .inline(false)
+                            .externalUrl(finalUrl)
+                            .build());
+                }
+            }
+        }
+    }
+
+    /**
+     * Version of scanForCloudLinks for the Entity DTO (Rendering View).
+     */
+    public void scanForCloudLinksEntityDto(String html, List<EmailEntityDto.AttachmentDto> attachments, int[] index) {
+        if (html == null || html.isEmpty()) return;
+
+        for (Map.Entry<String, Pattern> entry : CLOUD_LINK_PATTERNS.entrySet()) {
+            Matcher m = entry.getValue().matcher(html);
+            while (m.find()) {
+                String url = m.group(0);
+                if (url.contains("google.com/url?q=")) {
+                    url = unwrapGoogleRedirect(url);
+                }
+                
+                String finalUrl = url;
+                boolean exists = attachments.stream().anyMatch(a -> finalUrl.equals(a.getExternalUrl()));
+                if (!exists) {
+                    attachments.add(EmailEntityDto.AttachmentDto.builder()
+                            .id("cloud-" + index[0]++)
+                            .filename(entry.getKey() + " Link")
+                            .contentType("text/html")
+                            .size(0)
+                            .inline(false)
+                            .externalUrl(finalUrl)
+                            .url(finalUrl)
+                            .build());
+                    log.info("[SCANNER-CATCHUP] Dynamically found {} Link: {}", entry.getKey(), finalUrl);
+                }
+            }
+        }
     }
 }

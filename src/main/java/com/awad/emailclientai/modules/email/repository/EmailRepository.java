@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -18,8 +19,22 @@ import java.util.Optional;
 @Repository
 public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSpecificationExecutor<EmailEntity> {
     Optional<EmailEntity> findByMessageId(String messageId);
+    Optional<EmailEntity> findByGmailMessageId(String gmailMessageId);
+    Optional<EmailEntity> findByGmailDraftId(String gmailDraftId);
+    boolean existsByMessageId(String messageId);
+
     
     List<EmailEntity> findByStatus(String status);
+    List<EmailEntity> findAllByAccountIdAndStatus(Long accountId, String status);
+    long countByAccountIdAndStatus(Long accountId, String status);
+    java.util.Optional<EmailEntity> findFirstByAccountIdAndThreadIdAndStatusOrderByReceivedDateDesc(Long accountId, String threadId, String status);
+    
+    @Query(value = "SELECT * FROM emails WHERE account_id = :accountId AND " +
+           "subject = :subject AND received_date >= :timeThreshold " +
+           "ORDER BY received_date DESC LIMIT 1", nativeQuery = true)
+    java.util.Optional<EmailEntity> findRecentEmailBySubject(@Param("accountId") Long accountId, @Param("subject") String subject, @Param("timeThreshold") java.time.LocalDateTime timeThreshold);
+
+
 
     List<EmailEntity> findBySnoozedUntilBeforeAndStatus(OffsetDateTime now, String status);
     
@@ -49,10 +64,12 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     List<Object[]> searchEmailsWithScore(@Param("accountId") Long accountId, @Param("query") String query);
 
     @Modifying
+    @Transactional
     @Query(value = "UPDATE emails SET embedding_768 = cast(:embedding as vector) WHERE id = :id", nativeQuery = true)
     void updateEmbedding768(@Param("id") Long id, @Param("embedding") String embedding);
 
     @Modifying
+    @Transactional
     @Query(value = "UPDATE emails SET embedding_384 = cast(:embedding as vector) WHERE id = :id", nativeQuery = true)
     void updateEmbedding384(@Param("id") Long id, @Param("embedding") String embedding);
 
@@ -108,13 +125,28 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.receivedDate >= :startDate")
     long countByAccountId(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
  
-    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isRead = false AND e.receivedDate >= :startDate")
-    long countUnreadByAccountId(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
+    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isRead = false AND e.status = 'INBOX'")
+    long countUnreadByAccountId(@Param("accountId") Long accountId);
  
-    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isStarred = true AND e.receivedDate >= :startDate")
-    long countStarredByAccountId(@Param("accountId") Long accountId, @Param("startDate") LocalDateTime startDate);
+    @Query("SELECT COUNT(e) FROM EmailEntity e WHERE e.account.id = :accountId AND e.isStarred = true")
+    long countStarredByAccountId(@Param("accountId") Long accountId);
+
+    @Query("SELECT e FROM EmailEntity e WHERE e.account.id = :accountId AND e.isStarred = true")
+    List<EmailEntity> findStarredByAccountId(@Param("accountId") Long accountId);
 
     @Query("SELECT e FROM EmailEntity e WHERE e.account.id = :accountId AND " +
            "(e.body LIKE '%body {%' OR e.body LIKE '%.ie-browser%' OR e.body LIKE '%.mso-container%' OR e.body LIKE '%ExternalClass%')")
     List<EmailEntity> findCorruptedEmails(@Param("accountId") Long accountId);
+    @Query("SELECT DISTINCT e.fromName FROM EmailEntity e WHERE LOWER(e.sender) LIKE LOWER(CONCAT('%', :sender, '%')) AND e.fromName IS NOT NULL AND e.fromName != e.sender AND e.fromName NOT LIKE '%@%'")
+    List<String> findDistinctFromNamesBySender(@Param("sender") String sender);
+
+    @Modifying
+    @Transactional
+    @Query("UPDATE EmailEntity e SET e.fromName = :name WHERE (e.fromName IS NULL OR e.fromName = e.sender OR e.fromName LIKE '%@%') AND LOWER(e.sender) LIKE LOWER(CONCAT('%', :sender, '%'))")
+    void updateFromNameBySender(@Param("sender") String sender, @Param("name") String name);
+
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM EmailEntity e WHERE e.status = 'TRASH' AND e.deletedAt < :threshold")
+    void deleteOldTrash(@Param("threshold") LocalDateTime threshold);
 }

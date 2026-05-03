@@ -14,7 +14,7 @@ import java.util.List;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder
+@Builder(toBuilder = true)
 public class MailMessageDto {
     
     /**
@@ -90,6 +90,22 @@ public class MailMessageDto {
     private boolean hasAttachments;
     
     /**
+     * Whether the message has cloud links.
+     */
+    private boolean hasCloudLinks;
+    
+    /**
+     * Whether the message has physical attachments.
+     */
+    private boolean hasPhysicalAttachments;
+    
+    /**
+     * Whether the message is from one of the user's own accounts.
+     */
+    @com.fasterxml.jackson.annotation.JsonProperty("isFromMe")
+    private boolean isFromMe;
+
+    /**
      * Gmail labels (fetched via X-GM-LABELS).
      */
     private List<String> labels;
@@ -98,4 +114,23 @@ public class MailMessageDto {
      * Size of the message in bytes.
      */
     private int size;
+
+    /**
+     * List of attachments (metadata only).
+     */
+    private List<AttachmentMetadataDto> attachments;
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class AttachmentMetadataDto {
+        private String id;
+        private String filename;
+        private String contentType;
+        private long size;
+        private String contentId;
+        private boolean inline;
+        private String externalUrl;
+    }
 }

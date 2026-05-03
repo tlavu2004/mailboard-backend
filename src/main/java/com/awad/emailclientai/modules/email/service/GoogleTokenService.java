@@ -8,7 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+
 import org.springframework.web.client.RestTemplate;
 
 import java.util.Map;
@@ -21,13 +21,16 @@ public class GoogleTokenService {
     private final EncryptionService encryptionService;
     private final GoogleOAuthProperties googleOAuthProperties;
     private final RestTemplate restTemplate;
+    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     public GoogleTokenService(EmailAccountRepository accountRepository, 
                              EncryptionService encryptionService, 
-                             GoogleOAuthProperties googleOAuthProperties) {
+                             GoogleOAuthProperties googleOAuthProperties,
+                             org.springframework.transaction.support.TransactionTemplate transactionTemplate) {
         this.accountRepository = accountRepository;
         this.encryptionService = encryptionService;
         this.googleOAuthProperties = googleOAuthProperties;
+        this.transactionTemplate = transactionTemplate;
         
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(5000); // 5 seconds
@@ -35,7 +38,6 @@ public class GoogleTokenService {
         this.restTemplate = new RestTemplate(factory);
     }
 
-    @Transactional
     public String refreshAccessToken(EmailAccount account) {
         String refreshToken = encryptionService.decrypt(account.getEncryptedRefreshToken());
         if (refreshToken == null || refreshToken.isBlank()) {
@@ -59,8 +61,17 @@ public class GoogleTokenService {
 
             if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
                 String newAccessToken = (String) response.getBody().get("access_token");
-                account.setEncryptedPassword(encryptionService.encrypt(newAccessToken));
-                accountRepository.save(account);
+                String encryptedToken = encryptionService.encrypt(newAccessToken);
+                
+                transactionTemplate.execute(status -> {
+                    // Re-fetch to avoid detached entity if needed, but since it's usually passed from service it might be fine.
+                    // However, for safety and to keep transaction short:
+                    EmailAccount activeAccount = accountRepository.findById(account.getId()).orElse(account);
+                    activeAccount.setEncryptedPassword(encryptedToken);
+                    accountRepository.save(activeAccount);
+                    return null;
+                });
+                
                 log.info("Successfully refreshed access token for: {}", account.getEmailAddress());
                 return newAccessToken;
             }

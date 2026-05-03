@@ -68,7 +68,8 @@ public class SecurityConfig {
                                 "/health",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
-                                "/swagger-ui.html"
+                                "/swagger-ui.html",
+                                "/api/v1/emails/*/attachments/*/inline"
                         ).permitAll()
 
                         // Bridge endpoints for legacy frontend (drifted paths)

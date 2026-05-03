@@ -8,6 +8,7 @@ import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
+import org.springframework.scheduling.annotation.Scheduled;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -87,13 +88,57 @@ public class NotificationWebSocketHandler extends TextWebSocketHandler {
         sendNotification(accountId, "INFO", payload);
     }
 
+    /**
+     * Send a raw JSON payload string directly to the account's sessions.
+     * This avoids double-wrapping an already-serialized JSON payload in the
+     * { type:, message: } envelope which made parsing on the frontend brittle.
+     */
+    public void sendRawNotification(Long accountId, String jsonPayload) {
+        Set<WebSocketSession> sessions = accountSessions.get(accountId);
+        if (sessions != null) {
+            TextMessage message = new TextMessage(jsonPayload);
+            sessions.forEach(session -> {
+                try {
+                    if (session.isOpen()) {
+                        session.sendMessage(message);
+                    }
+                } catch (IOException e) {
+                    log.error("Error sending raw WebSocket message to account: {}", accountId, e);
+                }
+            });
+        }
+    }
+
+    @Scheduled(fixedRate = 25000) // Every 25 seconds
+    public void sendHeartbeat() {
+        accountSessions.values().forEach(sessions -> {
+            sessions.forEach(session -> {
+                try {
+                    if (session.isOpen()) {
+                        session.sendMessage(new TextMessage("{\"type\":\"HEARTBEAT\"}"));
+                    }
+                } catch (IOException e) {
+                    // Ignore, session might be closing
+                }
+            });
+        });
+    }
+
     private Long getAccountId(WebSocketSession session) {
         String query = session.getUri() != null ? session.getUri().getQuery() : null;
-        if (query != null && query.contains("accountId=")) {
-            try {
-                return Long.parseLong(query.split("accountId=")[1].split("&")[0]);
-            } catch (Exception e) {
-                log.error("Error parsing accountId from query: {}", query);
+        if (query != null) {
+            if (query.contains("accountId=")) {
+                try {
+                    return Long.parseLong(query.split("accountId=")[1].split("&")[0]);
+                } catch (Exception e) {
+                    log.error("Error parsing accountId from query: {}", query);
+                }
+            } else if (query.contains("userId=")) {
+                try {
+                    return Long.parseLong(query.split("userId=")[1].split("&")[0]);
+                } catch (Exception e) {
+                    log.error("Error parsing userId from query: {}", query);
+                }
             }
         }
         return null;

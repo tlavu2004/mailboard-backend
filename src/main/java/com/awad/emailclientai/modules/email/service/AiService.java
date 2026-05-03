@@ -16,6 +16,8 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpMethod;
+import org.springframework.core.ParameterizedTypeReference;
 
 import java.util.*;
 import java.util.regex.Matcher;
@@ -31,7 +33,11 @@ public class AiService {
     private final RestTemplate restTemplate = new RestTemplate();
 
     @Value("${GEMINI_API_KEY:}")
-    private String geminiApiKey;
+    private String geminiApiKeyRaw;
+
+    // Parsed/rotating API keys (supports comma-separated keys in .env for rotation)
+    private String[] geminiApiKeys = new String[0];
+    private int geminiKeyIndex = 0;
 
     @Value("${gemini.chat-model:gemini-2.5-flash}")
     private String geminiModel;
@@ -40,6 +46,94 @@ public class AiService {
 
     private String getGeminiUrl() {
         return GEMINI_BASE_URL + geminiModel + ":generateContent";
+    }
+
+    @Value("${LOCAL_LLM_URL:}")
+    private String localLlmUrl;
+
+    @Value("${LOCAL_LLM_ENABLED:false}")
+    private boolean localLlmEnabled;
+
+    private String callLocalModelApi(String text) {
+        if (!localLlmEnabled || localLlmUrl == null || localLlmUrl.isBlank()) {
+            throw new RuntimeException("Local LLM not configured/enabled");
+        }
+
+        try {
+            Map<String, Object> req = new HashMap<>();
+            // Generic payload: many local LLM proxies accept { "text": "..." } or { "prompt": "..." }
+            req.put("text", "Summarize this email in 1-2 sentences: " + text);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(req, headers);
+
+                ResponseEntity<Map<String, Object>> resp = restTemplate.exchange(
+                    localLlmUrl,
+                    HttpMethod.POST,
+                    request,
+                    new ParameterizedTypeReference<Map<String, Object>>() {}
+                );
+                Map<String, Object> body = resp.getBody();
+                if (body == null) throw new RuntimeException("Empty response from local LLM");
+
+            // Common response shapes
+            // 1) { "text": "..." }
+            if (body.containsKey("text") && body.get("text") instanceof String) {
+                return (String) body.get("text");
+            }
+
+            // 2) { "result": "..." } or { "output": "..." }
+            if (body.containsKey("result") && body.get("result") instanceof String) {
+                return (String) body.get("result");
+            }
+            if (body.containsKey("output") && body.get("output") instanceof String) {
+                return (String) body.get("output");
+            }
+
+            // 3) OpenAI-ish: { "choices": [ { "text": "..." } ] }
+            if (body.containsKey("choices")) {
+                Object choicesObj = body.get("choices");
+                if (choicesObj instanceof List) {
+                    List<?> choices = (List<?>) choicesObj;
+                    if (!choices.isEmpty() && choices.get(0) instanceof Map) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> first = (Map<String, Object>) choices.get(0);
+                        if (first.containsKey("text") && first.get("text") instanceof String) {
+                            return (String) first.get("text");
+                        }
+                        if (first.containsKey("message") && first.get("message") instanceof Map) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> msg = (Map<String, Object>) first.get("message");
+                            if (msg.containsKey("content") && msg.get("content") instanceof String) {
+                                return (String) msg.get("content");
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4) Ollama-like: { "result": [{"content": "..."}] }
+            if (body.containsKey("result")) {
+                Object resObj = body.get("result");
+                if (resObj instanceof List) {
+                    List<?> resList = (List<?>) resObj;
+                    if (!resList.isEmpty() && resList.get(0) instanceof Map) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> entry = (Map<String, Object>) resList.get(0);
+                        if (entry.containsKey("content") && entry.get("content") instanceof String) {
+                            return (String) entry.get("content");
+                        }
+                    }
+                }
+            }
+
+            // Fallback: try to stringify
+            return body.toString();
+        } catch (Exception e) {
+            log.error("Local LLM request failed: {}", e.getMessage());
+            throw new RuntimeException("Local LLM call failed", e);
+        }
     }
 
     @Transactional
@@ -75,24 +169,40 @@ public class AiService {
             emailRepository.save(email);
             return email.getSummary();
         } catch (Exception e) {
-            log.warn("Gemini upgrade failed, checking for local model fallback: {}", e.getMessage());
-            
-            // Tier 2: Local Model (Placeholder for Ollama/Local LLM)
-            // Currently we don't have a local LLM, so we fallback to Local Algo if current is ALGO or null.
-            // If current is already LOCAL_MODEL, we keep it.
-            
-            if (email.getSummarySource() == SummarySource.LOCAL_MODEL && email.getSummary() != null) {
+            log.warn("Gemini upgrade failed: {}", e.getMessage());
+
+            // Tier 2: Local Model (if enabled/configured)
+            if (localLlmEnabled && localLlmUrl != null && !localLlmUrl.isBlank()) {
+                try {
+                    String localSummary = callLocalModelApi(content);
+                    if (localSummary != null && !localSummary.isBlank()) {
+                        email.setSummary("[Local Model] " + localSummary);
+                        email.setSummarySource(SummarySource.LOCAL_MODEL);
+                        emailRepository.save(email);
+                        return email.getSummary();
+                    }
+                } catch (Exception le) {
+                    log.warn("Local model fallback failed: {}", le.getMessage());
+                    // fall through to extractive
+                }
+            } else {
+                log.debug("Local LLM not configured or disabled, skipping local model fallback");
+            }
+
+            // If current email already has a LOCAL_MODEL summary, keep it
+            if (email.getSummarySource() == SummarySource.LOCAL_MODEL && email.getSummary() != null && !email.getSummary().isEmpty()) {
+                log.info("Keeping existing LOCAL_MODEL summary for email ID {}", email.getId());
                 return email.getSummary();
             }
 
             // Tier 3: Local Algorithm (Extractive)
             if (email.getSummarySource() != SummarySource.LOCAL_ALGO) {
-                String summary = extractiveSummary(content, 3, 300);
-                email.setSummary("[Local Algo] " + summary);
+                String algoSummary = extractiveSummary(content, 3, 300);
+                email.setSummary("[Local Algo] " + algoSummary);
                 email.setSummarySource(SummarySource.LOCAL_ALGO);
                 emailRepository.save(email);
             }
-            
+
             return email.getSummary();
         }
     }
@@ -143,20 +253,38 @@ public class AiService {
 
     @PostConstruct
     public void init() {
-        log.info("AiService initialized. Gemini API Key Present: {}", 
-            (geminiApiKey != null && !geminiApiKey.isEmpty()));
-        if (geminiApiKey != null && !geminiApiKey.isEmpty()) {
-             log.debug("Gemini Key Length: {}", geminiApiKey.length());
+        // Parse possible comma-separated GEMINI_API_KEY into an array for rotation
+        if (geminiApiKeyRaw != null && !geminiApiKeyRaw.isBlank()) {
+            String[] parts = geminiApiKeyRaw.split(",");
+            List<String> keys = new ArrayList<>();
+            for (String p : parts) {
+                String t = p.trim();
+                if (!t.isEmpty()) keys.add(t);
+            }
+            geminiApiKeys = keys.toArray(new String[0]);
         }
+
+        log.info("AiService initialized. Gemini API Keys configured: {}", geminiApiKeys.length);
+        if (geminiApiKeys.length > 0) {
+            log.debug("Gemini first key length: {}", geminiApiKeys[0].length());
+        }
+        log.info("Local LLM enabled: {}. Local LLM URL present: {}", localLlmEnabled, (localLlmUrl != null && !localLlmUrl.isBlank()));
     }
 
-    @SuppressWarnings("unchecked")
+    private synchronized String getNextGeminiApiKey() {
+        if (geminiApiKeys == null || geminiApiKeys.length == 0) return null;
+        String k = geminiApiKeys[geminiKeyIndex];
+        geminiKeyIndex = (geminiKeyIndex + 1) % geminiApiKeys.length;
+        return k;
+    }
+
     private String callGeminiApi(String text) {
-        if (geminiApiKey == null || geminiApiKey.isEmpty()) {
+        String key = getNextGeminiApiKey();
+        if (key == null || key.isEmpty()) {
             throw new RuntimeException("Gemini API Key not configured");
         }
 
-        String url = getGeminiUrl() + "?key=" + geminiApiKey;
+        String url = getGeminiUrl() + "?key=" + key;
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
 
@@ -175,18 +303,35 @@ public class AiService {
 
             log.debug("Sending request to Gemini...");
             HttpEntity<String> request = new HttpEntity<>(requestBody, headers);
-            
-            @SuppressWarnings("rawtypes")
-            ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
-            
-            Map<String, Object> body = (Map<String, Object>) response.getBody();
+
+            ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                    url,
+                    HttpMethod.POST,
+                    request,
+                    new ParameterizedTypeReference<Map<String, Object>>() {}
+            );
+
+            Map<String, Object> body = response.getBody();
             if (body != null && body.containsKey("candidates")) {
-                List<Map<String, Object>> candidates = (List<Map<String, Object>>) body.get("candidates");
-                if (!candidates.isEmpty()) {
-                    Map<String, Object> candContent = (Map<String, Object>) candidates.get(0).get("content");
-                    List<Map<String, Object>> parts = (List<Map<String, Object>>) candContent.get("parts");
-                    if (!parts.isEmpty()) {
-                        return (String) parts.get(0).get("text");
+                Object candObj = body.get("candidates");
+                if (candObj instanceof List) {
+                    List<?> candidates = (List<?>) candObj;
+                    if (!candidates.isEmpty() && candidates.get(0) instanceof Map) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> first = (Map<String, Object>) candidates.get(0);
+                        Object contentObj = first.get("content");
+                        if (contentObj instanceof Map) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> candContent = (Map<String, Object>) contentObj;
+                            Object partsObj = candContent.get("parts");
+                            if (partsObj instanceof List) {
+                                @SuppressWarnings("unchecked")
+                                List<Map<String, Object>> parts = (List<Map<String, Object>>) partsObj;
+                                if (!parts.isEmpty() && parts.get(0).get("text") instanceof String) {
+                                    return (String) parts.get(0).get("text");
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -205,13 +350,19 @@ public class AiService {
      * Fallback Algorithm
      */
     public String extractiveSummary(String text, int topSentences, int maxChars) {
-        text = text.trim();
-        if (text.isEmpty()) {
+        if (text == null) return "";
+        
+        // Strip HTML tags before summarization to avoid tags in summary and prevent script execution
+        String cleanText = text.replaceAll("<[^>]*>", " ");
+        cleanText = cleanText.replaceAll("&nbsp;", " ");
+        cleanText = cleanText.replaceAll("\\s+", " ").trim();
+        
+        if (cleanText.isEmpty()) {
             return "";
         }
 
         // Split into sentences (Simplified regex)
-        String[] matchesArr = text.split("(?<=[.!?])\\s+");
+        String[] matchesArr = cleanText.split("(?<=[.!?])\\s+");
         List<String> matches = Arrays.asList(matchesArr);
 
         if (matches.isEmpty()) {
@@ -278,11 +429,24 @@ public class AiService {
             outLen += c.text.length();
         }
 
-        String finalRes = result.toString();
-        if (finalRes.length() > maxChars) {
-            finalRes = finalRes.substring(0, maxChars) + "...";
+        String res = result.toString();
+        if (res.length() > maxChars) {
+            res = res.substring(0, maxChars) + "...";
         }
-        return finalRes.trim();
+        return res.trim();
+    }
+
+    public String suggestSearchQuery(String input, Long userId) {
+        if (geminiApiKeys == null || geminiApiKeys.length == 0) {
+            return "from: " + input;
+        }
+
+        String prompt = "Give a 3-5 word email search query for: " + input + ". Respond with ONLY the query.";
+        try {
+            return callGeminiApi(prompt);
+        } catch (Exception e) {
+            return "from: " + input;
+        }
     }
 
     private static class SentenceScore {

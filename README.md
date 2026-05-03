@@ -128,6 +128,7 @@ erDiagram
     USERS ||--o{ EMAIL_ACCOUNTS : owns
     USERS ||--o{ REFRESH_TOKENS : has
     EMAIL_ACCOUNTS ||--o{ EMAILS : syncs
+    EMAILS ||--o{ EMAIL_ATTACHMENTS : contains
     KANBAN_COLUMNS }o--|| USERS : "belongs to"
 
     USERS {
@@ -159,6 +160,7 @@ erDiagram
         text body
         string status
         double kanban_order
+        timestamp received_date
         timestamp snoozed_until
         text summary
         string summary_source
@@ -167,6 +169,18 @@ erDiagram
         boolean has_attachments
         vector embedding_768
         vector embedding_384
+    }
+
+    EMAIL_ATTACHMENTS {
+        bigint id PK
+        bigint email_id FK
+        string filename
+        string content_type
+        bigint size
+        string server_attachment_id
+        string content_id
+        string external_url
+        boolean inline
     }
 
     KANBAN_COLUMNS {
@@ -189,7 +203,7 @@ erDiagram
 
 - **Vector Indexes**: HNSW indexes on `embedding_768` and `embedding_384` for sub-second semantic search.
 - **Trigram Indexes**: GIN trigram indexes on `subject` and `sender` for fast fuzzy text matching.
-- **Migrations**: 6 Flyway migrations managing schema evolution from extensions to Kanban columns.
+- **Migrations**: 7 Flyway migrations managing schema evolution from extensions to email attachments.
 
 ---
 

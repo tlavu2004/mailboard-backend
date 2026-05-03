@@ -6,6 +6,8 @@ import lombok.*;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "emails")
@@ -21,25 +23,37 @@ public class EmailEntity {
     private Long id;
 
     @Column(unique = true, nullable = false)
-    private String messageId; // Unique Message-ID header
+    private String messageId; 
 
-    private String threadId; // Gmail Thread ID (hex)
-    private String gmailMessageId; // Gmail Message ID (hex)
+    private String threadId; 
+    private String gmailMessageId; 
+    private String gmailDraftId; 
 
-    private Long uid; // IMAP UID
+    private Long uid; 
 
     private String subject;
 
     private String sender;
 
+    private String fromName;
+
+    @Column(columnDefinition = "TEXT")
+    private String recipientTo;
+
+    @Column(columnDefinition = "TEXT")
+    private String recipientCc;
+
     @Column(length = 500)
-    private String snippet; // Short preview
+    private String snippet; 
 
     @Column(columnDefinition = "TEXT")
     private String body;
 
     @Builder.Default
     private String status = EmailStatus.INBOX;
+
+    private String previousStatus; // NEW: Store status before moving to trash
+    private LocalDateTime deletedAt; // NEW: Timestamp when moved to trash
 
     private LocalDateTime receivedDate;
 
@@ -72,4 +86,8 @@ public class EmailEntity {
 
     @Column(name = "embedding_384", columnDefinition = "vector", insertable = false, updatable = false)
     private String embedding384;
+    
+    @OneToMany(mappedBy = "email", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<EmailAttachment> attachments = new ArrayList<>();
 }

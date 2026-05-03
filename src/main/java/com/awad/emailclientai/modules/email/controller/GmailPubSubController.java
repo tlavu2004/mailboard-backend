@@ -3,7 +3,6 @@ package com.awad.emailclientai.modules.email.controller;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.service.EmailSyncService;
-import com.awad.emailclientai.modules.email.service.NotificationWebSocketHandler;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Base64;
+import java.util.List;
 import java.util.Optional;
 
 @RestController
@@ -25,8 +25,12 @@ public class GmailPubSubController {
 
     private final EmailAccountRepository accountRepository;
     private final EmailSyncService emailSyncService;
-    private final NotificationWebSocketHandler webSocketHandler;
+    private final com.awad.emailclientai.modules.email.service.ImapService imapService;
     private final ObjectMapper objectMapper;
+    private final java.util.concurrent.Executor mailSyncExecutor;
+
+    @org.springframework.beans.factory.annotation.Value("${app.mail.sync.batch-size:20}")
+    private int batchSize;
 
     /**
      * Webhook endpoint to receive push notifications from Google Cloud Pub/Sub.
@@ -56,17 +60,38 @@ public class GmailPubSubController {
             if (accountOpt.isPresent()) {
                 EmailAccount account = accountOpt.get();
                 
-                // Trigger sync in a separate thread (non-blocking for Google)
-                new Thread(() -> {
+                // Trigger sync in a managed thread pool (non-blocking for Google)
+                mailSyncExecutor.execute(() -> {
                     try {
-                        emailSyncService.syncEmailsForAccount(account.getId(), "INBOX", 20, 0);
-                        
-                        // Notify frontend via WebSocket
-                        webSocketHandler.sendNotification(account.getId(), "{\"type\": \"NEW_EMAILS\", \"message\": \"Sync completed for " + emailAddress + "\"}");
+                        // Use efficient Gmail History API to find exactly what changed (Labels, Moves, etc.)
+                        try {
+                            emailSyncService.syncEmailsByHistory(account, historyId);
+                        } catch (Exception historyEx) {
+                            log.warn("History sync failed for {}: {}. Falling back to folder sync.", emailAddress, historyEx.getMessage());
+                            
+                            // Fallback: Sync key system folders so label moves (e.g. Gmail delete -> TRASH)
+                            // are reflected back to local status promptly.
+                            String physicalTrash = imapService.findPhysicalFolderByType(account, "TRASH");
+                            String physicalSpam = imapService.findPhysicalFolderByType(account, "SPAM");
+                            List<String> foldersToSync = List.of("INBOX", physicalTrash, physicalSpam);
+                            
+                            // Deduplicate in case localized fallback matched INBOX
+                            foldersToSync = foldersToSync.stream().distinct().toList();
+                            
+                            log.info("Resolving physical folders to sync for webhook on {}: {}", emailAddress, foldersToSync);
+                            
+                            for (String folder : foldersToSync) {
+                                try {
+                                    emailSyncService.syncEmailsForAccount(account.getId(), folder, batchSize, 0);
+                                } catch (Exception folderEx) {
+                                    log.warn("Triggered sync failed for {} folder {}: {}", emailAddress, folder, folderEx.getMessage());
+                                }
+                            }
+                        }
                     } catch (Exception e) {
                         log.error("Error during triggered sync for {}", emailAddress, e);
                     }
-                }).start();
+                });
             } else {
                 log.warn("Received notification for unknown account: {}", emailAddress);
             }

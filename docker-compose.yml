@@ -18,7 +18,9 @@ services:
     depends_on:
       - postgresql
     networks:
-      - mailboard-network
+      mailboard-network:
+        aliases:
+          - app
 
   ngrok:
     image: ngrok/ngrok:latest
