@@ -1,6 +1,9 @@
 package com.awad.emailclientai.shared.exception;
 
+import com.awad.emailclientai.shared.dto.response.ApiResponse;
 import lombok.Getter;
+
+
 
 /**
  * Unauthorized Exception
@@ -60,7 +63,7 @@ import lombok.Getter;
  *
  * <p><b>Handling:</b>
  * <br>This exception is automatically caught by {@link GlobalExceptionHandler}
- * and converted to a standardized {@link com.awad.emailclientai.shared.dto.response.ApiResponse} format
+ * and converted to a standardized {@link ApiResponse} format
  * with appropriate HTTP status code (401 or 403).
  *
  * <p><b>Frontend Behavior:</b>

@@ -1,14 +1,17 @@
 package com.awad.emailclientai.modules.email.service;
 
+import jakarta.annotation.PostConstruct;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.util.List;
-import java.util.Map;
-import jakarta.annotation.PostConstruct;
+
+
 
 @Service
 public class GeminiEmbeddingService implements EmbeddingService {
@@ -125,7 +128,7 @@ public class GeminiEmbeddingService implements EmbeddingService {
                 List<Number> rawValues = (List<Number>) embeddingMap.get("values");
                 List<Float> values = rawValues.stream()
                     .map(Number::floatValue)
-                    .collect(java.util.stream.Collectors.toList());
+                    .collect(Collectors.toList());
                 
                 // Handle Matryoshka embeddings (e.g., text-embedding-004 returns 3072 by default)
                 // We truncate to 768 to fit our DB and maintain high search quality.

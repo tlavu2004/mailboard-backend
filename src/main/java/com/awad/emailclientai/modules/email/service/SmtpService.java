@@ -11,14 +11,17 @@ import jakarta.mail.internet.MimeBodyPart;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.MimeMultipart;
 import jakarta.mail.util.ByteArrayDataSource;
+import java.io.IOException;
+import java.util.Date;
+import java.util.List;
+import java.util.Properties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.util.Date;
-import java.util.Properties;
+
+
 
 /**
  * Service for sending emails via SMTP protocol.
@@ -89,12 +92,12 @@ public class SmtpService {
      * @return The sent MimeMessage (for IMAP APPEND to Sent folder)
      */
     public MimeMessage sendEmailWithAttachments(EmailAccount account, SendEmailRequestDto request, 
-                                           java.util.List<MultipartFile> attachments) throws MessagingException, IOException {
+                                           List<MultipartFile> attachments) throws MessagingException, IOException {
         return sendEmailWithAttachmentsInternal(account, request, attachments, true);
     }
 
     private MimeMessage sendEmailWithAttachmentsInternal(EmailAccount account, SendEmailRequestDto request, 
-                                           java.util.List<MultipartFile> attachments, boolean retryOnAuthFailure) throws MessagingException, IOException {
+                                           List<MultipartFile> attachments, boolean retryOnAuthFailure) throws MessagingException, IOException {
         Properties props = createSmtpProperties(account);
         
         String password = encryptionService.decrypt(account.getEncryptedPassword());
@@ -287,7 +290,7 @@ public class SmtpService {
 
     private MimeMessage createMimeMessageWithAttachments(Session session, EmailAccount account,
                                                          SendEmailRequestDto request, 
-                                                         java.util.List<MultipartFile> attachments) throws MessagingException, IOException {
+                                                         List<MultipartFile> attachments) throws MessagingException, IOException {
         MimeMessage message = new MimeMessage(session);
         
         // From

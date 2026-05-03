@@ -1,41 +1,50 @@
 package com.awad.emailclientai.modules.email.service;
 
+import com.awad.emailclientai.modules.email.dto.request.SendEmailRequestDto;
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDetailDto;
 import com.awad.emailclientai.modules.email.dto.response.MailMessageDto;
-import java.util.concurrent.ConcurrentHashMap;
 import com.awad.emailclientai.modules.email.entity.EmailAccount;
+import com.awad.emailclientai.modules.email.entity.EmailAttachment;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
+import com.awad.emailclientai.modules.email.entity.EmailProvider;
+import com.awad.emailclientai.modules.email.entity.EmailSender;
 import com.awad.emailclientai.modules.email.entity.EmailStatus;
 import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import com.awad.emailclientai.modules.email.repository.EmailSenderRepository;
-import com.awad.emailclientai.modules.email.entity.EmailSender;
 import com.awad.emailclientai.modules.kanban.entity.KanbanColumn;
 import com.awad.emailclientai.modules.kanban.repository.KanbanColumnRepository;
 import com.awad.emailclientai.modules.kanban.service.KanbanService;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Async;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 import com.awad.emailclientai.shared.exception.BusinessException;
 import com.awad.emailclientai.shared.exception.ErrorCode;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.mail.Folder;
+import jakarta.mail.Store;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
-import java.util.List;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.Map;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.awad.emailclientai.modules.email.entity.EmailProvider;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
-import com.awad.emailclientai.modules.email.dto.request.SendEmailRequestDto;
-import java.time.LocalDateTime;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+
+
+
 
 @Service
 @Slf4j
@@ -76,7 +85,7 @@ public class EmailSyncService {
         this.emailSenderRepository = emailSenderRepository;
     }
 
-    @org.springframework.beans.factory.annotation.Value("${app.mail.sync.batch-size:20}")
+    @Value("${app.mail.sync.batch-size:20}")
     private int batchSize;
 
     /** Gmail system labels to ignore when determining custom labels */
@@ -132,7 +141,7 @@ public class EmailSyncService {
             return;
         }
 
-        Set<String> affectedGmailMsgIds = new java.util.HashSet<>();
+        Set<String> affectedGmailMsgIds = new HashSet<>();
         for (var history : historyList) {
             if (history.getMessages() != null) {
                 for (var msg : history.getMessages()) {
@@ -273,9 +282,9 @@ public class EmailSyncService {
         if (account == null) return;
 
         // Efficiency: Open ONE store and ONE folder for the whole Batch
-        try (jakarta.mail.Store store = imapService.connectToStore(account)) {
-            jakarta.mail.Folder folder = store.getFolder("INBOX");
-            folder.open(jakarta.mail.Folder.READ_ONLY);
+        try (Store store = imapService.connectToStore(account)) {
+            Folder folder = store.getFolder("INBOX");
+            folder.open(Folder.READ_ONLY);
 
             for (EmailEntity entity : corrupted) {
                 try {
@@ -454,7 +463,7 @@ public class EmailSyncService {
             List<Long> updatedEmailIds = new ArrayList<>();
 
             // Collect message IDs seen on server for reconciliation (especially for DRAFTS)
-            java.util.Set<String> serverMessageIds = new java.util.HashSet<>();
+            Set<String> serverMessageIds = new HashSet<>();
 
             while (totalNewFound < currentLimit && (currentPage - page) < maxPagesToTry) {
                 List<MailMessageDto> messages = imapService.getMessages(account, folderName, currentPage, currentLimit);
@@ -482,7 +491,7 @@ public class EmailSyncService {
                 for (EmailEntity localDraft : localDrafts) {
                     // Only delete if it's older than 5 minutes to avoid race conditions with proactive saves
                     if (localDraft.getReceivedDate() != null && 
-                        localDraft.getReceivedDate().isBefore(java.time.LocalDateTime.now().minusMinutes(5))) {
+                        localDraft.getReceivedDate().isBefore(LocalDateTime.now().minusMinutes(5))) {
                         
                         if (!serverMessageIds.contains(localDraft.getMessageId())) {
                             log.info("[RECONCILE] Deleting orphaned local draft ID: {} (MessageId: {})", localDraft.getId(), localDraft.getMessageId());
@@ -803,7 +812,7 @@ public class EmailSyncService {
                     });
 
                     if (!alreadyExists) {
-                        existing.getAttachments().add(com.awad.emailclientai.modules.email.entity.EmailAttachment.builder()
+                        existing.getAttachments().add(EmailAttachment.builder()
                                 .email(existing)
                                 .filename(msgAt.getFilename())
                                 .contentType(msgAt.getContentType())
@@ -906,7 +915,7 @@ public class EmailSyncService {
             return;
         }
 
-        java.util.Map<Long, java.util.List<Long>> unsnoozedByAccount = new java.util.HashMap<>();
+        Map<Long, List<Long>> unsnoozedByAccount = new HashMap<>();
 
         transactionTemplate.execute(txStatus -> {
             for (EmailEntity email : snoozedEmails) {
@@ -916,7 +925,7 @@ public class EmailSyncService {
                 emailRepository.save(email);
 
                 if (email.getAccount() != null && email.getAccount().getId() != null) {
-                    unsnoozedByAccount.computeIfAbsent(email.getAccount().getId(), k -> new java.util.ArrayList<>()).add(email.getId());
+                    unsnoozedByAccount.computeIfAbsent(email.getAccount().getId(), k -> new ArrayList<>()).add(email.getId());
                 }
             }
             return null;
@@ -927,16 +936,16 @@ public class EmailSyncService {
             ObjectMapper mapper = new ObjectMapper();
             for (var entry : unsnoozedByAccount.entrySet()) {
                 Long accountId = entry.getKey();
-                java.util.List<Long> ids = entry.getValue();
+                List<Long> ids = entry.getValue();
                 try {
-                    java.util.Map<String, Object> payload = java.util.Map.of(
+                    Map<String, Object> payload = Map.of(
                             "type", "NEW_EMAILS",
                             "emailIds", ids
                     );
                     String payloadJson = mapper.writeValueAsString(payload);
                     notificationWebSocketHandler.sendRawNotification(accountId, payloadJson);
                     log.info("Sent wake-up notification with {} ids for account ID: {}", ids.size(), accountId);
-                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                } catch (JsonProcessingException e) {
                     log.warn("Failed to serialize wake-up payload for account {}: {}", accountId, e.getMessage());
                     // Fallback: send a generic message so FE still knows to refresh
                     notificationWebSocketHandler.sendNotification(accountId, "NEW_EMAILS", "Email(s) returned from snooze");
@@ -1100,9 +1109,9 @@ public class EmailSyncService {
         return kanbanService.createColumn(accountId, labelName, labelName, "#f1f5f9");
     }
 
-    private List<com.awad.emailclientai.modules.email.entity.EmailAttachment> mapAttachments(
+    private List<EmailAttachment> mapAttachments(
             List<MailMessageDto.AttachmentMetadataDto> dtos, EmailEntity email) {
-        return dtos.stream().map(dto -> com.awad.emailclientai.modules.email.entity.EmailAttachment.builder()
+        return dtos.stream().map(dto -> EmailAttachment.builder()
                 .email(email)
                 .filename(dto.getFilename())
                 .contentType(dto.getContentType())
@@ -1115,12 +1124,12 @@ public class EmailSyncService {
                 .collect(Collectors.toList());
     }
 
-    private List<com.awad.emailclientai.modules.email.entity.EmailAttachment> mapDetailAttachments(
+    private List<EmailAttachment> mapDetailAttachments(
             List<MailMessageDetailDto.AttachmentDto> dtos, EmailEntity email) {
         log.info("[V8-ATTACH-SYNC] Mapping {} attachments for email ID: {}", dtos.size(), email.getId());
         dtos.forEach(dto -> log.info("  - CID: {}, File: {}, Inline: {}", dto.getContentId(), dto.getFilename(), dto.isInline()));
         
-        return dtos.stream().map(dto -> com.awad.emailclientai.modules.email.entity.EmailAttachment.builder()
+        return dtos.stream().map(dto -> EmailAttachment.builder()
                 .email(email)
                 .filename(dto.getFilename())
                 .contentType(dto.getContentType())

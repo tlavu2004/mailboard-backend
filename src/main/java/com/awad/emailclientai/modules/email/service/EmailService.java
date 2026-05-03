@@ -2,37 +2,46 @@ package com.awad.emailclientai.modules.email.service;
 
 import com.awad.emailclientai.modules.email.dto.response.ContactDto;
 import com.awad.emailclientai.modules.email.dto.response.EmailEntityDto;
+import com.awad.emailclientai.modules.email.entity.EmailAccount;
 import com.awad.emailclientai.modules.email.entity.EmailAttachment;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
+import com.awad.emailclientai.modules.email.entity.EmailProvider;
+import com.awad.emailclientai.modules.email.entity.EmailSender;
 import com.awad.emailclientai.modules.email.entity.EmailStatus;
+import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
 import com.awad.emailclientai.modules.email.repository.EmailAttachmentRepository;
 import com.awad.emailclientai.modules.email.repository.EmailRepository;
 import com.awad.emailclientai.modules.email.repository.EmailSenderRepository;
-import com.awad.emailclientai.modules.email.entity.EmailAccount;
-import com.awad.emailclientai.modules.email.repository.EmailAccountRepository;
+import com.awad.emailclientai.modules.user.entity.User;
 import com.awad.emailclientai.shared.exception.BusinessException;
 import com.awad.emailclientai.shared.exception.ErrorCode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
+import jakarta.mail.MessagingException;
+import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.scheduling.annotation.Async;
 
-import jakarta.mail.MessagingException;
-import jakarta.annotation.PostConstruct;
-import java.io.IOException;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.Optional;
-import java.util.stream.Collectors;
-import java.time.ZoneId;
+
+
 
 @Service
 @RequiredArgsConstructor
@@ -47,7 +56,7 @@ public class EmailService {
     private final EmailSenderRepository emailSenderRepository;
     private final EmailAccountRepository emailAccountRepository;
     private final NotificationWebSocketHandler notificationWebSocketHandler;
-    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final ObjectMapper objectMapper;
 
     @PostConstruct
     public void init() {
@@ -181,7 +190,7 @@ public class EmailService {
         String senderEmail = cleanEmail(rawSender);
         String currentName = entity.getFromName();
         Long userId = (entity.getAccount() != null && entity.getAccount().getUser() != null) ? entity.getAccount().getUser().getId() : null;
-        com.awad.emailclientai.modules.email.entity.EmailAccount account = entity.getAccount();
+        EmailAccount account = entity.getAccount();
         
         // 1. Priority: If this sender matches ANY of the user's connected accounts or main profile, use "You" logic
         boolean fromMe = false;
@@ -219,7 +228,7 @@ public class EmailService {
         if (nameIsRaw && senderEmail != null) {
             // 1. Try Smart Directory (Fast)
             currentName = emailSenderRepository.findByEmail(senderEmail.toLowerCase())
-                .map(com.awad.emailclientai.modules.email.entity.EmailSender::getBestKnownName)
+                .map(EmailSender::getBestKnownName)
                 .orElse(currentName);
                 
             // 2. Fallback: Search DB for ANY other email from this sender that HAS a real name
@@ -271,8 +280,8 @@ public class EmailService {
                 .cc(parseRecipientString(entity.getRecipientCc(), account))
                 .sender(senderEmail) 
                 .fromName(bestName) 
-                .recipientTo(entity.getRecipientTo() != null ? java.util.Arrays.asList(entity.getRecipientTo().split(",\\s*")) : java.util.Collections.emptyList()) 
-                .recipientCc(entity.getRecipientCc() != null ? java.util.Arrays.asList(entity.getRecipientCc().split(",\\s*")) : java.util.Collections.emptyList()) 
+                .recipientTo(entity.getRecipientTo() != null ? Arrays.asList(entity.getRecipientTo().split(",\\s*")) : Collections.emptyList()) 
+                .recipientCc(entity.getRecipientCc() != null ? Arrays.asList(entity.getRecipientCc().split(",\\s*")) : Collections.emptyList()) 
                 .snippet(entity.getSnippet())
                 .preview(entity.getSnippet())
                 .body(body)
@@ -304,12 +313,12 @@ public class EmailService {
                 .build();
     }
 
-    private java.util.List<EmailEntityDto.EmailAddressDto> parseRecipientString(String recipientString, com.awad.emailclientai.modules.email.entity.EmailAccount account) {
+    private List<EmailEntityDto.EmailAddressDto> parseRecipientString(String recipientString, EmailAccount account) {
         Long userId = account != null && account.getUser() != null ? account.getUser().getId() : null;
         if (recipientString == null || recipientString.isBlank()) {
-            return java.util.Collections.emptyList();
+            return Collections.emptyList();
         }
-        return java.util.Arrays.stream(recipientString.split(",\\s*"))
+        return Arrays.stream(recipientString.split(",\\s*"))
                 .map(part -> {
                     String name = "";
                     String email = part.trim();
@@ -333,7 +342,7 @@ public class EmailService {
                     // 1. Check EmailSender table
                     if (finalName.isBlank() || finalName.equalsIgnoreCase(finalEmail) || finalName.contains("@")) {
                         finalName = emailSenderRepository.findByEmail(finalEmail.toLowerCase())
-                                .map(com.awad.emailclientai.modules.email.entity.EmailSender::getBestKnownName)
+                                .map(EmailSender::getBestKnownName)
                                 .orElse(finalName);
                     }
 
@@ -372,7 +381,7 @@ public class EmailService {
                     
                     // 3. Last Resort: User profile name fallback
                     if ((finalName.isBlank() || finalName.equalsIgnoreCase(finalEmail) || finalName.equals("You")) && account != null) {
-                        com.awad.emailclientai.modules.user.entity.User u = account.getUser();
+                        User u = account.getUser();
                         if (u != null) {
                             String userPrimaryEmail = u.getEmail().toLowerCase().trim();
                             if (finalEmail.equalsIgnoreCase(userPrimaryEmail) || (localToMatch.length() > 3 && userPrimaryEmail.contains("@") && userPrimaryEmail.split("@")[0].equalsIgnoreCase(localToMatch))) {
@@ -391,7 +400,7 @@ public class EmailService {
                             .email(finalEmail)
                             .build();
                 })
-                .collect(java.util.stream.Collectors.toList());
+                .collect(Collectors.toList());
     }
 
     public String processEmailBody(String html, Long emailId, List<EmailAttachment> attachments) {
@@ -682,13 +691,13 @@ public class EmailService {
         if (previousStatus == null) previousStatus = "INBOX";
         if (newStatus == null) newStatus = "INBOX";
         
-        String normalizedPrev = previousStatus.toUpperCase(java.util.Locale.ROOT);
-        String normalizedNew = newStatus.toUpperCase(java.util.Locale.ROOT);
+        String normalizedPrev = previousStatus.toUpperCase(Locale.ROOT);
+        String normalizedNew = newStatus.toUpperCase(Locale.ROOT);
         
         if (normalizedPrev.equals(normalizedNew)) return;
         
         try {
-            boolean isGmail = email.getAccount().getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL;
+            boolean isGmail = email.getAccount().getProvider() == EmailProvider.GMAIL;
             String sourceFolder = resolveFolderForStatus(normalizedPrev, email.getAccount().getProvider());
             
             if (normalizedNew.equals("TRASH")) {
@@ -730,7 +739,7 @@ public class EmailService {
         }
     }
 
-    @org.springframework.scheduling.annotation.Async
+    @Async
     @Transactional
     public void syncFlagsAndLabelsToProvider(Long emailId, String previousStatus, List<String> normalizedAdd, List<String> normalizedRemove) {
         log.info("[SYNC-START] Syncing flags for email {}: previousStatus={}, add={}, remove={}", emailId, previousStatus, normalizedAdd, normalizedRemove);
@@ -741,7 +750,7 @@ public class EmailService {
         }
         
         try {
-            boolean isGmail = email.getAccount().getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL;
+            boolean isGmail = email.getAccount().getProvider() == EmailProvider.GMAIL;
             String sourceFolder = resolveFolderForStatus(previousStatus, email.getAccount().getProvider());
 
             if (isGmail) {
@@ -850,9 +859,9 @@ public class EmailService {
         }
     }
 
-    private String resolveFolderForStatus(String status, com.awad.emailclientai.modules.email.entity.EmailProvider provider) {
-        String normalized = status == null ? "INBOX" : status.toUpperCase(java.util.Locale.ROOT);
-        if (provider == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL) {
+    private String resolveFolderForStatus(String status, EmailProvider provider) {
+        String normalized = status == null ? "INBOX" : status.toUpperCase(Locale.ROOT);
+        if (provider == EmailProvider.GMAIL) {
             return switch (normalized) {
                 case "SPAM" -> "[Gmail]/Spam";
                 case "TRASH" -> "[Gmail]/Trash";
@@ -891,7 +900,7 @@ public class EmailService {
         if (trashEmails.isEmpty()) return;
 
         try {
-            boolean isGmail = account.getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL;
+            boolean isGmail = account.getProvider() == EmailProvider.GMAIL;
             if (isGmail) {
                 log.info("[EMPTY-TRASH] Bulk deleting {} Gmail messages for account {}", trashEmails.size(), account.getEmailAddress());
                 for (EmailEntity email : trashEmails) {
@@ -939,7 +948,7 @@ public class EmailService {
         EmailAccount account = email.getAccount();
 
         try {
-            boolean isGmail = account.getProvider() == com.awad.emailclientai.modules.email.entity.EmailProvider.GMAIL;
+            boolean isGmail = account.getProvider() == EmailProvider.GMAIL;
             if (isGmail) {
                 if (email.getGmailMessageId() != null) {
                     gmailLabelService.deleteMessage(account, email.getMessageId(), email.getGmailMessageId());

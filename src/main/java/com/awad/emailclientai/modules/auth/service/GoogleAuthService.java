@@ -1,5 +1,6 @@
 package com.awad.emailclientai.modules.auth.service;
 
+import com.awad.emailclientai.modules.user.entity.AuthProvider;
 import com.awad.emailclientai.modules.user.entity.User;
 import com.awad.emailclientai.modules.user.repository.UserRepository;
 import com.awad.emailclientai.shared.config.properties.GoogleOAuthProperties;
@@ -9,14 +10,16 @@ import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
 import com.google.api.client.googleapis.auth.oauth2.GoogleTokenResponse;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
+
+
 
 @Service
 @RequiredArgsConstructor
@@ -57,7 +60,7 @@ public class GoogleAuthService {
                             User newUser = User.builder()
                                     .email(email)
                                     .googleId(googleId)
-                                    .authProvider(com.awad.emailclientai.modules.user.entity.AuthProvider.GOOGLE)
+                                    .authProvider(AuthProvider.GOOGLE)
                                     .name(name)
                                     .password(null)
                                     .build();
@@ -126,4 +129,4 @@ public class GoogleAuthService {
     }
 
     public record GoogleTokenData(User user, String accessToken, String refreshToken) {}
-}
+}

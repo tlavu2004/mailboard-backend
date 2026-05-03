@@ -1,5 +1,7 @@
 import java.sql.*;
 import java.util.*;
+// import org.postgresql.Driver;
+
 
 public class DbCheck {
     public static void main(String[] args) throws Exception {

@@ -2,7 +2,11 @@ package com.awad.emailclientai.modules.email.repository;
 
 import com.awad.emailclientai.modules.email.dto.response.EmailStatusStatsDto;
 import com.awad.emailclientai.modules.email.entity.EmailEntity;
-
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
@@ -11,10 +15,9 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
-import java.time.OffsetDateTime;
-import java.util.List;
-import java.util.Optional;
+
+
+
 
 @Repository
 public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSpecificationExecutor<EmailEntity> {
@@ -27,12 +30,12 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     List<EmailEntity> findByStatus(String status);
     List<EmailEntity> findAllByAccountIdAndStatus(Long accountId, String status);
     long countByAccountIdAndStatus(Long accountId, String status);
-    java.util.Optional<EmailEntity> findFirstByAccountIdAndThreadIdAndStatusOrderByReceivedDateDesc(Long accountId, String threadId, String status);
+    Optional<EmailEntity> findFirstByAccountIdAndThreadIdAndStatusOrderByReceivedDateDesc(Long accountId, String threadId, String status);
     
     @Query(value = "SELECT * FROM emails WHERE account_id = :accountId AND " +
            "subject = :subject AND received_date >= :timeThreshold " +
            "ORDER BY received_date DESC LIMIT 1", nativeQuery = true)
-    java.util.Optional<EmailEntity> findRecentEmailBySubject(@Param("accountId") Long accountId, @Param("subject") String subject, @Param("timeThreshold") java.time.LocalDateTime timeThreshold);
+    Optional<EmailEntity> findRecentEmailBySubject(@Param("accountId") Long accountId, @Param("subject") String subject, @Param("timeThreshold") LocalDateTime timeThreshold);
 
 
 
@@ -93,7 +96,7 @@ public interface EmailRepository extends JpaRepository<EmailEntity, Long>, JpaSp
     @Query("SELECT e FROM EmailEntity e WHERE e.account.id = :accountId " +
            "AND e.embedding768 IS NULL AND e.body IS NOT NULL " +
            "AND e.status NOT IN ('TRASH', 'SPAM')")
-    List<EmailEntity> findEmailsMissingEmbeddings(@Param("accountId") Long accountId, org.springframework.data.domain.Pageable pageable);
+    List<EmailEntity> findEmailsMissingEmbeddings(@Param("accountId") Long accountId, Pageable pageable);
 
     @Query(value = "SELECT val, type, MAX(score) as max_score FROM (" +
             "SELECT subject AS val, 'subject' as type, similarity(subject, :prefix) AS score FROM emails " +
