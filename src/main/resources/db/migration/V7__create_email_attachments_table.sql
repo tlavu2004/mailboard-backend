@@ -1,5 +1,5 @@
 -- Migration: V7__create_email_attachments_table
--- Description: Create email_attachments table with external_url for cloud links
+-- Description: Create email_attachments table with cloud link support
 
 CREATE TABLE IF NOT EXISTS email_attachments (
     id BIGSERIAL PRIMARY KEY,
@@ -11,8 +11,9 @@ CREATE TABLE IF NOT EXISTS email_attachments (
     content_id VARCHAR(255),
     external_url VARCHAR(1024),
     inline BOOLEAN NOT NULL DEFAULT FALSE,
+
     CONSTRAINT fk_email_attachments_email FOREIGN KEY (email_id) 
         REFERENCES emails(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_email_attachments_email_id ON email_attachments(email_id);
+CREATE INDEX idx_email_attachments_email_id ON email_attachments(email_id);
